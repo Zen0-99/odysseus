@@ -822,9 +822,7 @@ def setup_shell_routes() -> APIRouter:
             return {"stdout": "", "stderr": "No command provided", "exit_code": 1}
 
         logger.info("User shell exec requested: length=%d", len(cmd))
-        result = await _exec_shell(
-            cmd, timeout=req.timeout if req.timeout is not None else EXEC_TIMEOUT
-        )
+        result = await _exec_shell(cmd, timeout=req.timeout if req.timeout is not None else EXEC_TIMEOUT)
         return result
 
     @router.post("/api/shell/stream")
