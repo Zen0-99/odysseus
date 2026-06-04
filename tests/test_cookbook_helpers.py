@@ -96,6 +96,8 @@ def test_safe_env_prefix_leaves_compound_conda_prefix_unchanged():
 
 
 def test_safe_env_prefix_rejects_freeform_shell():
+    if not isinstance(HTTPException, type):
+        pytest.skip("fastapi not installed — HTTPException is mocked")
     with pytest.raises(HTTPException):
         _safe_env_prefix("echo ok; curl https://example.invalid")
 
@@ -190,14 +192,26 @@ def test_validate_local_dir_rejects_leading_dash_segments():
             _validate_local_dir(path)
 
 
+def test_validate_ssh_port_rejects_shell_payload():
+    if not isinstance(HTTPException, type):
+        pytest.skip("fastapi not installed — HTTPException is mocked")
+    with pytest.raises(HTTPException):
+        _validate_ssh_port("22; touch /tmp/pwned")
+    assert _validate_ssh_port("2222") == "2222"
+
+
 def test_validate_gpus_accepts_indexes_only():
     assert _validate_gpus("0,1,2") == "0,1,2"
+    if not isinstance(HTTPException, type):
+        pytest.skip("fastapi not installed — HTTPException is mocked")
     with pytest.raises(HTTPException):
         _validate_gpus("0; rm -rf /")
 
 
 def test_validate_repo_id_stays_strict_for_hf_downloads():
     assert _validate_repo_id("Qwen/Qwen3-8B") == "Qwen/Qwen3-8B"
+    if not isinstance(HTTPException, type):
+        pytest.skip("fastapi not installed — HTTPException is mocked")
     with pytest.raises(HTTPException):
         _validate_repo_id("DeepSeek-R1-UD-IQ4_XS")
 
@@ -205,6 +219,8 @@ def test_validate_repo_id_stays_strict_for_hf_downloads():
 def test_validate_serve_model_id_accepts_cached_local_model_names():
     assert _validate_serve_model_id("Qwen/Qwen3-8B") == "Qwen/Qwen3-8B"
     assert _validate_serve_model_id("DeepSeek-R1-UD-IQ4_XS") == "DeepSeek-R1-UD-IQ4_XS"
+    if not isinstance(HTTPException, type):
+        pytest.skip("fastapi not installed — HTTPException is mocked")
     with pytest.raises(HTTPException):
         _validate_serve_model_id("../escape")
 
@@ -265,6 +281,7 @@ def test_pip_install_fallback_chain_accepts_python_executable():
     assert 'python -c "import sys; sys.exit(0 if sys.prefix != sys.base_prefix else 1)"' in chain
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="bash not available on Windows")
 def test_pip_install_fallback_chain_propagates_failure_in_venv():
     """When base install fails inside a venv, the chain must exit non-zero.
 
@@ -291,6 +308,7 @@ def test_pip_install_fallback_chain_propagates_failure_in_venv():
     assert result.returncode != 0, "Chain should propagate failure when base fails in venv"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="bash not available on Windows")
 def test_pip_install_fallback_chain_tries_user_outside_venv():
     """When base install fails outside a venv, the chain should try --user."""
     # Force "not in venv" by making venv_check return 1 directly.
@@ -415,6 +433,7 @@ def test_pip_install_attempt_no_bare_pipe_tail():
     assert "| tail" not in snippet
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="bash not available on Windows")
 def test_pip_install_attempt_failure_propagates_real_exit_code():
     """Run the generated snippet against a deliberately broken pip install
     to confirm the subshell exits with pip's non-zero status."""
@@ -430,6 +449,7 @@ def test_pip_install_attempt_failure_propagates_real_exit_code():
     assert result.returncode != 0, "pip install of a nonexistent package should fail"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="bash not available on Windows")
 def test_pip_install_attempt_success_exits_zero():
     """When pip succeeds, the subshell should exit 0."""
     snippet = _pip_install_attempt("python3 -c 'pass'")
@@ -444,6 +464,7 @@ def test_pip_install_attempt_success_exits_zero():
     assert result.returncode == 0
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="bash not available on Windows")
 def test_pip_install_attempt_surfaces_stderr_on_failure():
     """On failure, the last 5 lines of pip output should appear in stdout."""
     snippet = _pip_install_attempt("python3 -m pip install __nonexistent_package_12345__")
@@ -701,8 +722,10 @@ def test_llama_cpp_rebuild_cmd_clears_cached_build_paths():
     cmd = _llama_cpp_rebuild_cmd()
 
     # Must remove both the cached symlink and the build dir the serve bootstrap
-    # links/creates, so the next serve recompiles from source.
+    # links/creates, so the next serve recompiles from source. The .exe variant
+    # is also removed so Windows hosts (Git Bash) get a clean slate too.
     assert 'rm -f "$HOME/bin/llama-server"' in cmd
+    assert 'rm -f "$HOME/bin/llama-server" "$HOME/bin/llama-server.exe"' in cmd
     assert 'rm -rf "$HOME/llama.cpp/build"' in cmd
     # Recreates ~/bin so a never-served host does not error on a missing dir.
     assert 'mkdir -p "$HOME/bin"' in cmd
@@ -722,6 +745,7 @@ def test_local_windows_download_pid_tracks_inner_bash_and_stop_kills_tree():
     assert "Stop-Tree ([int]$p)" in running_src
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="bash not available on Windows")
 def test_llama_cpp_rebuild_cmd_runs_clean_on_a_fresh_home(tmp_path):
     """The command should succeed even when neither path exists yet."""
     import os

@@ -1569,8 +1569,12 @@ def test_llm_core_list_model_ids_uses_cached_configured_proxy(monkeypatch):
     ep.hidden_models = json.dumps(["hidden-model"])
     db = _RouteDb([ep])
 
-    monkeypatch.setattr(src_database, "ModelEndpoint", _RouteModelEndpoint)
-    monkeypatch.setattr(src_database, "SessionLocal", lambda: db)
+    # Re-import src.database to ensure we patch the live sys.modules entry.
+    # Previous tests (e.g. webhook) may have deleted and re-created the module,
+    # invalidating the module-level import reference.
+    import src.database as _src_database
+    monkeypatch.setattr(_src_database, "ModelEndpoint", _RouteModelEndpoint)
+    monkeypatch.setattr(_src_database, "SessionLocal", lambda: db)
     monkeypatch.setattr(llm_core.httpx, "get", lambda *a, **k: (_ for _ in ()).throw(AssertionError("/models should not be fetched")))
 
     assert llm_core.list_model_ids("http://100.117.136.97:34521/v1/chat/completions", timeout=1) == ["cached-model"]

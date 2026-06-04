@@ -1425,8 +1425,15 @@ def setup_cookbook_routes() -> APIRouter:
                 # would reuse the bad settings and fail again. CMAKE_BUILD_TYPE is
                 # explicit so the binary is optimized (Metal auto-enables on macOS).
                 runner_lines.append('    cd ~/llama.cpp && rm -rf build && cmake -B build -DCMAKE_BUILD_TYPE=Release \\')
-                runner_lines.append('      && cmake --build build -j"$NPROC" --target llama-server \\')
-                runner_lines.append('      && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+                runner_lines.append('      && cmake --build build -j"$NPROC" --target llama-server')
+                runner_lines.append('    _ody_llama_bin="$(find ~/llama.cpp/build/bin -name \'llama-server*\' -type f | head -1)"')
+                runner_lines.append('    if [ -n "$_ody_llama_bin" ]; then')
+                runner_lines.append('      if [ -n "$MSYSTEM" ] || [ "$(uname -o 2>/dev/null)" = "Msys" ]; then')
+                runner_lines.append('        cp -f "$_ody_llama_bin" ~/bin/llama-server.exe')
+                runner_lines.append('      else')
+                runner_lines.append('        ln -sf "$_ody_llama_bin" ~/bin/llama-server')
+                runner_lines.append('      fi')
+                runner_lines.append('    fi')
                 runner_lines.append('  else')
                 _append_llama_cpp_linux_accel_build_lines(runner_lines)
                 runner_lines.append('  fi')

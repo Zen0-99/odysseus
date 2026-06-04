@@ -801,7 +801,15 @@ def _append_llama_cpp_linux_accel_build_lines(runner_lines: list[str]) -> None:
     runner_lines.append('        export HIP_PATH="${HIP_PATH:-$(hipconfig -R)}"')
     runner_lines.append('      fi')
     runner_lines.append('      echo "[odysseus] ROCm/HIP detected — building llama-server with HIP support..."')
-    runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_HIP=ON && cmake --build build -j"$NPROC" --target llama-server && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+    runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_HIP=ON && cmake --build build -j"$NPROC" --target llama-server')
+    runner_lines.append('      _ody_llama_bin="$(find ~/llama.cpp/build/bin -name \'llama-server*\' -type f | head -1)"')
+    runner_lines.append('      if [ -n "$_ody_llama_bin" ]; then')
+    runner_lines.append('        if [ -n "$MSYSTEM" ] || [ "$(uname -o 2>/dev/null)" = "Msys" ]; then')
+    runner_lines.append('          cp -f "$_ody_llama_bin" ~/bin/llama-server.exe')
+    runner_lines.append('        else')
+    runner_lines.append('          ln -sf "$_ody_llama_bin" ~/bin/llama-server')
+    runner_lines.append('        fi')
+    runner_lines.append('      fi')
     runner_lines.append('    elif command -v nvcc &>/dev/null; then')
     # nvcc alone is not sufficient — pip-installed CUDA wheels or incomplete
     # tooling can expose nvcc without shipping libcudart, causing cmake to fail
@@ -819,18 +827,42 @@ def _append_llama_cpp_linux_accel_build_lines(runner_lines: list[str]) -> None:
     runner_lines.append('      }')
     runner_lines.append('      if _odysseus_has_cudart; then')
     runner_lines.append('        echo "[odysseus] CUDA nvcc + cudart found — building llama-server with CUDA (GPU) support..."')
-    runner_lines.append('        cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON && cmake --build build -j"$NPROC" --target llama-server && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+    runner_lines.append('        cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON && cmake --build build -j"$NPROC" --target llama-server')
+    runner_lines.append('        _ody_llama_bin="$(find ~/llama.cpp/build/bin -name \'llama-server*\' -type f | head -1)"')
+    runner_lines.append('        if [ -n "$_ody_llama_bin" ]; then')
+    runner_lines.append('          if [ -n "$MSYSTEM" ] || [ "$(uname -o 2>/dev/null)" = "Msys" ]; then')
+    runner_lines.append('            cp -f "$_ody_llama_bin" ~/bin/llama-server.exe')
+    runner_lines.append('          else')
+    runner_lines.append('            ln -sf "$_ody_llama_bin" ~/bin/llama-server')
+    runner_lines.append('          fi')
+    runner_lines.append('        fi')
     runner_lines.append('      else')
     runner_lines.append('        echo "[odysseus] WARNING: nvcc found but CUDA runtime (libcudart.so) is not visible — building llama-server for CPU only."')
     runner_lines.append('        echo "[odysseus]   GPU inference will not be available for this llama.cpp build."')
     runner_lines.append('        echo "[odysseus]   Ensure libcudart is installed (e.g. cuda-runtime package) and visible via ldconfig or CUDA_HOME."')
-    runner_lines.append('        cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j"$NPROC" --target llama-server && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+    runner_lines.append('        cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j"$NPROC" --target llama-server')
+    runner_lines.append('        _ody_llama_bin="$(find ~/llama.cpp/build/bin -name \'llama-server*\' -type f | head -1)"')
+    runner_lines.append('        if [ -n "$_ody_llama_bin" ]; then')
+    runner_lines.append('          if [ -n "$MSYSTEM" ] || [ "$(uname -o 2>/dev/null)" = "Msys" ]; then')
+    runner_lines.append('            cp -f "$_ody_llama_bin" ~/bin/llama-server.exe')
+    runner_lines.append('          else')
+    runner_lines.append('            ln -sf "$_ody_llama_bin" ~/bin/llama-server')
+    runner_lines.append('          fi')
+    runner_lines.append('        fi')
     runner_lines.append('      fi')
     runner_lines.append('    else')
     runner_lines.append('      echo "[odysseus] WARNING: no HIP/CUDA toolchain found — building llama-server for CPU only."')
     runner_lines.append('      echo "[odysseus]   GPU inference will not be available for this llama.cpp build."')
     runner_lines.append('      echo "[odysseus]   Install ROCm for AMD GPUs or vLLM/CUDA tooling for NVIDIA, then re-launch this serve task."')
-    runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j"$NPROC" --target llama-server && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+    runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j"$NPROC" --target llama-server')
+    runner_lines.append('      _ody_llama_bin="$(find ~/llama.cpp/build/bin -name \'llama-server*\' -type f | head -1)"')
+    runner_lines.append('      if [ -n "$_ody_llama_bin" ]; then')
+    runner_lines.append('        if [ -n "$MSYSTEM" ] || [ "$(uname -o 2>/dev/null)" = "Msys" ]; then')
+    runner_lines.append('          cp -f "$_ody_llama_bin" ~/bin/llama-server.exe')
+    runner_lines.append('        else')
+    runner_lines.append('          ln -sf "$_ody_llama_bin" ~/bin/llama-server')
+    runner_lines.append('        fi')
+    runner_lines.append('      fi')
     runner_lines.append('    fi')
 
 
@@ -846,7 +878,7 @@ def _llama_cpp_rebuild_cmd() -> str:
     """
     return (
         'mkdir -p "$HOME/bin" && '
-        'rm -f "$HOME/bin/llama-server" && '
+        'rm -f "$HOME/bin/llama-server" "$HOME/bin/llama-server.exe" && '
         'rm -rf "$HOME/llama.cpp/build" && '
         'echo "[odysseus] Cleared the cached llama.cpp build. '
         'Re-launch the serve task to rebuild llama-server from source '

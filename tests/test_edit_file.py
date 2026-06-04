@@ -45,7 +45,7 @@ async def test_edit_file_blocked_at_execution_for_non_admin(monkeypatch):
     import src.tool_execution as te
     monkeypatch.setattr(te, "_owner_is_admin", lambda owner: False)
     ws = tempfile.mkdtemp()
-    p = os.path.join("/tmp", "ef_block.txt")
+    p = os.path.join(tempfile.gettempdir(), "ef_block.txt")
     open(p, "w").write("a\n")
     _desc, result = await te.execute_tool_block(
         ToolBlock("edit_file", json.dumps({"path": p, "old_string": "a", "new_string": "b"})),
@@ -58,7 +58,7 @@ async def test_edit_file_blocked_at_execution_for_non_admin(monkeypatch):
 # ── Behavior ──────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_edit_file_success():
-    p = os.path.join("/tmp", "ef_ok.py")
+    p = os.path.join(tempfile.gettempdir(), "ef_ok.py")
     open(p, "w").write("def f():\n    return 1\n")
     res = await EditFileTool().execute(json.dumps({"path": p, "old_string": "return 1", "new_string": "return 2"}), {})
     assert res["exit_code"] == 0
@@ -69,7 +69,7 @@ async def test_edit_file_success():
 
 @pytest.mark.asyncio
 async def test_edit_file_not_found():
-    p = os.path.join("/tmp", "ef_nf.txt")
+    p = os.path.join(tempfile.gettempdir(), "ef_nf.txt")
     open(p, "w").write("hello\n")
     res = await EditFileTool().execute(json.dumps({"path": p, "old_string": "nope", "new_string": "x"}), {})
     assert res["exit_code"] == 1 and "not found" in res["error"]
@@ -78,7 +78,7 @@ async def test_edit_file_not_found():
 
 @pytest.mark.asyncio
 async def test_edit_file_non_unique():
-    p = os.path.join("/tmp", "ef_dup.txt")
+    p = os.path.join(tempfile.gettempdir(), "ef_dup.txt")
     open(p, "w").write("x\nx\n")
     res = await EditFileTool().execute(json.dumps({"path": p, "old_string": "x", "new_string": "y"}), {})
     assert res["exit_code"] == 1 and "not unique" in res["error"]

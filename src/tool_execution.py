@@ -98,6 +98,9 @@ def _tool_path_roots() -> list[str]:
     from src.constants import DATA_DIR
     roots.append(DATA_DIR)
 
+    # System temp directories (cross-platform).
+    import tempfile
+    roots.append(tempfile.gettempdir())
     # /tmp (and its macOS realpath /private/tmp).
     roots.append("/tmp")
     try:
