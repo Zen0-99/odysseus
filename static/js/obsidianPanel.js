@@ -3,11 +3,13 @@
  */
 
 import { makeWindowDraggable } from './windowDrag.js';
+import { obsidianMdToHtml, buildNoteCache } from './obsidianMarkdown.js';
 
 const API_BASE = window.location.origin;
 
 let _open = false;
 let _notes = [];
+let _noteCache = new Map();
 let _activeTab = 'list';
 let _searchQuery = '';
 let _selectedNoteId = null;
@@ -494,6 +496,7 @@ async function _loadNotes() {
     if (!r.ok) return;
     const data = await r.json();
     _notes = data.notes || [];
+    _noteCache = buildNoteCache(_notes);
     _renderNoteList();
   } catch (e) {
     console.error('Obsidian load failed', e);
@@ -538,6 +541,8 @@ function _renderNoteList() {
   });
 }
 
+let _previewMode = 'preview'; // 'preview' | 'edit'
+
 async function _selectNote(id) {
   _selectedNoteId = id;
   document.querySelectorAll('.obsidian-note-card').forEach(c => c.classList.toggle('selected', c.dataset.id === id));
@@ -553,20 +558,101 @@ async function _selectNote(id) {
     preview.innerHTML = `
       <div class="obsidian-preview-header">
         <strong>${_esc(note.title)}</strong>
-        <button class="obsidian-use-context-btn">Use as context</button>
-      </div>
-      <pre class="obsidian-preview-body">${_esc(note.content)}</pre>
-      ${note.backlinks_resolved?.length ? `
-        <div class="obsidian-preview-backlinks">
-          <b>Backlinks:</b> ${note.backlinks_resolved.map(b => _esc(b.title)).join(', ')}
+        <div style="display:flex;gap:6px;align-items:center;">
+          <button class="obsidian-mode-toggle" data-mode="preview">Preview</button>
+          <button class="obsidian-mode-toggle" data-mode="edit">Edit</button>
+          <button class="obsidian-use-context-btn">Use as context</button>
         </div>
-      ` : ''}
+      </div>
+      <div class="obsidian-preview-body"></div>
     `;
+    const bodyEl = preview.querySelector('.obsidian-preview-body');
+    const updateBody = () => {
+      if (_previewMode === 'edit') {
+        bodyEl.innerHTML = `<textarea class="obsidian-edit-textarea">${_esc(note.content)}</textarea>`;
+      } else {
+        bodyEl.innerHTML = obsidianMdToHtml(note.content || '', _noteCache);
+        // Wire wikilink clicks
+        bodyEl.querySelectorAll('a.wikilink').forEach(a => {
+          a.addEventListener('click', (e) => {
+            e.preventDefault();
+            const targetTitle = a.dataset.note;
+            const target = _notes.find(n => n.title === targetTitle);
+            if (target) _selectNote(target.id);
+          });
+        });
+      }
+    };
+    updateBody();
+    preview.querySelectorAll('.obsidian-mode-toggle').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.mode === _previewMode);
+      btn.addEventListener('click', () => {
+        _previewMode = btn.dataset.mode;
+        preview.querySelectorAll('.obsidian-mode-toggle').forEach(b => b.classList.toggle('active', b.dataset.mode === _previewMode));
+        updateBody();
+      });
+    });
     preview.querySelector('.obsidian-use-context-btn')?.addEventListener('click', () => {
       _injectAsContext(note);
     });
+    _renderRightSidebar(note);
   } catch (e) {
     preview.style.display = 'none';
+  }
+}
+
+function _renderRightSidebar(note) {
+  const pane = document.getElementById('obsidian-right-pane');
+  if (!pane) return;
+  const placeholder = pane.querySelector('.obsidian-right-placeholder');
+  if (placeholder) placeholder.classList.add('hidden');
+
+  // Properties
+  const props = document.getElementById('obsidian-properties-panel');
+  if (props) {
+    const fm = note.frontmatter || {};
+    const rows = Object.entries(fm).map(([k, v]) => `<div class="obsidian-prop-row"><span class="obsidian-prop-key">${_esc(k)}</span><span class="obsidian-prop-val">${_esc(String(v))}</span></div>`).join('');
+    props.innerHTML = `<h4 style="font-size:11px;opacity:0.6;margin:0 0 6px;text-transform:uppercase;letter-spacing:0.05em;">Properties</h4>${rows || '<div style="opacity:0.5;font-size:11px;">No properties</div>'}`;
+    props.classList.remove('hidden');
+  }
+
+  // Backlinks
+  const bl = document.getElementById('obsidian-backlinks-panel');
+  if (bl) {
+    const links = note.backlinks_resolved || [];
+    bl.innerHTML = `<h4 style="font-size:11px;opacity:0.6;margin:12px 0 6px;text-transform:uppercase;letter-spacing:0.05em;">Backlinks (${links.length})</h4>` +
+      (links.length ? links.map(b => `<div class="obsidian-sidebar-link" data-id="${_esc(b.id)}">${_esc(b.title)}</div>`).join('') : '<div style="opacity:0.5;font-size:11px;">No backlinks</div>');
+    bl.querySelectorAll('.obsidian-sidebar-link').forEach(el => {
+      el.addEventListener('click', () => _selectNote(el.dataset.id));
+    });
+    bl.classList.remove('hidden');
+  }
+
+  // Outgoing links
+  const out = document.getElementById('obsidian-outgoing-panel');
+  if (out) {
+    const links = note.outbound_links || [];
+    out.innerHTML = `<h4 style="font-size:11px;opacity:0.6;margin:12px 0 6px;text-transform:uppercase;letter-spacing:0.05em;">Outgoing (${links.length})</h4>` +
+      (links.length ? links.map(t => {
+        const target = _notes.find(n => n.title === t);
+        return `<div class="obsidian-sidebar-link ${target ? '' : 'ghost'}" data-title="${_esc(t)}">${_esc(t)}</div>`;
+      }).join('') : '<div style="opacity:0.5;font-size:11px;">No outgoing links</div>');
+    out.querySelectorAll('.obsidian-sidebar-link').forEach(el => {
+      el.addEventListener('click', () => {
+        const target = _notes.find(n => n.title === el.dataset.title);
+        if (target) _selectNote(target.id);
+      });
+    });
+    out.classList.remove('hidden');
+  }
+
+  // Tags
+  const tags = document.getElementById('obsidian-tags-panel');
+  if (tags) {
+    const t = note.tags || [];
+    tags.innerHTML = `<h4 style="font-size:11px;opacity:0.6;margin:12px 0 6px;text-transform:uppercase;letter-spacing:0.05em;">Tags</h4>` +
+      (t.length ? t.map(tag => `<span class="obsidian-tag" style="cursor:pointer;">${_esc(tag)}</span>`).join(' ') : '<div style="opacity:0.5;font-size:11px;">No tags</div>');
+    tags.classList.remove('hidden');
   }
 }
 
