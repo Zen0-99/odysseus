@@ -4,6 +4,7 @@
 
 import { makeWindowDraggable } from './windowDrag.js';
 import { obsidianMdToHtml, buildNoteCache } from './obsidianMarkdown.js';
+import { styledConfirm } from './ui.js';
 
 const API_BASE = window.location.origin;
 
@@ -158,13 +159,9 @@ function _wireDrag() {
   }
 
   // Vault management
-  document.getElementById('obsidian-add-vault-btn')?.addEventListener('click', _showAddVaultForm);
   document.getElementById('obsidian-save-vault-btn')?.addEventListener('click', _saveNewVault);
   document.getElementById('obsidian-cancel-vault-btn')?.addEventListener('click', _hideAddVaultForm);
-  document.getElementById('obsidian-vault-select')?.addEventListener('change', (e) => {
-    _selectVault(e.target.value);
-    try { localStorage.setItem('obsidian-last-vault', e.target.value); } catch {}
-  });
+  _wireVaultDropdown();
 
   // Permission management
   document.getElementById('obsidian-vault-read-all')?.addEventListener('change', _updateVaultToggles);
@@ -189,8 +186,7 @@ async function _loadVaults() {
     const r = await fetch(`${API_BASE}/api/obsidian/status`, { credentials: 'same-origin' });
     const s = r.ok ? await r.json() : {};
     _vaults = s.vaults || [];
-    _renderVaultList();
-    _populateVaultSelect();
+    _populateVaultDropdown();
     if (_vaults.length > 0 && !_selectedVaultId) {
       let lastVault = null;
       try { lastVault = localStorage.getItem('obsidian-last-vault'); } catch {}
@@ -200,46 +196,96 @@ async function _loadVaults() {
   } catch (e) {
     console.error('[obsidian] load vaults failed', e);
     _vaults = [];
-    _renderVaultList();
   }
 }
 
-function _renderVaultList() {
-  const list = document.getElementById('obsidian-vault-list');
-  if (!list) return;
-  list.classList.remove('hidden');
+function _populateVaultDropdown() {
+  const menu = document.getElementById('obsidian-vault-dropdown-menu');
+  const label = document.getElementById('obsidian-vault-dropdown-label');
+  if (!menu) return;
+
+  const vault = _vaults.find(v => v.id === _selectedVaultId);
+  if (label) label.textContent = vault ? _esc(vault.name) : 'Select vault...';
+
   if (!_vaults.length) {
-    list.innerHTML = '<div style="padding:12px;text-align:center;opacity:0.5;font-size:12px;">No vaults connected</div>';
-    return;
-  }
-  list.innerHTML = _vaults.map(v => `
-    <div class="obsidian-vault-row ${_selectedVaultId === v.id ? 'selected' : ''}" data-id="${v.id}">
-      <div class="obsidian-vault-name">${_esc(v.name)}</div>
-      <div class="obsidian-vault-badges">
-        ${v.read_enabled ? '<span class="obsidian-badge read">R</span>' : '<span class="obsidian-badge none">R</span>'}
-        ${v.write_enabled ? '<span class="obsidian-badge write">W</span>' : ''}
-        <button class="obsidian-vault-remove" data-id="${v.id}" title="Remove vault">&times;</button>
+    menu.innerHTML = '<div class="obsidian-vault-dropdown-item" style="opacity:0.5;cursor:default;"><span class="vault-name">No vaults</span></div>';
+  } else {
+    menu.innerHTML = _vaults.map(v => `
+      <div class="obsidian-vault-dropdown-item ${_selectedVaultId === v.id ? 'selected' : ''}" data-id="${v.id}">
+        <span class="vault-name">${_esc(v.name)}</span>
+        <button class="vault-remove" data-id="${v.id}" title="Remove vault">&#x2715;</button>
       </div>
-    </div>
-  `).join('');
-  list.querySelectorAll('.obsidian-vault-row').forEach(row => {
-    row.addEventListener('click', (e) => {
-      if (e.target.closest('.obsidian-vault-remove')) return;
-      _selectVault(row.dataset.id);
+    `).join('');
+  }
+
+  // Add "Add new vault" option
+  const addEl = document.createElement('div');
+  addEl.className = 'obsidian-vault-dropdown-item obsidian-vault-dropdown-add';
+  addEl.innerHTML = '<span class="vault-name">+ Add new vault</span>';
+  addEl.addEventListener('click', (e) => {
+    e.stopPropagation();
+    _closeVaultDropdown();
+    _showAddVaultForm();
+  });
+  menu.appendChild(addEl);
+
+  // Wire vault selection
+  menu.querySelectorAll('.obsidian-vault-dropdown-item:not(.obsidian-vault-dropdown-add)').forEach(item => {
+    item.addEventListener('click', (e) => {
+      if (e.target.closest('.vault-remove')) return;
+      _closeVaultDropdown();
+      _selectVault(item.dataset.id);
+      try { localStorage.setItem('obsidian-last-vault', item.dataset.id); } catch {}
     });
   });
-  list.querySelectorAll('.obsidian-vault-remove').forEach(btn => {
-    btn.addEventListener('click', (e) => {
+
+  // Wire remove buttons
+  menu.querySelectorAll('.vault-remove').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      _removeVault(btn.dataset.id);
+      const vid = btn.dataset.id;
+      const v = _vaults.find(x => x.id === vid);
+      const confirmed = await styledConfirm(
+        `Remove vault "${_esc(v?.name || vid)}"?\n\nThis will stop syncing but won't delete any files on disk.`,
+        { confirmText: 'Remove', cancelText: 'Cancel', danger: true }
+      );
+      if (confirmed) {
+        _closeVaultDropdown();
+        await _removeVault(vid);
+      }
     });
   });
 }
 
-function _populateVaultSelect() {
-  const sel = document.getElementById('obsidian-vault-select');
-  if (!sel) return;
-  sel.innerHTML = _vaults.map(v => `<option value="${v.id}" ${_selectedVaultId === v.id ? 'selected' : ''}>${_esc(v.name)}</option>`).join('');
+function _wireVaultDropdown() {
+  const wrap = document.getElementById('obsidian-vault-dropdown-wrap');
+  const trigger = document.getElementById('obsidian-vault-dropdown-trigger');
+  if (!trigger || !wrap) return;
+
+  trigger.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const menu = document.getElementById('obsidian-vault-dropdown-menu');
+    if (!menu) return;
+    const isHidden = menu.classList.contains('hidden');
+    if (isHidden) {
+      _populateVaultDropdown();
+      menu.classList.remove('hidden');
+      wrap.classList.add('open');
+    } else {
+      _closeVaultDropdown();
+    }
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!wrap.contains(e.target)) _closeVaultDropdown();
+  });
+}
+
+function _closeVaultDropdown() {
+  const menu = document.getElementById('obsidian-vault-dropdown-menu');
+  const wrap = document.getElementById('obsidian-vault-dropdown-wrap');
+  if (menu) menu.classList.add('hidden');
+  if (wrap) wrap.classList.remove('open');
 }
 
 async function _selectVault(vaultId) {
@@ -247,23 +293,21 @@ async function _selectVault(vaultId) {
   const vault = _vaults.find(v => v.id === vaultId);
   const mainPanel = document.getElementById('obsidian-main-panel');
   const statusBar = document.getElementById('obsidian-status-bar');
-  const vaultList = document.getElementById('obsidian-vault-list');
   const folderTree = document.getElementById('obsidian-folder-tree');
+  const addForm = document.getElementById('obsidian-add-vault-form');
 
-  _renderVaultList();
-  _populateVaultSelect();
+  _populateVaultDropdown();
 
   if (!vault) {
     if (mainPanel) mainPanel.classList.add('hidden');
     if (statusBar) statusBar.textContent = '';
-    if (vaultList) vaultList.classList.remove('hidden');
     if (folderTree) folderTree.classList.add('hidden');
+    if (addForm) addForm.classList.add('hidden');
     return;
   }
 
   if (mainPanel) mainPanel.classList.remove('hidden');
   if (statusBar) statusBar.textContent = `${_esc(vault.name)} — ${vault.note_count || 0} notes`;
-  if (vaultList) vaultList.classList.add('hidden');
   if (folderTree) folderTree.classList.remove('hidden');
 
   // Update permission toggles
@@ -430,12 +474,10 @@ function _renderFolderTree() {
 
 function _showAddVaultForm() {
   document.getElementById('obsidian-add-vault-form')?.classList.remove('hidden');
-  document.getElementById('obsidian-vault-list')?.classList.add('hidden');
 }
 
 function _hideAddVaultForm() {
   document.getElementById('obsidian-add-vault-form')?.classList.add('hidden');
-  document.getElementById('obsidian-vault-list')?.classList.remove('hidden');
   const status = document.getElementById('obsidian-add-vault-status');
   if (status) status.textContent = '';
 }
@@ -866,7 +908,7 @@ async function _updateVaultToggles() {
       vault.read_enabled = read_enabled;
       vault.write_enabled = write_enabled;
     }
-    _renderVaultList();
+    _populateVaultDropdown();
     _selectVault(_selectedVaultId);
   } catch (e) {
     console.error('[obsidian] update vault toggles failed', e);

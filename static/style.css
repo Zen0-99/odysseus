@@ -37937,52 +37937,108 @@ body.theme-frosted .modal {
   justify-content: space-between;
 }
 
-/* Vault list */
-.obsidian-vault-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+/* Custom vault dropdown */
+.obsidian-vault-dropdown-wrap {
+  position: relative;
+  width: 100%;
 }
-.obsidian-vault-row {
+.obsidian-vault-dropdown-trigger {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 8px 10px;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
+  background: var(--bg-raised, var(--bg));
   cursor: pointer;
+  font-size: 13px;
+  transition: border-color 0.15s, background 0.15s;
+  user-select: none;
+}
+.obsidian-vault-dropdown-trigger:hover {
+  border-color: var(--accent, var(--red, #4a9eff));
+}
+.obsidian-vault-dropdown-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.obsidian-vault-dropdown-arrow {
+  font-size: 10px;
+  opacity: 0.6;
+  flex-shrink: 0;
+  transition: transform 0.15s;
+}
+.obsidian-vault-dropdown-wrap.open .obsidian-vault-dropdown-arrow {
+  transform: rotate(180deg);
+}
+.obsidian-vault-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 100;
+  background: var(--bg-raised, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+  padding: 4px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.obsidian-vault-dropdown-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
   transition: background 0.15s;
 }
-.obsidian-vault-row:hover {
-  background: color-mix(in srgb, var(--fg) 4%, transparent);
+.obsidian-vault-dropdown-item:hover {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
 }
-.obsidian-vault-row.selected {
-  border-color: var(--accent, var(--red, #4a9eff));
-  background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 8%, transparent);
+.obsidian-vault-dropdown-item.selected {
+  background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 12%, transparent);
 }
-.obsidian-vault-name {
-  font-weight: 500;
-  font-size: 13px;
+.obsidian-vault-dropdown-item .vault-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.obsidian-vault-badges {
-  display: flex;
-  gap: 4px;
-  align-items: center;
-}
-.obsidian-vault-remove {
+.obsidian-vault-dropdown-item .vault-remove {
   background: none;
   border: none;
   color: var(--fg);
-  opacity: 0.35;
+  opacity: 0;
   cursor: pointer;
-  font-size: 14px;
-  padding: 0 2px;
+  font-size: 13px;
+  padding: 0 4px;
   line-height: 1;
-  margin-left: 2px;
+  border-radius: 3px;
+  transition: opacity 0.15s, color 0.15s, background 0.15s;
 }
-.obsidian-vault-remove:hover {
+.obsidian-vault-dropdown-item:hover .vault-remove {
+  opacity: 0.5;
+}
+.obsidian-vault-dropdown-item .vault-remove:hover {
   opacity: 1;
   color: var(--red, #ff6b6b);
+  background: color-mix(in srgb, var(--red, #ff6b6b) 12%, transparent);
+}
+.obsidian-vault-dropdown-add {
+  border-top: 1px solid var(--border);
+  margin-top: 2px;
+  padding-top: 7px;
+  color: var(--accent, var(--red, #4a9eff));
+  font-weight: 500;
+}
+.obsidian-vault-dropdown-add:hover {
+  background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 8%, transparent);
 }
 
 /* Fullscreen snap state */

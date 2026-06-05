@@ -462,10 +462,15 @@
           <!-- Left pane: Vault selector + Folder tree -->
           <div class="obsidian-left-pane">
             <div class="obsidian-left-header">
-              <select id="obsidian-vault-select" style="flex:1;min-width:100px;font-size:12px;"></select>
-              <button class="admin-btn-add" id="obsidian-add-vault-btn" style="padding:4px 8px;font-size:11px;white-space:nowrap;">+ Add</button>
+              <!-- Custom vault dropdown -->
+              <div class="obsidian-vault-dropdown-wrap" id="obsidian-vault-dropdown-wrap">
+                <div class="obsidian-vault-dropdown-trigger" id="obsidian-vault-dropdown-trigger">
+                  <span class="obsidian-vault-dropdown-label" id="obsidian-vault-dropdown-label">Select vault...</span>
+                  <span class="obsidian-vault-dropdown-arrow">&#9662;</span>
+                </div>
+                <div class="obsidian-vault-dropdown-menu hidden" id="obsidian-vault-dropdown-menu"></div>
+              </div>
             </div>
-            <div id="obsidian-vault-list" class="obsidian-vault-list hidden"></div>
             <div id="obsidian-folder-tree" class="obsidian-folder-tree hidden"></div>
             <!-- Add vault form (hidden by default) -->
             <div id="obsidian-add-vault-form" class="hidden" style="margin-top:8px;padding:8px;border:1px solid var(--border);border-radius:8px;">
