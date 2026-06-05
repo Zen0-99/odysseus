@@ -11,6 +11,8 @@ let _notes = [];
 let _activeTab = 'list';
 let _searchQuery = '';
 let _selectedNoteId = null;
+let _selectedFolder = null;
+let _expandedFolders = new Set();
 let _dragWired = false;
 let _vaults = [];
 let _selectedVaultId = null;
@@ -157,7 +159,10 @@ function _wireDrag() {
   document.getElementById('obsidian-add-vault-btn')?.addEventListener('click', _showAddVaultForm);
   document.getElementById('obsidian-save-vault-btn')?.addEventListener('click', _saveNewVault);
   document.getElementById('obsidian-cancel-vault-btn')?.addEventListener('click', _hideAddVaultForm);
-  document.getElementById('obsidian-vault-select')?.addEventListener('change', (e) => _selectVault(e.target.value));
+  document.getElementById('obsidian-vault-select')?.addEventListener('change', (e) => {
+    _selectVault(e.target.value);
+    try { localStorage.setItem('obsidian-last-vault', e.target.value); } catch {}
+  });
 
   // Permission management
   document.getElementById('obsidian-vault-read-all')?.addEventListener('change', _updateVaultToggles);
@@ -179,7 +184,10 @@ async function _loadVaults() {
     _renderVaultList();
     _populateVaultSelect();
     if (_vaults.length > 0 && !_selectedVaultId) {
-      _selectVault(_vaults[0].id);
+      let lastVault = null;
+      try { lastVault = localStorage.getItem('obsidian-last-vault'); } catch {}
+      const target = _vaults.find(v => v.id === lastVault) ? lastVault : _vaults[0].id;
+      _selectVault(target);
     }
   } catch (e) {
     console.error('[obsidian] load vaults failed', e);
@@ -289,6 +297,44 @@ async function _loadFolders() {
   }
 }
 
+function _buildFolderTree(paths) {
+  const root = { name: '', children: {} };
+  for (const p of paths) {
+    if (!p) continue;
+    const parts = p.split('/').filter(Boolean);
+    let node = root;
+    for (const part of parts) {
+      if (!node.children[part]) node.children[part] = { name: part, children: {} };
+      node = node.children[part];
+    }
+  }
+  return root;
+}
+
+function _renderFolderTreeNode(node, pathPrefix, depth) {
+  const fullPath = pathPrefix ? `${pathPrefix}/${node.name}` : node.name;
+  const isExpanded = _expandedFolders.has(fullPath);
+  const hasChildren = Object.keys(node.children).length > 0;
+  const isSelected = _selectedFolder === fullPath;
+  let html = '';
+  if (node.name) {
+    const indent = 'padding-left:' + (depth * 14 + 4) + 'px;';
+    const chevron = hasChildren ? (isExpanded ? '▼' : '▶') : '<span style="opacity:0.3">◦</span>';
+    html += `<div class="obsidian-folder-item ${isSelected ? 'selected' : ''}" data-folder="${_esc(fullPath)}" style="${indent}">
+      <span class="obsidian-folder-chevron" style="width:14px;text-align:center;flex-shrink:0;font-size:9px;opacity:0.6;">${chevron}</span>
+      <span class="obsidian-folder-icon">📁</span>
+      <span class="obsidian-folder-name">${_esc(node.name)}</span>
+    </div>`;
+  }
+  if (hasChildren && isExpanded) {
+    const childNames = Object.keys(node.children).sort();
+    for (const childName of childNames) {
+      html += _renderFolderTreeNode(node.children[childName], fullPath, depth + 1);
+    }
+  }
+  return html;
+}
+
 function _renderFolderTree() {
   const tree = document.getElementById('obsidian-folder-tree');
   if (!tree) return;
@@ -296,18 +342,29 @@ function _renderFolderTree() {
     tree.innerHTML = '<div style="padding:8px;text-align:center;opacity:0.5;font-size:11px;">No folders</div>';
     return;
   }
-  tree.innerHTML = _folders.map(f => `
-    <div class="obsidian-folder-item" data-folder="${_esc(f)}">
-      <span class="obsidian-folder-icon">📁</span>
-      <span class="obsidian-folder-name">${_esc(f.split('/').pop() || f)}</span>
-    </div>
-  `).join('');
+  const root = _buildFolderTree(_folders);
+  let html = '';
+  const childNames = Object.keys(root.children).sort();
+  for (const childName of childNames) {
+    html += _renderFolderTreeNode(root.children[childName], '', 0);
+  }
+  tree.innerHTML = html || '<div style="padding:8px;text-align:center;opacity:0.5;font-size:11px;">No folders</div>';
+
   tree.querySelectorAll('.obsidian-folder-item').forEach(item => {
-    item.addEventListener('click', () => {
-      _searchQuery = '';
-      const searchInput = document.getElementById('obsidian-search');
-      if (searchInput) searchInput.value = '';
-      _loadNotes();
+    item.addEventListener('click', (e) => {
+      const folder = item.dataset.folder;
+      const chevron = item.querySelector('.obsidian-folder-chevron');
+      // Toggle expand if clicking chevron area
+      if (e.target.closest('.obsidian-folder-chevron') && chevron.textContent.trim() && chevron.textContent !== '◦') {
+        if (_expandedFolders.has(folder)) _expandedFolders.delete(folder);
+        else _expandedFolders.add(folder);
+        _renderFolderTree();
+        return;
+      }
+      // Select folder
+      _selectedFolder = folder;
+      _renderFolderTree();
+      _renderNoteList();
     });
   });
 }
@@ -449,10 +506,16 @@ function _renderNoteList() {
   const list = document.getElementById('obsidian-note-list');
   if (!list) return;
 
-  const filtered = _notes.filter(n => {
+  let filtered = _notes;
+  // Folder filter
+  if (_selectedFolder) {
+    filtered = filtered.filter(n => (n.folder || '') === _selectedFolder);
+  }
+  // Search filter
+  if (_searchQuery) {
     const q = _searchQuery.toLowerCase();
-    return !q || (n.title + n.content + (n.tags?.join('') || '')).toLowerCase().includes(q);
-  });
+    filtered = filtered.filter(n => (n.title + n.content + (n.tags?.join('') || '')).toLowerCase().includes(q));
+  }
 
   if (!filtered.length) {
     list.innerHTML = '<div style="padding:20px;text-align:center;opacity:0.5;font-size:12px;">No notes found</div>';

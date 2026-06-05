@@ -37774,6 +37774,13 @@ body.theme-frosted .modal {
 .obsidian-folder-item:hover {
   background: color-mix(in srgb, var(--fg) 4%, transparent);
 }
+.obsidian-folder-item.selected {
+  background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 10%, transparent);
+}
+.obsidian-folder-chevron {
+  cursor: pointer;
+  user-select: none;
+}
 .obsidian-folder-icon {
   font-size: 11px;
   opacity: 0.7;
