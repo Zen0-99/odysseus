@@ -126,6 +126,7 @@ async function _loadVaults() {
 function _renderVaultList() {
   const list = document.getElementById('obsidian-vault-list');
   if (!list) return;
+  list.classList.remove('hidden');
   if (!_vaults.length) {
     list.innerHTML = '<div style="padding:12px;text-align:center;opacity:0.5;font-size:12px;">No vaults connected</div>';
     return;
