@@ -7,13 +7,15 @@ const API_BASE = window.location.origin;
 let _network = null;
 let _container = null;
 
-export async function renderObsidianGraph(container) {
+export async function renderObsidianGraph(container, vaultId) {
   if (!window.vis || !container) return;
   _container = container;
   container.innerHTML = '<div class="obsidian-graph-loading">Loading graph...</div>';
 
   try {
-    const r = await fetch(`${API_BASE}/api/obsidian/graph`);
+    const qs = new URLSearchParams();
+    if (vaultId) qs.set('vault_id', vaultId);
+    const r = await fetch(`${API_BASE}/api/obsidian/graph?${qs.toString()}`);
     if (!r.ok) { container.innerHTML = '<div class="obsidian-graph-error">Failed to load graph</div>'; return; }
     const data = await r.json();
     _draw(data.nodes, data.edges, data.groups);
