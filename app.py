@@ -1061,6 +1061,30 @@ async def _startup_event():
     # scheduled built-ins can fire once before being converted to event tasks.
     await _ensure_default_tasks()
 
+    # Restart Obsidian watchers for all active vaults
+    async def _restart_obsidian_watchers():
+        try:
+            from core.database import SessionLocal, ObsidianVault
+            from src.obsidian_watcher import get_watcher
+            db = SessionLocal()
+            try:
+                active = db.query(ObsidianVault).filter_by(is_active=True).all()
+                watcher = get_watcher()
+                for v in active:
+                    try:
+                        ok, msg = watcher.connect(v.owner, v.path)
+                        if ok:
+                            logger.info(f"[startup] Restarted Obsidian watcher for {v.owner}: {v.name}")
+                        else:
+                            logger.warning(f"[startup] Failed to restart watcher for {v.owner}: {v.name}: {msg}")
+                    except Exception as e:
+                        logger.warning(f"[startup] Watcher restart error for {v.owner}: {v.name}: {e}")
+            finally:
+                db.close()
+        except Exception as e:
+            logger.debug(f"[startup] Obsidian watcher restart skipped: {e}")
+    await _restart_obsidian_watchers()
+
     # Disk-backed skills are not covered by the DB legacy-owner sweep. Repair
     # ownerless or deleted/test-owner SKILL.md files so strict owner filtering
     # does not make an existing library look empty after auth/account changes.

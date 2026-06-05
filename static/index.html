@@ -485,15 +485,13 @@
             </div>
           </div>
 
+          <!-- Resize handle: left-center -->
+          <div class="obsidian-resize-handle-h" id="obsidian-resize-left"></div>
+
           <!-- Center pane: Tabs + Content -->
           <div class="obsidian-center-pane" id="obsidian-main-panel">
-            <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap;">
-              <span id="obsidian-vault-badges" style="display:flex;gap:4px;"></span>
-            </div>
             <div class="obsidian-tabs">
               <button class="obsidian-tab active" data-obsidian-tab="list">Notes</button>
-              <button class="obsidian-tab" data-obsidian-tab="graph">Graph</button>
-              <button class="obsidian-tab" data-obsidian-tab="timeline">Timeline</button>
               <button class="obsidian-tab" data-obsidian-tab="permissions">Permissions</button>
             </div>
 
@@ -501,24 +499,11 @@
             <div class="obsidian-tab-content" data-obsidian-content="list">
               <div class="obsidian-search-row">
                 <input type="text" id="obsidian-search" placeholder="Search notes..." />
+                <button id="obsidian-refresh-btn" title="Refresh vault" style="padding:4px 8px;font-size:11px;white-space:nowrap;background:transparent;border:1px solid var(--border);border-radius:6px;color:var(--fg);cursor:pointer;">&#x21bb; Refresh</button>
               </div>
               <div id="obsidian-list-wrap" class="obsidian-panel-wrap">
                 <div id="obsidian-note-list" class="obsidian-note-list"></div>
                 <div id="obsidian-preview" class="obsidian-preview"></div>
-              </div>
-            </div>
-
-            <!-- Graph tab -->
-            <div class="obsidian-tab-content hidden" data-obsidian-content="graph">
-              <div id="obsidian-graph-wrap" class="obsidian-panel-wrap">
-                <div id="obsidian-graph-canvas" style="width:100%;height:100%;"></div>
-              </div>
-            </div>
-
-            <!-- Timeline tab -->
-            <div class="obsidian-tab-content hidden" data-obsidian-content="timeline">
-              <div id="obsidian-timeline-wrap" class="obsidian-panel-wrap">
-                <div id="obsidian-timeline" style="width:100%;height:100%;"></div>
               </div>
             </div>
 
@@ -559,6 +544,9 @@
             </div>
             <div id="obsidian-status-bar" class="obsidian-status-bar"></div>
           </div>
+
+          <!-- Resize handle: center-right -->
+          <div class="obsidian-resize-handle-h" id="obsidian-resize-right"></div>
 
           <!-- Right pane: Sidebar (properties, backlinks, tags, outline) -->
           <div class="obsidian-right-pane" id="obsidian-right-pane">

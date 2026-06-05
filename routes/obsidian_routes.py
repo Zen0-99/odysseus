@@ -238,6 +238,11 @@ def setup_obsidian_routes() -> APIRouter:
             count = db.query(Obsidian).filter_by(
                 owner=owner, vault_path=str(vault)
             ).count()
+            # Update vault note_count
+            v = db.query(ObsidianVault).filter_by(id=vault_id).first()
+            if v:
+                v.note_count = count
+                db.commit()
         finally:
             db.close()
 
@@ -582,6 +587,25 @@ def setup_obsidian_routes() -> APIRouter:
     # -----------------------------------------------------------------------
     # Graph & Timeline
     # -----------------------------------------------------------------------
+
+    @router.post("/vaults/{vault_id}/resync")
+    async def resync_vault(vault_id: str, request: Request):
+        """Force a full resync of a vault's notes from disk."""
+        require_admin(request)
+        owner = _user(request)
+        db = SessionLocal()
+        try:
+            vault = db.query(ObsidianVault).filter_by(id=vault_id, owner=owner).first()
+            if not vault:
+                raise HTTPException(404, "Vault not found")
+            from src.obsidian_watcher import get_watcher
+            watcher = get_watcher()
+            ok, msg = watcher.connect(owner, vault.path)
+            if not ok:
+                raise HTTPException(400, msg)
+            return {"ok": True, "message": "Resync started"}
+        finally:
+            db.close()
 
     @router.get("/graph")
     async def obsidian_graph(request: Request, vault_id: Optional[str] = None):

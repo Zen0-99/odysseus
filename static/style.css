@@ -37722,7 +37722,7 @@ body.theme-frosted .modal {
 }
 .obsidian-3pane {
   display: grid;
-  grid-template-columns: 200px 1fr 200px;
+  grid-template-columns: var(--obsidian-left-w, 200px) 1fr var(--obsidian-right-w, 200px);
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
@@ -37760,35 +37760,97 @@ body.theme-frosted .modal {
   flex: 1 1 auto;
   overflow-y: auto;
   min-height: 0;
+  user-select: none;
 }
-.obsidian-folder-item {
+.obsidian-folder-tree ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.obsidian-folder-tree li {
+  position: relative;
+  margin: 0;
+  padding: 0;
+}
+/* vertical tree guide line */
+.obsidian-folder-tree li::before {
+  content: '';
+  position: absolute;
+  left: 12px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: color-mix(in srgb, var(--border) 60%, transparent);
+}
+/* horizontal connector */
+.obsidian-folder-tree li > .obsidian-tree-row::before {
+  content: '';
+  position: absolute;
+  left: -9px;
+  top: 14px;
+  width: 9px;
+  height: 1px;
+  background: color-mix(in srgb, var(--border) 60%, transparent);
+}
+.obsidian-tree-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 6px;
-  border-radius: 6px;
+  gap: 4px;
+  padding: 3px 6px;
+  border-radius: 4px;
   cursor: pointer;
   font-size: 12px;
   transition: background 0.15s;
+  position: relative;
+  margin-left: 22px;
 }
-.obsidian-folder-item:hover {
+.obsidian-tree-row:hover {
   background: color-mix(in srgb, var(--fg) 4%, transparent);
 }
-.obsidian-folder-item.selected {
+.obsidian-tree-row.selected {
   background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 10%, transparent);
 }
-.obsidian-folder-chevron {
+/* CSS arrow chevron */
+.obsidian-tree-arrow {
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid var(--fg);
+  opacity: 0.5;
+  transition: transform 0.15s;
+  flex-shrink: 0;
   cursor: pointer;
-  user-select: none;
 }
-.obsidian-folder-icon {
+.obsidian-tree-arrow.expanded {
+  transform: rotate(90deg);
+}
+.obsidian-tree-arrow.leaf {
+  border: none;
+  width: 5px;
+}
+.obsidian-tree-icon {
   font-size: 11px;
   opacity: 0.7;
+  flex-shrink: 0;
 }
-.obsidian-folder-name {
+.obsidian-tree-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Resize handles */
+.obsidian-resize-handle-h {
+  width: 4px;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+.obsidian-resize-handle-h:hover,
+.obsidian-resize-handle-h.dragging {
+  background: var(--accent, var(--red, #4a9eff));
 }
 .obsidian-tabs {
   display: flex;
