@@ -516,6 +516,70 @@ def setup_obsidian_routes() -> APIRouter:
             db.close()
 
     # -----------------------------------------------------------------------
+    # Folders & Tags
+    # -----------------------------------------------------------------------
+
+    @router.get("/folders")
+    async def obsidian_folders(request: Request, vault_id: Optional[str] = None):
+        """Return folder tree for a vault."""
+        owner = _user(request)
+        db = SessionLocal()
+        try:
+            vault_path = None
+            if vault_id:
+                vault = db.query(ObsidianVault).filter_by(id=vault_id, owner=owner).first()
+                if not vault:
+                    raise HTTPException(404, "Vault not found")
+                vault_path = vault.path
+            else:
+                vault_path = os.environ.get(f"_ODY_OBSIDIAN_VAULT_{owner}")
+            if not vault_path:
+                return {"folders": []}
+
+            rows = (
+                db.query(Obsidian.folder)
+                .filter_by(owner=owner, vault_path=vault_path)
+                .distinct()
+                .all()
+            )
+            folders = [r[0] or "" for r in rows if r[0] is not None]
+            folders = sorted(set(folders))
+            return {"folders": folders}
+        finally:
+            db.close()
+
+    @router.get("/tags")
+    async def obsidian_tags(request: Request, vault_id: Optional[str] = None):
+        """Return unique tags with note counts for a vault."""
+        owner = _user(request)
+        db = SessionLocal()
+        try:
+            vault_path = None
+            if vault_id:
+                vault = db.query(ObsidianVault).filter_by(id=vault_id, owner=owner).first()
+                if not vault:
+                    raise HTTPException(404, "Vault not found")
+                vault_path = vault.path
+            else:
+                vault_path = os.environ.get(f"_ODY_OBSIDIAN_VAULT_{owner}")
+            if not vault_path:
+                return {"tags": []}
+
+            notes = (
+                db.query(Obsidian)
+                .filter_by(owner=owner, vault_path=vault_path)
+                .all()
+            )
+            tag_counts: Dict[str, int] = {}
+            for note in notes:
+                for tag in (note.tags or []):
+                    tag_counts[tag] = tag_counts.get(tag, 0) + 1
+            tags = [{"tag": t, "count": c} for t, c in sorted(tag_counts.items())]
+            return {"tags": tags}
+        finally:
+            db.close()
+
+    # -----------------------------------------------------------------------
     # Graph & Timeline
     # -----------------------------------------------------------------------
 

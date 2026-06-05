@@ -37713,12 +37713,75 @@ body.theme-frosted .modal {
   overflow: hidden;
 }
 .obsidian-modal-body {
-  padding: 10px 12px 12px;
+  padding: 0;
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+.obsidian-3pane {
+  display: grid;
+  grid-template-columns: 200px 1fr 200px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.obsidian-left-pane {
+  border-right: 1px solid var(--border);
+  padding: 10px 8px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.obsidian-left-header {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.obsidian-center-pane {
+  padding: 10px 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.obsidian-right-pane {
+  border-left: 1px solid var(--border);
+  padding: 10px 8px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.obsidian-folder-tree {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  min-height: 0;
+}
+.obsidian-folder-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.15s;
+}
+.obsidian-folder-item:hover {
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+.obsidian-folder-icon {
+  font-size: 11px;
+  opacity: 0.7;
+}
+.obsidian-folder-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .obsidian-tabs {
   display: flex;
@@ -37835,6 +37898,31 @@ body.theme-frosted .modal {
 .obsidian-vault-badges {
   display: flex;
   gap: 4px;
+  align-items: center;
+}
+.obsidian-vault-remove {
+  background: none;
+  border: none;
+  color: var(--fg);
+  opacity: 0.35;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 2px;
+  line-height: 1;
+  margin-left: 2px;
+}
+.obsidian-vault-remove:hover {
+  opacity: 1;
+  color: var(--red, #ff6b6b);
+}
+
+/* Fullscreen snap state */
+#obsidian-modal.obsidian-fullscreen .obsidian-modal-content {
+  width: 100vw;
+  max-width: 100vw;
+  height: 100vh;
+  max-height: 100vh;
+  border-radius: 0;
 }
 
 /* Badges */
@@ -37984,6 +38072,18 @@ body.theme-frosted .modal {
     width: 100vw;
     max-height: 100dvh;
     border-radius: 0;
+  }
+  .obsidian-3pane {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+  .obsidian-left-pane {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    max-height: 200px;
+  }
+  .obsidian-right-pane {
+    display: none;
   }
   .obsidian-panel-wrap {
     flex-direction: column;

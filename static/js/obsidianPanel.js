@@ -28,6 +28,23 @@ export function openPanel() {
   _wireDrag();
   _loadVaults();
 
+  // Restore saved position / fullscreen state
+  const content = modal.querySelector('.modal-content');
+  if (content) {
+    try {
+      const saved = JSON.parse(localStorage.getItem('obsidian-pos'));
+      if (saved && saved.fullscreen) {
+        _enterObsidianFullscreen(content);
+      } else if (saved && saved.left && saved.top) {
+        content.style.position = 'fixed';
+        content.style.left = saved.left;
+        content.style.top = saved.top;
+        content.style.transform = 'none';
+        content.style.margin = '0';
+      }
+    } catch (_) {}
+  }
+
   document.getElementById('tool-obsidian-btn')?.classList.add('active');
 }
 
@@ -53,6 +70,46 @@ function _bringToFront() {
   modal.style.zIndex = z;
 }
 
+function _enterObsidianFullscreen(content) {
+  const modal = document.getElementById('obsidian-modal');
+  if (!modal || !content) return;
+  if (modal.classList.contains('obsidian-fullscreen')) return;
+  modal.classList.add('obsidian-fullscreen');
+  content.style.position = 'fixed';
+  content.style.left = '0';
+  content.style.top = '0';
+  content.style.width = '100vw';
+  content.style.maxWidth = '100vw';
+  content.style.height = '100vh';
+  content.style.maxHeight = '100vh';
+  content.style.borderRadius = '0';
+  content.style.margin = '0';
+  content.style.transform = 'none';
+  try { localStorage.setItem('obsidian-pos', JSON.stringify({ fullscreen: true })); } catch {}
+}
+
+function _exitObsidianFullscreen(content, cx, cy) {
+  const modal = document.getElementById('obsidian-modal');
+  if (!modal || !content) return;
+  if (!modal.classList.contains('obsidian-fullscreen')) return;
+  modal.classList.remove('obsidian-fullscreen');
+  content.style.width = '';
+  content.style.maxWidth = '';
+  content.style.height = '';
+  content.style.maxHeight = '';
+  content.style.borderRadius = '';
+  content.style.margin = '';
+  // Reposition centered on cursor
+  const w = Math.min(720, window.innerWidth * 0.9);
+  const h = Math.min(window.innerHeight * 0.78, window.innerHeight - 40);
+  const left = Math.max(0, Math.min(cx - w / 2, window.innerWidth - w));
+  const top = Math.max(0, Math.min(cy - 30, window.innerHeight - h));
+  content.style.position = 'fixed';
+  content.style.left = left + 'px';
+  content.style.top = top + 'px';
+  content.style.transform = 'none';
+}
+
 function _wireDrag() {
   if (_dragWired) return;
   const modal = document.getElementById('obsidian-modal');
@@ -65,8 +122,16 @@ function _wireDrag() {
     makeWindowDraggable(modal, {
       content,
       header,
+      fsClass: 'obsidian-fullscreen',
       enableDock: true,
       enableLeftDock: true,
+      onEnterFullscreen: () => _enterObsidianFullscreen(content),
+      onExitFullscreen: (cx, cy) => _exitObsidianFullscreen(content, cx, cy),
+      onDragEnd: () => {
+        try {
+          localStorage.setItem('obsidian-pos', JSON.stringify({ left: content.style.left, top: content.style.top }));
+        } catch {}
+      },
     });
   } catch (e) {
     console.warn('[obsidian] makeWindowDraggable failed:', e);
@@ -137,11 +202,21 @@ function _renderVaultList() {
       <div class="obsidian-vault-badges">
         ${v.read_enabled ? '<span class="obsidian-badge read">R</span>' : '<span class="obsidian-badge none">R</span>'}
         ${v.write_enabled ? '<span class="obsidian-badge write">W</span>' : ''}
+        <button class="obsidian-vault-remove" data-id="${v.id}" title="Remove vault">&times;</button>
       </div>
     </div>
   `).join('');
   list.querySelectorAll('.obsidian-vault-row').forEach(row => {
-    row.addEventListener('click', () => _selectVault(row.dataset.id));
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('.obsidian-vault-remove')) return;
+      _selectVault(row.dataset.id);
+    });
+  });
+  list.querySelectorAll('.obsidian-vault-remove').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      _removeVault(btn.dataset.id);
+    });
   });
 }
 
@@ -156,6 +231,8 @@ async function _selectVault(vaultId) {
   const vault = _vaults.find(v => v.id === vaultId);
   const mainPanel = document.getElementById('obsidian-main-panel');
   const statusBar = document.getElementById('obsidian-status-bar');
+  const vaultList = document.getElementById('obsidian-vault-list');
+  const folderTree = document.getElementById('obsidian-folder-tree');
 
   _renderVaultList();
   _populateVaultSelect();
@@ -163,11 +240,15 @@ async function _selectVault(vaultId) {
   if (!vault) {
     if (mainPanel) mainPanel.classList.add('hidden');
     if (statusBar) statusBar.textContent = '';
+    if (vaultList) vaultList.classList.remove('hidden');
+    if (folderTree) folderTree.classList.add('hidden');
     return;
   }
 
   if (mainPanel) mainPanel.classList.remove('hidden');
   if (statusBar) statusBar.textContent = `${_esc(vault.name)} — ${vault.note_count || 0} notes`;
+  if (vaultList) vaultList.classList.add('hidden');
+  if (folderTree) folderTree.classList.remove('hidden');
 
   // Update permission toggles
   const readCb = document.getElementById('obsidian-vault-read-all');
@@ -186,6 +267,49 @@ async function _selectVault(vaultId) {
 
   _loadNotes();
   _loadPermissions();
+  _loadFolders();
+}
+
+// ── Folder Tree ──────────────────────────────────────────────
+
+let _folders = [];
+
+async function _loadFolders() {
+  if (!_selectedVaultId) return;
+  try {
+    const r = await fetch(`${API_BASE}/api/obsidian/folders?vault_id=${encodeURIComponent(_selectedVaultId)}`, { credentials: 'same-origin' });
+    if (!r.ok) return;
+    const data = await r.json();
+    _folders = data.folders || [];
+    _renderFolderTree();
+  } catch (e) {
+    console.error('[obsidian] load folders failed', e);
+    _folders = [];
+    _renderFolderTree();
+  }
+}
+
+function _renderFolderTree() {
+  const tree = document.getElementById('obsidian-folder-tree');
+  if (!tree) return;
+  if (!_folders.length) {
+    tree.innerHTML = '<div style="padding:8px;text-align:center;opacity:0.5;font-size:11px;">No folders</div>';
+    return;
+  }
+  tree.innerHTML = _folders.map(f => `
+    <div class="obsidian-folder-item" data-folder="${_esc(f)}">
+      <span class="obsidian-folder-icon">📁</span>
+      <span class="obsidian-folder-name">${_esc(f.split('/').pop() || f)}</span>
+    </div>
+  `).join('');
+  tree.querySelectorAll('.obsidian-folder-item').forEach(item => {
+    item.addEventListener('click', () => {
+      _searchQuery = '';
+      const searchInput = document.getElementById('obsidian-search');
+      if (searchInput) searchInput.value = '';
+      _loadNotes();
+    });
+  });
 }
 
 function _showAddVaultForm() {
@@ -266,6 +390,24 @@ async function _disconnectVault() {
     _selectedVaultId = null;
     await _loadVaults();
   } catch (e) { /* ignore */ }
+}
+
+async function _removeVault(vaultId) {
+  const vault = _vaults.find(v => v.id === vaultId);
+  if (!vault) return;
+  if (!confirm(`Remove vault "${_esc(vault.name)}" from Odysseus?\n\nNotes stay on disk. This only removes the connection.`)) return;
+  try {
+    const r = await fetch(`${API_BASE}/api/obsidian/vaults/${encodeURIComponent(vaultId)}`, {
+      method: 'DELETE',
+      credentials: 'same-origin',
+    });
+    if (r.ok) {
+      if (_selectedVaultId === vaultId) _selectedVaultId = null;
+      await _loadVaults();
+    }
+  } catch (e) {
+    console.error('[obsidian] remove vault failed', e);
+  }
 }
 
 // ── Tabs ───────────────────────────────────────────────────

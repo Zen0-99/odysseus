@@ -203,6 +203,7 @@
   <link id="katex-css" rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.css" media="print">
   <script async src="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.js"></script>
   <script id="mermaid-script" async src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script async src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/dist/vis-network.min.js"></script>
   <script nonce="{{CSP_NONCE}}">
     (function(){
       var k = document.getElementById('katex-css');
@@ -456,106 +457,121 @@
         <button class="close-btn" id="close-obsidian-modal" aria-label="Close Obsidian modal">&#x2716;</button>
       </div>
       <div class="modal-body obsidian-modal-body">
-        <!-- Vault list (always visible) -->
-        <div id="obsidian-vault-list-panel">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-            <h3 style="margin:0;font-size:14px;">Vaults</h3>
-            <button class="admin-btn-add" id="obsidian-add-vault-btn" style="padding:4px 10px;font-size:11px;">+ Add Vault</button>
-          </div>
-          <div id="obsidian-vault-list" class="obsidian-vault-list hidden"></div>
-          <!-- Add vault form (hidden by default) -->
-          <div id="obsidian-add-vault-form" class="hidden" style="margin-top:10px;padding:10px;border:1px solid var(--border);border-radius:8px;">
-            <div style="margin-bottom:8px;">
-              <label class="settings-label">Vault Name</label>
-              <input type="text" id="obsidian-new-vault-name" placeholder="My Vault" style="width:100%;margin-top:4px;" />
+        <!-- 3-pane layout -->
+        <div class="obsidian-3pane">
+          <!-- Left pane: Vault selector + Folder tree -->
+          <div class="obsidian-left-pane">
+            <div class="obsidian-left-header">
+              <select id="obsidian-vault-select" style="flex:1;min-width:100px;font-size:12px;"></select>
+              <button class="admin-btn-add" id="obsidian-add-vault-btn" style="padding:4px 8px;font-size:11px;white-space:nowrap;">+ Add</button>
             </div>
-            <div style="margin-bottom:8px;">
-              <label class="settings-label">Vault Path</label>
-              <input type="text" id="obsidian-new-vault-path" placeholder="C:\Users\You\Documents\Obsidian Vault" style="width:100%;margin-top:4px;" />
-            </div>
-            <div style="display:flex;gap:8px;">
-              <button class="admin-btn-add" id="obsidian-save-vault-btn" style="padding:4px 10px;font-size:11px;">Add</button>
-              <button class="admin-btn-delete" id="obsidian-cancel-vault-btn" style="padding:4px 10px;font-size:11px;">Cancel</button>
-            </div>
-            <span id="obsidian-add-vault-status" style="font-size:11px;opacity:0.7;"></span>
-          </div>
-        </div>
-
-        <!-- Main panel (shown when a vault is selected) -->
-        <div id="obsidian-main-panel" class="hidden" style="margin-top:12px;">
-          <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
-            <select id="obsidian-vault-select" style="flex:1;min-width:120px;"></select>
-            <span id="obsidian-vault-badges" style="display:flex;gap:4px;"></span>
-          </div>
-          <div class="obsidian-tabs">
-            <button class="obsidian-tab active" data-obsidian-tab="list">Notes</button>
-            <button class="obsidian-tab" data-obsidian-tab="graph">Graph</button>
-            <button class="obsidian-tab" data-obsidian-tab="timeline">Timeline</button>
-            <button class="obsidian-tab" data-obsidian-tab="permissions">Permissions</button>
-          </div>
-
-          <!-- Notes tab -->
-          <div class="obsidian-tab-content" data-obsidian-content="list">
-            <div class="obsidian-search-row">
-              <input type="text" id="obsidian-search" placeholder="Search notes..." />
-            </div>
-            <div id="obsidian-list-wrap" class="obsidian-panel-wrap">
-              <div id="obsidian-note-list" class="obsidian-note-list"></div>
-              <div id="obsidian-preview" class="obsidian-preview"></div>
-            </div>
-          </div>
-
-          <!-- Graph tab -->
-          <div class="obsidian-tab-content hidden" data-obsidian-content="graph">
-            <div id="obsidian-graph-wrap" class="obsidian-panel-wrap">
-              <div id="obsidian-graph-canvas" style="width:100%;height:100%;"></div>
-            </div>
-          </div>
-
-          <!-- Timeline tab -->
-          <div class="obsidian-tab-content hidden" data-obsidian-content="timeline">
-            <div id="obsidian-timeline-wrap" class="obsidian-panel-wrap">
-              <div id="obsidian-timeline" style="width:100%;height:100%;"></div>
-            </div>
-          </div>
-
-          <!-- Permissions tab -->
-          <div class="obsidian-tab-content hidden" data-obsidian-content="permissions">
-            <div class="obsidian-permissions-wrap">
-              <div style="display:flex;gap:16px;margin-bottom:12px;flex-wrap:wrap;">
-                <label class="settings-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;">
-                  <input type="checkbox" id="obsidian-vault-read-all" />
-                  Allow reading all files
-                </label>
-                <label class="settings-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;">
-                  <input type="checkbox" id="obsidian-vault-write-all" />
-                  Allow writing all files
-                </label>
+            <div id="obsidian-vault-list" class="obsidian-vault-list hidden"></div>
+            <div id="obsidian-folder-tree" class="obsidian-folder-tree hidden"></div>
+            <!-- Add vault form (hidden by default) -->
+            <div id="obsidian-add-vault-form" class="hidden" style="margin-top:8px;padding:8px;border:1px solid var(--border);border-radius:8px;">
+              <div style="margin-bottom:6px;">
+                <label class="settings-label" style="font-size:11px;">Vault Name</label>
+                <input type="text" id="obsidian-new-vault-name" placeholder="My Vault" style="width:100%;margin-top:3px;font-size:12px;" />
               </div>
-              <h4 style="margin:12px 0 6px;font-size:12px;opacity:0.7;">Permission Rules</h4>
-              <div id="obsidian-permissions-table" class="obsidian-permissions-table"></div>
-              <div style="margin-top:10px;padding:10px;border:1px solid var(--border);border-radius:8px;">
-                <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
-                  <select id="obsidian-new-perm-type" style="width:auto;">
-                    <option value="file">File</option>
-                    <option value="folder">Folder</option>
-                    <option value="regex">Regex</option>
-                    <option value="link">Link</option>
-                  </select>
-                  <input type="text" id="obsidian-new-perm-pattern" placeholder="pattern" style="flex:1;min-width:80px;" />
-                  <select id="obsidian-new-perm-level" style="width:auto;">
-                    <option value="none">None</option>
-                    <option value="read">Read</option>
-                    <option value="write">Write</option>
-                  </select>
-                  <input type="number" id="obsidian-new-perm-priority" placeholder="priority" value="0" style="width:60px;" />
-                  <button class="admin-btn-add" id="obsidian-add-perm-btn" style="padding:3px 8px;font-size:11px;">Add</button>
+              <div style="margin-bottom:6px;">
+                <label class="settings-label" style="font-size:11px;">Vault Path</label>
+                <input type="text" id="obsidian-new-vault-path" placeholder="C:\Users\You\Documents\Obsidian Vault" style="width:100%;margin-top:3px;font-size:12px;" />
+              </div>
+              <div style="display:flex;gap:6px;">
+                <button class="admin-btn-add" id="obsidian-save-vault-btn" style="padding:3px 8px;font-size:11px;">Add</button>
+                <button class="admin-btn-delete" id="obsidian-cancel-vault-btn" style="padding:3px 8px;font-size:11px;">Cancel</button>
+              </div>
+              <span id="obsidian-add-vault-status" style="font-size:11px;opacity:0.7;"></span>
+            </div>
+          </div>
+
+          <!-- Center pane: Tabs + Content -->
+          <div class="obsidian-center-pane" id="obsidian-main-panel">
+            <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap;">
+              <span id="obsidian-vault-badges" style="display:flex;gap:4px;"></span>
+            </div>
+            <div class="obsidian-tabs">
+              <button class="obsidian-tab active" data-obsidian-tab="list">Notes</button>
+              <button class="obsidian-tab" data-obsidian-tab="graph">Graph</button>
+              <button class="obsidian-tab" data-obsidian-tab="timeline">Timeline</button>
+              <button class="obsidian-tab" data-obsidian-tab="permissions">Permissions</button>
+            </div>
+
+            <!-- Notes tab -->
+            <div class="obsidian-tab-content" data-obsidian-content="list">
+              <div class="obsidian-search-row">
+                <input type="text" id="obsidian-search" placeholder="Search notes..." />
+              </div>
+              <div id="obsidian-list-wrap" class="obsidian-panel-wrap">
+                <div id="obsidian-note-list" class="obsidian-note-list"></div>
+                <div id="obsidian-preview" class="obsidian-preview"></div>
+              </div>
+            </div>
+
+            <!-- Graph tab -->
+            <div class="obsidian-tab-content hidden" data-obsidian-content="graph">
+              <div id="obsidian-graph-wrap" class="obsidian-panel-wrap">
+                <div id="obsidian-graph-canvas" style="width:100%;height:100%;"></div>
+              </div>
+            </div>
+
+            <!-- Timeline tab -->
+            <div class="obsidian-tab-content hidden" data-obsidian-content="timeline">
+              <div id="obsidian-timeline-wrap" class="obsidian-panel-wrap">
+                <div id="obsidian-timeline" style="width:100%;height:100%;"></div>
+              </div>
+            </div>
+
+            <!-- Permissions tab -->
+            <div class="obsidian-tab-content hidden" data-obsidian-content="permissions">
+              <div class="obsidian-permissions-wrap">
+                <div style="display:flex;gap:16px;margin-bottom:10px;flex-wrap:wrap;">
+                  <label class="settings-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;">
+                    <input type="checkbox" id="obsidian-vault-read-all" />
+                    Allow reading all files
+                  </label>
+                  <label class="settings-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;">
+                    <input type="checkbox" id="obsidian-vault-write-all" />
+                    Allow writing all files
+                  </label>
+                </div>
+                <h4 style="margin:10px 0 5px;font-size:12px;opacity:0.7;">Permission Rules</h4>
+                <div id="obsidian-permissions-table" class="obsidian-permissions-table"></div>
+                <div style="margin-top:8px;padding:8px;border:1px solid var(--border);border-radius:8px;">
+                  <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+                    <select id="obsidian-new-perm-type" style="width:auto;font-size:12px;">
+                      <option value="file">File</option>
+                      <option value="folder">Folder</option>
+                      <option value="regex">Regex</option>
+                      <option value="link">Link</option>
+                    </select>
+                    <input type="text" id="obsidian-new-perm-pattern" placeholder="pattern" style="flex:1;min-width:80px;font-size:12px;" />
+                    <select id="obsidian-new-perm-level" style="width:auto;font-size:12px;">
+                      <option value="none">None</option>
+                      <option value="read">Read</option>
+                      <option value="write">Write</option>
+                    </select>
+                    <input type="number" id="obsidian-new-perm-priority" placeholder="priority" value="0" style="width:60px;font-size:12px;" />
+                    <button class="admin-btn-add" id="obsidian-add-perm-btn" style="padding:3px 8px;font-size:11px;">Add</button>
+                  </div>
                 </div>
               </div>
             </div>
+            <div id="obsidian-status-bar" class="obsidian-status-bar"></div>
+          </div>
+
+          <!-- Right pane: Sidebar (properties, backlinks, tags, outline) -->
+          <div class="obsidian-right-pane" id="obsidian-right-pane">
+            <div class="obsidian-right-placeholder" style="padding:20px;text-align:center;opacity:0.5;font-size:12px;">
+              Select a note to see properties, backlinks, and tags.
+            </div>
+            <div id="obsidian-properties-panel" class="hidden"></div>
+            <div id="obsidian-backlinks-panel" class="hidden"></div>
+            <div id="obsidian-outgoing-panel" class="hidden"></div>
+            <div id="obsidian-tags-panel" class="hidden"></div>
+            <div id="obsidian-outline-panel" class="hidden"></div>
           </div>
         </div>
-        <div id="obsidian-status-bar" class="obsidian-status-bar"></div>
       </div>
     </div>
   </div>
