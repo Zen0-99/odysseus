@@ -38118,6 +38118,14 @@ body.theme-frosted .modal {
   resize: vertical;
 }
 
+/* Outline */
+.obsidian-outline-item {
+  transition: background 0.15s;
+}
+.obsidian-outline-item:hover {
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+
 /* Right sidebar */
 .obsidian-sidebar-link {
   padding: 4px 6px;

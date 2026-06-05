@@ -685,6 +685,26 @@ function _renderRightSidebar(note) {
       (t.length ? t.map(tag => `<span class="obsidian-tag" style="cursor:pointer;">${_esc(tag)}</span>`).join(' ') : '<div style="opacity:0.5;font-size:11px;">No tags</div>');
     tags.classList.remove('hidden');
   }
+
+  // Outline
+  const outline = document.getElementById('obsidian-outline-panel');
+  if (outline) {
+    const headings = [];
+    const lines = (note.content || '').split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const m = lines[i].match(/^(#{1,6})\s+(.+)$/);
+      if (m) headings.push({ level: m[1].length, text: m[2].trim(), line: i });
+    }
+    outline.innerHTML = `<h4 style="font-size:11px;opacity:0.6;margin:12px 0 6px;text-transform:uppercase;letter-spacing:0.05em;">Outline</h4>` +
+      (headings.length ? headings.map(h => `<div class="obsidian-outline-item" data-line="${h.line}" style="padding-left:${(h.level - 1) * 10}px;font-size:12px;cursor:pointer;padding-top:2px;padding-bottom:2px;border-radius:3px;">${_esc(h.text)}</div>`).join('') : '<div style="opacity:0.5;font-size:11px;">No headings</div>');
+    outline.querySelectorAll('.obsidian-outline-item').forEach(el => {
+      el.addEventListener('click', () => {
+        const previewBody = document.querySelector('.obsidian-preview-body');
+        if (previewBody) previewBody.scrollTop = 0; // Simple scroll reset; scroll-to-heading can be enhanced later
+      });
+    });
+    outline.classList.remove('hidden');
+  }
 }
 
 function _injectAsContext(note) {
