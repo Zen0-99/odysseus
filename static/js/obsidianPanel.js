@@ -630,7 +630,7 @@ function _renderNoteList() {
     if (_searchQuery || _selectedFolder) {
       list.innerHTML = '<div style="padding:20px;text-align:center;opacity:0.5;font-size:12px;">No notes match the current filter.</div>';
     } else {
-      list.innerHTML = '<div style="padding:20px;text-align:center;opacity:0.5;font-size:12px;">No notes found. Click Refresh above to scan the vault.</div>';
+      list.innerHTML = '<div style="padding:20px;text-align:center;opacity:0.5;font-size:12px;">No notes found in this vault.</div>';
     }
     return;
   }
@@ -920,16 +920,9 @@ async function _refreshVault() {
   const btn = document.getElementById('obsidian-refresh-btn');
   if (btn) btn.style.opacity = '0.5';
   try {
-    // Trigger backend resync first
-    await fetch(`${API_BASE}/api/obsidian/vaults/${encodeURIComponent(_selectedVaultId)}/resync`, {
-      method: 'POST',
-      credentials: 'same-origin',
-    });
-    // Give the backend a moment to start scanning
-    await new Promise(r => setTimeout(r, 800));
+    // Direct filesystem read — no backend sync needed
     await _loadNotes();
     await _loadFolders();
-    await _loadVaults();
   } catch (e) {
     console.error('[obsidian] refresh failed', e);
   } finally {

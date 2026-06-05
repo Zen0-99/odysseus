@@ -281,13 +281,24 @@ def setup_obsidian_routes() -> APIRouter:
         db = SessionLocal()
         try:
             vaults = db.query(ObsidianVault).filter_by(owner=owner, is_active=True).all()
+            # Update note_count from disk for each vault
+            from src.obsidian_fs import list_notes
+            result = []
+            for v in vaults:
+                d = _vault_to_dict(v)
+                try:
+                    notes = list_notes(v.path)
+                    d["note_count"] = len(notes)
+                except Exception:
+                    pass
+                result.append(d)
             vault_env = os.environ.get(f"_ODY_OBSIDIAN_VAULT_{owner}")
             watcher = get_watcher()
             connected = watcher.is_connected(owner, vault_env) if vault_env else False
             return {
                 "connected": connected,
                 "vault_path": Path(vault_env).name if vault_env else None,
-                "vaults": [_vault_to_dict(v) for v in vaults],
+                "vaults": result,
             }
         finally:
             db.close()
@@ -440,83 +451,52 @@ def setup_obsidian_routes() -> APIRouter:
         limit: int = 100,
         offset: int = 0,
     ):
-        """List synced Obsidian notes with optional filters."""
+        """List Obsidian notes directly from filesystem."""
         owner = _user(request)
         db = SessionLocal()
         try:
-            query = db.query(Obsidian).filter_by(owner=owner)
-            if vault_id:
-                vault = db.query(ObsidianVault).filter_by(id=vault_id, owner=owner).first()
-                if not vault:
-                    raise HTTPException(404, "Vault not found")
-                query = query.filter_by(vault_path=vault.path)
-            if status:
-                query = query.filter(Obsidian.sync_status == status)
-            else:
-                query = query.filter(Obsidian.sync_status.notin_(["deleted", "disconnected"]))
+            vault = db.query(ObsidianVault).filter_by(id=vault_id, owner=owner).first() if vault_id else None
+            if vault_id and not vault:
+                raise HTTPException(404, "Vault not found")
+            vault_path = vault.path if vault else os.environ.get(f"_ODY_OBSIDIAN_VAULT_{owner}")
+            if not vault_path:
+                return {"total": 0, "offset": offset, "limit": limit, "notes": []}
 
-            if q:
-                like = f"%{q}%"
-                query = query.filter(
-                    (Obsidian.title.ilike(like))
-                    | (Obsidian.content.ilike(like))
-                )
+            from src.obsidian_fs import list_notes
+            notes = list_notes(vault_path, folder=folder, q=q)
             if tag:
-                query = query.filter(Obsidian.tags.contains(tag))
-            if folder:
-                query = query.filter(Obsidian.folder == folder)
-
-            total = query.count()
-            notes = query.order_by(Obsidian.title.asc()).offset(offset).limit(limit).all()
-            return {
-                "total": total,
-                "offset": offset,
-                "limit": limit,
-                "notes": [_note_to_dict(n) for n in notes],
-            }
+                notes = [n for n in notes if tag in n.get("tags", [])]
+            total = len(notes)
+            notes = notes[offset:offset + limit]
+            return {"total": total, "offset": offset, "limit": limit, "notes": notes}
         finally:
             db.close()
 
-    @router.get("/notes/{note_id}")
+    @router.get("/notes/{note_id:path}")
     async def obsidian_get_note(note_id: str, request: Request):
-        """Get a single note with resolved backlinks."""
+        """Get a single note directly from filesystem."""
         owner = _user(request)
         db = SessionLocal()
         try:
-            note = db.query(Obsidian).filter_by(id=note_id, owner=owner).first()
-            if not note:
-                raise HTTPException(404, "Note not found")
-            result = _note_to_dict(note)
-            # Resolve backlink titles
-            backlinks = _safe_json(note.backlinks, [])
-            resolved = []
-            for bp in backlinks:
-                bp_note = db.query(Obsidian).filter_by(
-                    owner=owner, vault_path=note.vault_path, rel_path=bp
-                ).first()
-                resolved.append({
-                    "rel_path": bp,
-                    "title": bp_note.title if bp_note else bp,
-                })
-            result["backlinks_resolved"] = resolved
-            return result
-        finally:
-            db.close()
+            vault = db.query(ObsidianVault).filter_by(owner=owner, is_active=True).first()
+            vault_path = vault.path if vault else os.environ.get(f"_ODY_OBSIDIAN_VAULT_{owner}")
+            if not vault_path:
+                raise HTTPException(400, "No vault connected")
 
-    @router.post("/notes/{note_id}/sync")
-    async def obsidian_sync_note(note_id: str, request: Request):
-        """Force re-sync a single note from disk."""
-        require_admin(request)
-        owner = _user(request)
-        db = SessionLocal()
-        try:
-            note = db.query(Obsidian).filter_by(id=note_id, owner=owner).first()
+            from src.obsidian_fs import get_note
+            note = get_note(vault_path, note_id)
             if not note:
                 raise HTTPException(404, "Note not found")
-            from src.obsidian_watcher import _sync_file
-            _sync_file(owner, Path(note.vault_path), Path(note.vault_path) / note.rel_path)
-            db.refresh(note)
-            return _note_to_dict(note)
+            # Resolve backlinks
+            from src.obsidian_fs import list_notes, compute_backlinks
+            all_notes = list_notes(vault_path)
+            compute_backlinks(all_notes)
+            resolved = []
+            for bp in note.get("backlinks", []):
+                bp_note = next((n for n in all_notes if n["rel_path"] == bp), None)
+                resolved.append({"rel_path": bp, "title": bp_note["title"] if bp_note else bp})
+            note["backlinks_resolved"] = resolved
+            return note
         finally:
             db.close()
 
@@ -526,61 +506,37 @@ def setup_obsidian_routes() -> APIRouter:
 
     @router.get("/folders")
     async def obsidian_folders(request: Request, vault_id: Optional[str] = None):
-        """Return folder tree for a vault."""
+        """Return folder tree for a vault from filesystem."""
         owner = _user(request)
         db = SessionLocal()
         try:
-            vault_path = None
-            if vault_id:
-                vault = db.query(ObsidianVault).filter_by(id=vault_id, owner=owner).first()
-                if not vault:
-                    raise HTTPException(404, "Vault not found")
-                vault_path = vault.path
-            else:
-                vault_path = os.environ.get(f"_ODY_OBSIDIAN_VAULT_{owner}")
+            vault = db.query(ObsidianVault).filter_by(id=vault_id, owner=owner).first() if vault_id else None
+            if vault_id and not vault:
+                raise HTTPException(404, "Vault not found")
+            vault_path = vault.path if vault else os.environ.get(f"_ODY_OBSIDIAN_VAULT_{owner}")
             if not vault_path:
                 return {"folders": []}
 
-            rows = (
-                db.query(Obsidian.folder)
-                .filter_by(owner=owner, vault_path=vault_path)
-                .distinct()
-                .all()
-            )
-            folders = [r[0] or "" for r in rows if r[0] is not None]
-            folders = sorted(set(folders))
-            return {"folders": folders}
+            from src.obsidian_fs import list_folders
+            return {"folders": list_folders(vault_path)}
         finally:
             db.close()
 
     @router.get("/tags")
     async def obsidian_tags(request: Request, vault_id: Optional[str] = None):
-        """Return unique tags with note counts for a vault."""
+        """Return unique tags with note counts from filesystem."""
         owner = _user(request)
         db = SessionLocal()
         try:
-            vault_path = None
-            if vault_id:
-                vault = db.query(ObsidianVault).filter_by(id=vault_id, owner=owner).first()
-                if not vault:
-                    raise HTTPException(404, "Vault not found")
-                vault_path = vault.path
-            else:
-                vault_path = os.environ.get(f"_ODY_OBSIDIAN_VAULT_{owner}")
+            vault = db.query(ObsidianVault).filter_by(id=vault_id, owner=owner).first() if vault_id else None
+            if vault_id and not vault:
+                raise HTTPException(404, "Vault not found")
+            vault_path = vault.path if vault else os.environ.get(f"_ODY_OBSIDIAN_VAULT_{owner}")
             if not vault_path:
                 return {"tags": []}
 
-            notes = (
-                db.query(Obsidian)
-                .filter_by(owner=owner, vault_path=vault_path)
-                .all()
-            )
-            tag_counts: Dict[str, int] = {}
-            for note in notes:
-                for tag in (note.tags or []):
-                    tag_counts[tag] = tag_counts.get(tag, 0) + 1
-            tags = [{"tag": t, "count": c} for t, c in sorted(tag_counts.items())]
-            return {"tags": tags}
+            from src.obsidian_fs import list_tags
+            return {"tags": list_tags(vault_path)}
         finally:
             db.close()
 
@@ -622,7 +578,9 @@ def setup_obsidian_routes() -> APIRouter:
                 vault_env = os.environ.get(f"_ODY_OBSIDIAN_VAULT_{owner}")
             if not vault_env:
                 raise HTTPException(400, "No vault connected")
-            return build_graph(owner, vault_env, db)
+            from src.obsidian_fs import list_notes
+            notes = list_notes(vault_env)
+            return build_graph(notes)
         finally:
             db.close()
 
@@ -641,7 +599,9 @@ def setup_obsidian_routes() -> APIRouter:
                 vault_env = os.environ.get(f"_ODY_OBSIDIAN_VAULT_{owner}")
             if not vault_env:
                 raise HTTPException(400, "No vault connected")
-            return {"frames": build_timeline(owner, vault_env, db)}
+            from src.obsidian_fs import list_notes
+            notes = list_notes(vault_env)
+            return {"frames": build_timeline(notes)}
         finally:
             db.close()
 
@@ -649,19 +609,21 @@ def setup_obsidian_routes() -> APIRouter:
     # Editing (gated)
     # -----------------------------------------------------------------------
 
-    @router.post("/notes/{note_id}/edit")
+    @router.post("/notes/{note_id:path}/edit")
     async def obsidian_edit_note(note_id: str, req: EditRequest, request: Request):
         """Edit a note — gated by vault + per-path permissions."""
         require_admin(request)
         owner = _user(request)
         db = SessionLocal()
         try:
-            note = db.query(Obsidian).filter_by(id=note_id, owner=owner).first()
-            if not note:
-                raise HTTPException(404, "Note not found")
+            # Find active vault
+            vault = db.query(ObsidianVault).filter_by(owner=owner, is_active=True).first()
+            vault_path = vault.path if vault else os.environ.get(f"_ODY_OBSIDIAN_VAULT_{owner}")
+            if not vault_path:
+                raise HTTPException(400, "No vault connected")
 
-            vault_id = f"{owner}:{note.vault_path}"
-            perm = _effective_permission(db, owner, vault_id, note.rel_path)
+            vault_id = vault.id if vault else f"{owner}:{vault_path}"
+            perm = _effective_permission(db, owner, vault_id, note_id)
             if perm == "none":
                 raise HTTPException(403, "Vault is not readable.")
             if perm == "read":
@@ -671,8 +633,9 @@ def setup_obsidian_routes() -> APIRouter:
             if not strategy:
                 raise HTTPException(400, "Edit strategy not available")
 
+            from types import SimpleNamespace
+            note = SimpleNamespace(vault_path=vault_path, rel_path=note_id)
             result = strategy(note, req.content)
-            db.commit()
             return {"ok": True, "mode": "override", "result": result}
         finally:
             db.close()
