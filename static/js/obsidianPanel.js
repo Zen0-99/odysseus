@@ -569,7 +569,38 @@ async function _selectNote(id) {
     const bodyEl = preview.querySelector('.obsidian-preview-body');
     const updateBody = () => {
       if (_previewMode === 'edit') {
-        bodyEl.innerHTML = `<textarea class="obsidian-edit-textarea">${_esc(note.content)}</textarea>`;
+        bodyEl.innerHTML = `
+          <textarea class="obsidian-edit-textarea">${_esc(note.content)}</textarea>
+          <div style="margin-top:6px;display:flex;gap:6px;align-items:center;">
+            <button class="obsidian-save-btn" style="padding:4px 10px;font-size:11px;">Save</button>
+            <span class="obsidian-save-status" style="font-size:11px;opacity:0.7;"></span>
+          </div>
+        `;
+        const saveBtn = bodyEl.querySelector('.obsidian-save-btn');
+        const statusEl = bodyEl.querySelector('.obsidian-save-status');
+        saveBtn?.addEventListener('click', async () => {
+          const ta = bodyEl.querySelector('.obsidian-edit-textarea');
+          if (!ta) return;
+          try {
+            const r = await fetch(`${API_BASE}/api/obsidian/notes/${encodeURIComponent(note.id)}/edit`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'same-origin',
+              body: JSON.stringify({ content: ta.value }),
+            });
+            if (r.ok) {
+              note.content = ta.value;
+              _noteCache.set(note.title, note);
+              statusEl.textContent = 'Saved';
+              setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 2000);
+            } else {
+              const d = await r.json().catch(() => ({}));
+              statusEl.textContent = 'Error: ' + (d.detail || r.status);
+            }
+          } catch (e) {
+            statusEl.textContent = 'Save failed';
+          }
+        });
       } else {
         bodyEl.innerHTML = obsidianMdToHtml(note.content || '', _noteCache);
         // Wire wikilink clicks
