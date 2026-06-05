@@ -757,6 +757,10 @@ logger.info("Webhook & API token routes initialized")
 from routes.note_routes import setup_note_routes
 app.include_router(setup_note_routes(task_scheduler))
 
+# Obsidian vault integration
+from routes.obsidian_routes import setup_obsidian_routes
+app.include_router(setup_obsidian_routes())
+
 # Email
 from routes.email_routes import setup_email_routes
 email_router = setup_email_routes()

@@ -1712,6 +1712,78 @@ class Integration(TimestampMixin, Base):
     enabled = Column(Boolean, default=True)
 
 
+class Obsidian(TimestampMixin, Base):
+    """A note from a connected Obsidian vault."""
+    __tablename__ = "obsidian"
+
+    id               = Column(String, primary_key=True, index=True)
+    owner            = Column(String, nullable=True, index=True)
+    vault_path       = Column(String, nullable=False)
+    rel_path         = Column(String, nullable=False)
+    folder           = Column(String, nullable=True)
+    title            = Column(String, nullable=False)
+    content          = Column(Text, nullable=True)
+    plaintext        = Column(Text, nullable=True)
+    tags             = Column(JSON, nullable=True, default=list)
+    outbound_links   = Column(JSON, nullable=True, default=list)
+    backlinks        = Column(JSON, nullable=True, default=list)
+    frontmatter      = Column(JSON, nullable=True, default=dict)
+    created_at       = Column(DateTime, nullable=True)
+    updated_at       = Column(DateTime, nullable=True)
+    last_modified_src = Column(DateTime, nullable=True)
+    edit_permission  = Column(String, nullable=True)
+    sync_status      = Column(String, nullable=True, default="synced")
+
+    __table_args__ = (
+        Index('ix_obsidian_owner', 'owner'),
+        Index('ix_obsidian_vault', 'vault_path'),
+        Index('ix_obsidian_search', 'title', 'plaintext'),
+    )
+
+
+
+
+
+class ObsidianVault(TimestampMixin, Base):
+    """A connected Obsidian vault with read/write settings."""
+    __tablename__ = "obsidian_vaults"
+
+    id            = Column(String, primary_key=True, index=True)
+    owner         = Column(String, nullable=True, index=True)
+    name          = Column(String, nullable=False)
+    path          = Column(String, nullable=False)
+    read_enabled  = Column(Boolean, default=True)
+    write_enabled = Column(Boolean, default=False)
+    is_active     = Column(Boolean, default=True)
+    last_sync_at  = Column(DateTime, nullable=True)
+    note_count    = Column(Integer, default=0)
+
+    __table_args__ = (
+        Index('ix_obsidian_vaults_owner', 'owner'),
+        Index('ix_obsidian_vaults_path', 'path'),
+    )
+
+
+class ObsidianPermission(TimestampMixin, Base):
+    """Per-path permission override within a vault."""
+    __tablename__ = "obsidian_permissions"
+
+    id           = Column(String, primary_key=True, index=True)
+    vault_id     = Column(String, nullable=False, index=True)
+    owner        = Column(String, nullable=True, index=True)
+    path_pattern = Column(String, nullable=False)
+    pattern_type = Column(String, nullable=False, default="file")
+    permission   = Column(String, nullable=False, default="read")
+    priority     = Column(Integer, default=0)
+    description  = Column(String, nullable=True)
+
+    __table_args__ = (
+        Index('ix_obsidian_perm_vault', 'vault_id'),
+        Index('ix_obsidian_perm_owner', 'owner'),
+    )
+
+
+
 
 
 

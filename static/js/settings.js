@@ -2347,6 +2347,7 @@ function initAll() {
   initEmailAccountsSettings();
   initReminderSettings();
   initUnifiedIntegrations();
+  initObsidianSettings();
 }
 
 function notifyIntegrationsChanged() {
@@ -5687,6 +5688,101 @@ function syncAdminVisibility() {
   modalEl.querySelectorAll('.admin-only').forEach(el => {
     el.style.display = isAdmin ? '' : 'none';
   });
+}
+
+/* ── Obsidian settings ── */
+function initObsidianSettings() {
+  const _esc = (s) => { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; };
+  const listEl = el('set-obsidian-vaults-list');
+  const addBtn = el('set-obsidian-add-vault-btn');
+  const formEl = el('set-obsidian-add-vault-form');
+  const saveBtn = el('set-obsidian-save-vault-btn');
+  const cancelBtn = el('set-obsidian-cancel-vault-btn');
+  const nameInput = el('set-obsidian-new-name');
+  const pathInput = el('set-obsidian-new-path');
+  const statusEl = el('set-obsidian-add-status');
+  if (!listEl) return;
+
+  async function _refreshVaults() {
+    try {
+      const r = await fetch(`${API_BASE}/api/obsidian/vaults`, { credentials: 'same-origin' });
+      const d = await r.json();
+      const vaults = d.vaults || [];
+      _renderVaults(vaults);
+    } catch (e) {
+      listEl.innerHTML = '<div style="opacity:0.5;font-size:12px;">Error loading vaults</div>';
+    }
+  }
+
+  function _renderVaults(vaults) {
+    if (!vaults.length) {
+      listEl.innerHTML = '<div style="opacity:0.5;font-size:12px;">No vaults connected</div>';
+      return;
+    }
+    listEl.innerHTML = vaults.map(v => `
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:8px;border:1px solid var(--border);border-radius:6px;margin-bottom:6px;">
+        <div>
+          <div style="font-weight:500;font-size:13px;">${_esc(v.name)}</div>
+          <div style="font-size:11px;opacity:0.6;">${_esc(v.path)}</div>
+          <div style="display:flex;gap:4px;margin-top:4px;">
+            <span class="obsidian-badge ${v.read_enabled ? 'read' : 'none'}">${v.read_enabled ? 'Read' : 'No Read'}</span>
+            <span class="obsidian-badge ${v.write_enabled ? 'write' : 'none'}">${v.write_enabled ? 'Write' : 'No Write'}</span>
+            <span class="obsidian-badge ${v.is_active ? 'read' : 'none'}">${v.is_active ? 'Active' : 'Inactive'}</span>
+          </div>
+        </div>
+        <button class="admin-btn-delete obsidian-remove-vault" data-id="${v.id}" style="padding:3px 8px;font-size:11px;">Remove</button>
+      </div>
+    `).join('');
+    listEl.querySelectorAll('.obsidian-remove-vault').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        try {
+          await fetch(`${API_BASE}/api/obsidian/vaults/${btn.dataset.id}`, { method: 'DELETE', credentials: 'same-origin' });
+          _refreshVaults();
+        } catch (e) { /* ignore */ }
+      });
+    });
+  }
+
+  addBtn?.addEventListener('click', () => {
+    formEl?.classList.remove('hidden');
+    if (statusEl) statusEl.textContent = '';
+  });
+
+  cancelBtn?.addEventListener('click', () => {
+    formEl?.classList.add('hidden');
+    if (nameInput) nameInput.value = '';
+    if (pathInput) pathInput.value = '';
+    if (statusEl) statusEl.textContent = '';
+  });
+
+  saveBtn?.addEventListener('click', async () => {
+    const name = nameInput?.value.trim();
+    const path = pathInput?.value.trim();
+    if (!path) { if (statusEl) statusEl.textContent = 'Enter a vault path'; return; }
+    if (statusEl) statusEl.textContent = 'Connecting...';
+    try {
+      const r = await fetch(`${API_BASE}/api/obsidian/vaults`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ vault_path: path, name: name || undefined, read_enabled: true, write_enabled: false }),
+      });
+      const d = await r.json();
+      if (r.ok) {
+        if (nameInput) nameInput.value = '';
+        if (pathInput) pathInput.value = '';
+        formEl?.classList.add('hidden');
+        if (statusEl) statusEl.textContent = '';
+        _refreshVaults();
+      } else {
+        if (statusEl) statusEl.textContent = d.detail || 'Connection failed';
+      }
+    } catch (e) {
+      if (statusEl) statusEl.textContent = 'Connection error';
+    }
+  });
+
+  _refreshVaults();
 }
 
 /* ═══════════════════════════════════════════
