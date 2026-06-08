@@ -1,10 +1,10 @@
 /**
- * Obsidian-style Plugin API (Phase 4.1 / 4.2)
+ * Shard-style Plugin API (Phase 4.1 / 4.2)
  *
  * - Plugin base class with lifecycle hooks
  * - PluginManager for register / enable / disable / settings persistence
- * - App API object mimicking Obsidian's `app` namespace
- * - Core plugins that wrap existing Obsidian panel features
+ * - App API object mimicking Shard's `app` namespace
+ * - Core plugins that wrap existing Shard panel features
  */
 
 /* ── Plugin Base Class ────────────────────────────────────── */
@@ -50,11 +50,11 @@ export class Plugin {
   }
 
   addRibbonIcon(iconSvg, title, callback) {
-    const ribbon = document.getElementById('obsidian-ribbon-bar');
+    const ribbon = document.getElementById('shard-ribbon-bar');
     if (!ribbon) return;
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'obsidian-ribbon-btn';
+    btn.className = 'shard-ribbon-btn';
     btn.title = title;
     btn.innerHTML = iconSvg;
     btn.addEventListener('click', callback);
@@ -76,10 +76,10 @@ export class Plugin {
   }
 
   addStatusBarItem() {
-    const bar = document.getElementById('obsidian-status-bar');
+    const bar = document.getElementById('shard-status-bar');
     if (!bar) return null;
     const el = document.createElement('span');
-    el.className = 'obsidian-status-bar-item';
+    el.className = 'shard-status-bar-item';
     bar.appendChild(el);
     return el;
   }
@@ -238,7 +238,7 @@ export const CORE_PLUGINS = [
 function _makeSidebarPlugin(tabId) {
   return class extends Plugin {
     async onload() {
-      // Right sidebar rendering is still handled by obsidianPanel.js;
+      // Right sidebar rendering is still handled by shardPanel.js;
       // the plugin's existence simply means the tab is shown.
       this._active = true;
     }
@@ -254,20 +254,20 @@ export const OrphansPlugin        = _makeSidebarPlugin('orphans');
 
 export class BookmarksPlugin extends Plugin {
   async onload() {
-    // Bookmarks are rendered by _renderBookmarksPane in obsidianPanel.js
+    // Bookmarks are rendered by _renderBookmarksPane in shardPanel.js
     // Nothing extra needed here yet.
   }
 }
 
 export class TagsPlugin extends Plugin {
   async onload() {
-    // Tags rendered by _renderTagsPane / _renderNoteTagsPane in obsidianPanel.js
+    // Tags rendered by _renderTagsPane / _renderNoteTagsPane in shardPanel.js
   }
 }
 
 export class SearchPlugin extends Plugin {
   async onload() {
-    // Search rendered by _renderSearchPane in obsidianPanel.js
+    // Search rendered by _renderSearchPane in shardPanel.js
   }
 }
 
@@ -289,7 +289,7 @@ export class TemplatesPlugin extends Plugin {
 
 export class PagePreviewPlugin extends Plugin {
   async onload() {
-    // Page preview logic is already in obsidianPanel.js wikilink hover
+    // Page preview logic is already in shardPanel.js wikilink hover
   }
 }
 

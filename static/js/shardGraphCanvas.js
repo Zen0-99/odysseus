@@ -1,5 +1,5 @@
 /**
- * Obsidian Graph Canvas — vis-network wrapper for interactive backlink graph.
+ * Shard Graph Canvas — vis-network wrapper for interactive backlink graph.
  */
 
 const API_BASE = window.location.origin;
@@ -7,20 +7,20 @@ const API_BASE = window.location.origin;
 let _network = null;
 let _container = null;
 
-export async function renderObsidianGraph(container, vaultId) {
+export async function renderShardGraph(container, vaultId) {
   if (!window.vis || !container) return;
   _container = container;
-  container.innerHTML = '<div class="obsidian-graph-loading">Loading graph...</div>';
+  container.innerHTML = '<div class="shard-graph-loading">Loading graph...</div>';
 
   try {
     const qs = new URLSearchParams();
     if (vaultId) qs.set('vault_id', vaultId);
-    const r = await fetch(`${API_BASE}/api/obsidian/graph?${qs.toString()}`);
-    if (!r.ok) { container.innerHTML = '<div class="obsidian-graph-error">Failed to load graph</div>'; return; }
+    const r = await fetch(`${API_BASE}/api/shard/graph?${qs.toString()}`);
+    if (!r.ok) { container.innerHTML = '<div class="shard-graph-error">Failed to load graph</div>'; return; }
     const data = await r.json();
     _draw(data.nodes, data.edges, data.groups);
   } catch (e) {
-    container.innerHTML = `<div class="obsidian-graph-error">${e.message}</div>`;
+    container.innerHTML = `<div class="shard-graph-error">${e.message}</div>`;
   }
 }
 
@@ -106,13 +106,13 @@ function _draw(nodes, edges, groups) {
   _network.on('doubleClick', function (params) {
     if (params.nodes.length > 0) {
       const noteId = params.nodes[0];
-      window.dispatchEvent(new CustomEvent('odysseus-obsidian-select-note', { detail: { id: noteId } }));
+      window.dispatchEvent(new CustomEvent('odysseus-shard-select-note', { detail: { id: noteId } }));
     }
   });
 
   // Fit button
   const fitBtn = document.createElement('button');
-  fitBtn.className = 'obsidian-graph-fit-btn';
+  fitBtn.className = 'shard-graph-fit-btn';
   fitBtn.textContent = 'Fit';
   fitBtn.title = 'Fit graph to view';
   fitBtn.addEventListener('click', () => _network?.fit({ animation: true }));

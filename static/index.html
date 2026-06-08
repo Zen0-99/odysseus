@@ -241,6 +241,7 @@
     setTimeout(function(){var l=document.getElementById('app-loader');if(l){l.style.opacity='0';setTimeout(function(){l.remove()},300)}},5000);
   })();
   </script>
+
   <!-- Memory Management Modal -->
   <div id="memory-modal" class="modal hidden">
     <div class="modal-content memory-modal-content" role="dialog" aria-label="Brain" style="background:var(--bg)">
@@ -449,122 +450,583 @@
     </div>
   </div>
 
-  <!-- Obsidian Vault Modal -->
-  <div id="obsidian-modal" class="modal hidden">
-    <div class="modal-content obsidian-modal-content" role="dialog" aria-label="Obsidian Vault" style="background:var(--bg)">
-      <div class="modal-header" id="obsidian-header">
-        <h4><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>Obsidian Vault</h4>
-        <button class="close-btn" id="close-obsidian-modal" aria-label="Close Obsidian modal">&#x2716;</button>
+  <!-- Shard Vault Modal -->
+  <div id="shard-modal" class="modal hidden">
+    <div class="modal-content shard-modal-content" role="dialog" aria-label="Shard Vault" style="background:var(--bg)">
+      <div class="modal-header" id="shard-header">
+        <h4><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>Shard Vault</h4>
+        <button class="close-btn" id="close-shard-modal" aria-label="Close Shard modal">&#x2716;</button>
       </div>
-      <div class="modal-body obsidian-modal-body">
+      <div class="modal-body shard-modal-body">
         <!-- 3-pane layout -->
-        <div class="obsidian-3pane">
-          <!-- Left pane: Vault selector + Folder tree -->
-          <div class="obsidian-left-pane">
-            <div class="obsidian-left-header">
-              <!-- Custom vault dropdown -->
-              <div class="obsidian-vault-dropdown-wrap" id="obsidian-vault-dropdown-wrap">
-                <div class="obsidian-vault-dropdown-trigger" id="obsidian-vault-dropdown-trigger">
-                  <span class="obsidian-vault-dropdown-label" id="obsidian-vault-dropdown-label">Select vault...</span>
-                  <span class="obsidian-vault-dropdown-arrow">&#9662;</span>
-                </div>
-                <div class="obsidian-vault-dropdown-menu hidden" id="obsidian-vault-dropdown-menu"></div>
+        <div class="shard-3pane">
+          <!-- Left pane: Vault selector + Tabbed sidebar -->
+          <div class="shard-left-pane">
+            <div class="shard-left-header"></div>
+            <!-- Left sidebar tabs -->
+            <div class="shard-sidebar-tabs" id="shard-left-tabs">
+              <div class="shard-sidebar-tab active" data-tab="files" title="Files" draggable="true" role="button" tabindex="0">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                <span>Files</span>
+              </div>
+              <div class="shard-sidebar-tab" data-tab="search" title="Search" draggable="true" role="button" tabindex="0">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <span>Search</span>
+              </div>
+              <div class="shard-sidebar-tab" data-tab="bookmarks" title="Bookmarks" draggable="true" role="button" tabindex="0">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+                <span>Bookmarks</span>
+              </div>
+              <div class="shard-sidebar-tab" data-tab="tags" title="Tags" draggable="true" role="button" tabindex="0">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+                <span>Tags</span>
               </div>
             </div>
-            <div id="obsidian-folder-tree" class="obsidian-folder-tree hidden"></div>
-            <!-- Add vault form (hidden by default) -->
-            <div id="obsidian-add-vault-form" class="hidden" style="margin-top:8px;padding:8px;border:1px solid var(--border);border-radius:8px;">
-              <div style="margin-bottom:6px;">
-                <label class="settings-label" style="font-size:11px;">Vault Name</label>
-                <input type="text" id="obsidian-new-vault-name" placeholder="My Vault" style="width:100%;margin-top:3px;font-size:12px;" />
+            <!-- Left sidebar panes -->
+            <div class="shard-sidebar-panes" style="flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;">
+              <div class="shard-sidebar-pane" data-pane="files">
+                <div id="shard-folder-tree" class="shard-folder-tree hidden"></div>
               </div>
-              <div style="margin-bottom:6px;">
-                <label class="settings-label" style="font-size:11px;">Vault Path</label>
-                <input type="text" id="obsidian-new-vault-path" placeholder="C:\Users\You\Documents\Obsidian Vault" style="width:100%;margin-top:3px;font-size:12px;" />
+              <div class="shard-sidebar-pane hidden" data-pane="search">
+                <div class="shard-search-toolbar">
+                  <div class="shard-search-field">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                    <input type="text" id="shard-search-input" placeholder="Search vault..." autocomplete="off" />
+                    <button class="shard-search-clear hidden" id="shard-search-clear" title="Clear search">&#x2716;</button>
+                  </div>
+                  <button class="shard-search-toggle" id="shard-search-case" title="Match case">Aa</button>
+                  <button class="shard-search-toggle" id="shard-search-sort-btn" title="Sort results">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/></svg>
+                  </button>
+                  <div class="shard-search-sort-dropdown hidden" id="shard-search-sort-dropdown">
+                    <div class="shard-search-sort-item active" data-sort="name-asc">File name (A to Z)</div>
+                    <div class="shard-search-sort-item" data-sort="name-desc">File name (Z to A)</div>
+                    <div class="shard-search-sort-item" data-sort="modified-desc">Modified time (new to old)</div>
+                    <div class="shard-search-sort-item" data-sort="modified-asc">Modified time (old to new)</div>
+                    <div class="shard-search-sort-item" data-sort="created-desc">Created time (new to old)</div>
+                    <div class="shard-search-sort-item" data-sort="created-asc">Created time (old to new)</div>
+                  </div>
+                  <button class="shard-search-toggle" id="shard-search-settings-btn" title="Search settings">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M7 12h11"/><path d="M10 18h8"/></svg>
+                  </button>
+                  <div class="shard-search-settings hidden" id="shard-search-settings">
+                    <label class="shard-search-setting-row">
+                      <span>Collapse results</span>
+                      <span class="shard-toggle"><input type="checkbox" id="shard-search-collapse"><span class="shard-toggle-slider"></span></span>
+                    </label>
+                    <label class="shard-search-setting-row">
+                      <span>Show more context</span>
+                      <span class="shard-toggle"><input type="checkbox" id="shard-search-context"><span class="shard-toggle-slider"></span></span>
+                    </label>
+                    <label class="shard-search-setting-row">
+                      <span>Explain search terms</span>
+                      <span class="shard-toggle"><input type="checkbox" id="shard-search-explain" checked><span class="shard-toggle-slider"></span></span>
+                    </label>
+                  </div>
+                </div>
+                <div id="shard-search-explain-bar" class="shard-search-explain hidden"></div>
+                <div id="shard-search-empty" class="shard-search-empty hidden">
+                  <div class="shard-search-empty-section">
+                    <div class="shard-search-empty-title">Search options</div>
+                    <div class="shard-search-empty-item"><code>path:</code> match path of the file</div>
+                    <div class="shard-search-empty-item"><code>file:</code> match file name</div>
+                    <div class="shard-search-empty-item"><code>tag:</code> search for tags</div>
+                    <div class="shard-search-empty-item"><code>line:</code> search keywords on same line</div>
+                    <div class="shard-search-empty-item"><code>section:</code> search keywords under same heading</div>
+                    <div class="shard-search-empty-item"><code>[property]</code> match property</div>
+                  </div>
+                  <div class="shard-search-empty-section">
+                    <div class="shard-search-empty-title">History</div>
+                    <div id="shard-search-history"></div>
+                  </div>
+                </div>
+                <div id="shard-search-results" class="shard-search-results"></div>
               </div>
-              <div style="display:flex;gap:6px;">
-                <button class="admin-btn-add" id="obsidian-save-vault-btn" style="padding:3px 8px;font-size:11px;">Add</button>
-                <button class="admin-btn-delete" id="obsidian-cancel-vault-btn" style="padding:3px 8px;font-size:11px;">Cancel</button>
+              <div class="shard-sidebar-pane hidden" data-pane="bookmarks">
+                <div id="shard-bookmarks-list" class="shard-bookmarks-list"></div>
               </div>
-              <span id="obsidian-add-vault-status" style="font-size:11px;opacity:0.7;"></span>
+              <div class="shard-sidebar-pane hidden" data-pane="tags">
+                <div id="shard-tags-cloud" class="shard-tags-cloud"></div>
+              </div>
+            </div>
+            <div id="shard-status-bar" class="shard-status-bar">
+              <div class="shard-vault-selector-wrap" id="shard-vault-dropdown-wrap">
+                <div class="shard-vault-selector-trigger" id="shard-vault-dropdown-trigger">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                  <span class="shard-vault-selector-label" id="shard-vault-dropdown-label">Select vault...</span>
+                  <span class="shard-vault-selector-arrow">&#9662;</span>
+                </div>
+                <div class="shard-vault-dropdown-menu hidden" id="shard-vault-dropdown-menu"></div>
+              </div>
+              <button type="button" class="shard-settings-cog" id="shard-settings-cog" title="Shard settings">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+              </button>
+            </div>
+            <!-- Sidebar drop zones -->
+            <div class="shard-sidebar-drop-zones" data-sidebar-drop="left">
+              <div class="shard-sidebar-drop-zone" data-zone="top" style="grid-column:1 / -1; grid-row:1">Top</div>
+              <div class="shard-sidebar-drop-zone" data-zone="left" style="grid-column:1; grid-row:2">Left</div>
+              <div class="shard-sidebar-drop-zone shard-sidebar-drop-zone-center" data-zone="center" style="grid-column:2; grid-row:2">Move here</div>
+              <div class="shard-sidebar-drop-zone" data-zone="right" style="grid-column:3; grid-row:2">Right</div>
+              <div class="shard-sidebar-drop-zone" data-zone="bottom" style="grid-column:1 / -1; grid-row:3">Bottom</div>
             </div>
           </div>
 
           <!-- Resize handle: left-center -->
-          <div class="obsidian-resize-handle-h" id="obsidian-resize-left"></div>
+          <div class="shard-resize-handle-h" id="shard-resize-left"></div>
 
           <!-- Center pane: Tabs + Content -->
-          <div class="obsidian-center-pane" id="obsidian-main-panel">
-            <div class="obsidian-tabs">
-              <button class="obsidian-tab active" data-obsidian-tab="list">Notes</button>
-              <button class="obsidian-tab" data-obsidian-tab="permissions">Permissions</button>
+          <div class="shard-center-pane" id="shard-main-panel">
+            <!-- Pane workspace -->
+            <div class="shard-pane-workspace" id="shard-pane-workspace">
+              <div class="shard-editor-pane" data-pane-id="0" id="shard-editor-pane-0">
+                <div class="shard-tabs"></div>
+                <div class="shard-pane-content" data-shard-content="note">
+                  <div class="shard-note-toolbar">
+                    <div class="shard-nav-btns">
+                      <button class="shard-nav-btn shard-back-btn" title="Back">&#8592;</button>
+                      <button class="shard-nav-btn shard-forward-btn" title="Forward">&#8594;</button>
+                    </div>
+                    <div class="shard-breadcrumb"></div>
+                    <button class="shard-mode-icon" style="display:none;">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    </button>
+                    <button class="shard-note-menu-btn" title="More options" style="display:none;" aria-label="More options">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+                    </button>
+                  </div>
+                  <div class="shard-panel-wrap">
+                    <div class="shard-preview"></div>
+                  </div>
+                  <div class="shard-word-count"></div>
+                </div>
+                <div class="shard-drop-zones">
+                  <div class="shard-drop-zone" data-zone="top" style="grid-column:1 / -1; grid-row:1">Top</div>
+                  <div class="shard-drop-zone" data-zone="left" style="grid-column:1; grid-row:2">Left</div>
+                  <div class="shard-drop-zone shard-drop-zone-center" data-zone="center" style="grid-column:2; grid-row:2">Move here</div>
+                  <div class="shard-drop-zone" data-zone="right" style="grid-column:3; grid-row:2">Right</div>
+                  <div class="shard-drop-zone" data-zone="bottom" style="grid-column:1 / -1; grid-row:3">Bottom</div>
+                </div>
+              </div>
             </div>
 
-            <!-- Notes tab -->
-            <div class="obsidian-tab-content" data-obsidian-content="list">
-              <div class="obsidian-search-row">
-                <input type="text" id="obsidian-search" placeholder="Search notes..." />
-                <button id="obsidian-refresh-btn" title="Refresh vault" style="padding:4px 8px;font-size:11px;white-space:nowrap;background:transparent;border:1px solid var(--border);border-radius:6px;color:var(--fg);cursor:pointer;">&#x21bb; Refresh</button>
-              </div>
-              <div id="obsidian-list-wrap" class="obsidian-panel-wrap">
-                <div id="obsidian-note-list" class="obsidian-note-list"></div>
-                <div id="obsidian-preview" class="obsidian-preview"></div>
-              </div>
-            </div>
-
-            <!-- Permissions tab -->
-            <div class="obsidian-tab-content hidden" data-obsidian-content="permissions">
-              <div class="obsidian-permissions-wrap">
+            <!-- Permissions panel -->
+            <div class="shard-tab-content hidden" data-shard-content="permissions">
+              <div class="shard-permissions-wrap">
                 <div style="display:flex;gap:16px;margin-bottom:10px;flex-wrap:wrap;">
                   <label class="settings-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;">
-                    <input type="checkbox" id="obsidian-vault-read-all" />
+                    <input type="checkbox" id="shard-vault-read-all" />
                     Allow reading all files
                   </label>
                   <label class="settings-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;">
-                    <input type="checkbox" id="obsidian-vault-write-all" />
+                    <input type="checkbox" id="shard-vault-write-all" />
                     Allow writing all files
                   </label>
                 </div>
                 <h4 style="margin:10px 0 5px;font-size:12px;opacity:0.7;">Permission Rules</h4>
-                <div id="obsidian-permissions-table" class="obsidian-permissions-table"></div>
+                <div id="shard-permissions-table" class="shard-permissions-table"></div>
                 <div style="margin-top:8px;padding:8px;border:1px solid var(--border);border-radius:8px;">
                   <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
-                    <select id="obsidian-new-perm-type" style="width:auto;font-size:12px;">
+                    <select id="shard-new-perm-type" style="width:auto;font-size:12px;">
                       <option value="file">File</option>
                       <option value="folder">Folder</option>
                       <option value="regex">Regex</option>
                       <option value="link">Link</option>
                     </select>
-                    <input type="text" id="obsidian-new-perm-pattern" placeholder="pattern" style="flex:1;min-width:80px;font-size:12px;" />
-                    <select id="obsidian-new-perm-level" style="width:auto;font-size:12px;">
+                    <input type="text" id="shard-new-perm-pattern" placeholder="pattern" style="flex:1;min-width:80px;font-size:12px;" />
+                    <select id="shard-new-perm-level" style="width:auto;font-size:12px;">
                       <option value="none">None</option>
                       <option value="read">Read</option>
                       <option value="write">Write</option>
                     </select>
-                    <input type="number" id="obsidian-new-perm-priority" placeholder="priority" value="0" style="width:60px;font-size:12px;" />
-                    <button class="admin-btn-add" id="obsidian-add-perm-btn" style="padding:3px 8px;font-size:11px;">Add</button>
+                    <input type="number" id="shard-new-perm-priority" placeholder="priority" value="0" style="width:60px;font-size:12px;" />
+                    <button class="admin-btn-add" id="shard-add-perm-btn" style="padding:3px 8px;font-size:11px;">Add</button>
                   </div>
                 </div>
               </div>
             </div>
-            <div id="obsidian-status-bar" class="obsidian-status-bar"></div>
           </div>
 
           <!-- Resize handle: center-right -->
-          <div class="obsidian-resize-handle-h" id="obsidian-resize-right"></div>
+          <div class="shard-resize-handle-h" id="shard-resize-right"></div>
 
-          <!-- Right pane: Sidebar (properties, backlinks, tags, outline) -->
-          <div class="obsidian-right-pane" id="obsidian-right-pane">
-            <div class="obsidian-right-placeholder" style="padding:20px;text-align:center;opacity:0.5;font-size:12px;">
-              Select a note to see properties, backlinks, and tags.
+          <!-- Right pane: Tabbed sidebar -->
+          <div class="shard-right-pane" id="shard-right-pane">
+            <div class="shard-right-placeholder" id="shard-right-placeholder">
+              Select a note to see backlinks and outgoing links.
             </div>
-            <div id="obsidian-properties-panel" class="hidden"></div>
-            <div id="obsidian-backlinks-panel" class="hidden"></div>
-            <div id="obsidian-outgoing-panel" class="hidden"></div>
-            <div id="obsidian-tags-panel" class="hidden"></div>
-            <div id="obsidian-outline-panel" class="hidden"></div>
+            <div class="shard-right-tabs" id="shard-right-tabs">
+              <div class="shard-right-tab active" data-tab="backlinks" title="Backlinks" draggable="true" role="button" tabindex="0">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                <span>Backlinks</span>
+              </div>
+              <div class="shard-right-tab" data-tab="outgoing" title="Outgoing links" draggable="true" role="button" tabindex="0">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                <span>Outgoing</span>
+              </div>
+              <div class="shard-right-tab" data-tab="unlinked" title="Unlinked mentions" draggable="true" role="button" tabindex="0">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                <span>Unlinked</span>
+              </div>
+              <div class="shard-right-tab" data-tab="outline" title="Outline" draggable="true" role="button" tabindex="0">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+                <span>Outline</span>
+              </div>
+              <div class="shard-right-tab" data-tab="orphans" title="Orphans" draggable="true" role="button" tabindex="0">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 22V12h6v10"/><path d="M12 2v10"/><path d="M2 10h20"/></svg>
+                <span>Orphans</span>
+              </div>
+            </div>
+            <div class="shard-right-panes" id="shard-right-panes">
+              <div class="shard-right-pane-content" data-pane="backlinks" id="shard-backlinks-panel"></div>
+              <div class="shard-right-pane-content hidden" data-pane="outgoing" id="shard-outgoing-panel"></div>
+              <div class="shard-right-pane-content hidden" data-pane="unlinked" id="shard-unlinked-panel"></div>
+              <div class="shard-right-pane-content hidden" data-pane="outline" id="shard-outline-panel"></div>
+              <div class="shard-right-pane-content hidden" data-pane="orphans" id="shard-orphans-panel"></div>
+            </div>
+            <!-- Sidebar drop zones -->
+            <div class="shard-sidebar-drop-zones" data-sidebar-drop="right">
+              <div class="shard-sidebar-drop-zone" data-zone="top" style="grid-column:1 / -1; grid-row:1">Top</div>
+              <div class="shard-sidebar-drop-zone" data-zone="left" style="grid-column:1; grid-row:2">Left</div>
+              <div class="shard-sidebar-drop-zone shard-sidebar-drop-zone-center" data-zone="center" style="grid-column:2; grid-row:2">Move here</div>
+              <div class="shard-sidebar-drop-zone" data-zone="right" style="grid-column:3; grid-row:2">Right</div>
+              <div class="shard-sidebar-drop-zone" data-zone="bottom" style="grid-column:1 / -1; grid-row:3">Bottom</div>
+            </div>
           </div>
         </div>
+
+        <!-- Loading Overlay -->
+        <div id="shard-loading-overlay" class="shard-loading-overlay hidden">
+          <div class="shard-loading-spinner"></div>
+          <span class="shard-loading-text">Loading vault...</span>
+        </div>
+
+        <!-- Vault Settings Dialog -->
+        <div id="shard-vault-dialog" class="shard-vault-dialog hidden">
+          <div class="shard-vault-dialog-card">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+              <h5 style="margin:0;font-size:14px;" id="shard-vault-dialog-title">Vault Settings</h5>
+              <button class="close-btn" id="shard-vault-dialog-close" aria-label="Close vault dialog">&#x2716;</button>
+            </div>
+            <div style="margin-bottom:14px;">
+              <label class="settings-label" style="font-size:11px;">Vault Name</label>
+              <input type="text" id="shard-vault-dialog-name" style="width:100%;margin-top:3px;font-size:12px;" readonly />
+            </div>
+            <div style="margin-bottom:14px;">
+              <label class="settings-label" style="font-size:11px;">Vault Path</label>
+              <input type="text" id="shard-vault-dialog-path" style="width:100%;margin-top:3px;font-size:12px;" readonly />
+            </div>
+            <div style="margin-bottom:14px;">
+              <label class="settings-label" style="font-size:11px;">Note Count</label>
+              <div id="shard-vault-dialog-count" style="font-size:12px;margin-top:3px;"></div>
+            </div>
+            <div style="margin-bottom:14px;opacity:0.5;font-size:11px;">
+              Permissions &amp; advanced settings will be added here in a future update.
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;justify-content:space-between;">
+              <button class="admin-btn-delete" id="shard-vault-dialog-remove" style="padding:4px 12px;font-size:12px;">Remove vault</button>
+              <button class="admin-btn-add" id="shard-vault-dialog-cancel" style="padding:4px 12px;font-size:12px;">Close</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Add Vault Overlay -->
+        <div id="shard-add-vault-form" class="shard-add-vault-overlay hidden">
+          <div class="shard-add-vault-card">
+            <h5 style="margin:0 0 12px;font-size:14px;">Add New Vault</h5>
+            <div style="margin-bottom:10px;">
+              <label class="settings-label" style="font-size:11px;">Vault Name</label>
+              <input type="text" id="shard-new-vault-name" placeholder="My Vault" autocomplete="off" style="width:100%;margin-top:3px;font-size:12px;" />
+            </div>
+            <div style="margin-bottom:10px;">
+              <label class="settings-label" style="font-size:11px;">Vault Path</label>
+              <div class="shard-vault-path-row">
+                <input type="text" id="shard-new-vault-path" placeholder="C:\Users\You\Documents\Shard Vault" autocomplete="off" style="flex:1;font-size:12px;" />
+                <button type="button" class="admin-btn-add" id="shard-browse-vault-btn">Browse</button>
+                <input type="file" id="shard-vault-file-input" webkitdirectory directory multiple style="display:none;" />
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <button class="admin-btn-add" id="shard-save-vault-btn" style="padding:4px 12px;font-size:12px;">Add</button>
+              <button class="admin-btn-delete" id="shard-cancel-vault-btn" style="padding:4px 12px;font-size:12px;">Cancel</button>
+              <span id="shard-add-vault-status" style="font-size:11px;opacity:0.7;"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Shard Settings Dialog (in-panel) -->
+        <div id="shard-settings-dialog" class="shard-settings-dialog hidden">
+          <div class="shard-settings-dialog-card">
+            <div class="shard-settings-header">
+              <h5 style="margin:0;font-size:14px;">Settings</h5>
+              <button type="button" class="close-btn" id="shard-settings-close" aria-label="Close settings">&#x2716;</button>
+            </div>
+            <div class="shard-settings-layout">
+              <div class="shard-settings-nav">
+                <div class="shard-settings-nav-cat">Options</div>
+                <button type="button" class="shard-settings-nav-item active" data-settings-section="editor"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg><span>Editor</span></button>
+                <button type="button" class="shard-settings-nav-item" data-settings-section="files"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span>Files and links</span></button>
+                <button type="button" class="shard-settings-nav-item" data-settings-section="appearance"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a7 7 0 0 0 0 20 4 4 0 0 1 0-8 4 4 0 0 0 0-8"/><circle cx="8" cy="9" r="1.5" fill="currentColor"/><circle cx="15" cy="14" r="1.5" fill="currentColor"/><circle cx="9" cy="15" r="1.5" fill="currentColor"/></svg><span>Appearance</span></button>
+                <button type="button" class="shard-settings-nav-item" data-settings-section="hotkeys"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01"/><path d="M10 8h.01"/><path d="M14 8h.01"/><path d="M18 8h.01"/><path d="M8 12h.01"/><path d="M12 12h.01"/><path d="M16 12h.01"/><path d="M7 16h10"/></svg><span>Hotkeys</span></button>
+                <button type="button" class="shard-settings-nav-item shard-settings-nav-disabled" data-settings-section="interface" disabled><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg><span>Interface</span></button>
+                <button type="button" class="shard-settings-nav-item shard-settings-nav-disabled" data-settings-section="sync" disabled><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg><span>Sync</span></button>
+                <button type="button" class="shard-settings-nav-item shard-settings-nav-disabled" data-settings-section="templates" disabled><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg><span>Templates</span></button>
+                <button type="button" class="shard-settings-nav-item shard-settings-nav-disabled" data-settings-section="graph" disabled><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg><span>Graph view</span></button>
+                <button type="button" class="shard-settings-nav-item shard-settings-nav-disabled" data-settings-section="privacy" disabled><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><span>Privacy</span></button>
+                <button type="button" class="shard-settings-nav-item shard-settings-nav-disabled" data-settings-section="general" disabled><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg><span>General</span></button>
+
+                <div class="shard-settings-nav-divider"></div>
+                <div class="shard-settings-nav-cat">Plugins</div>
+                <button type="button" class="shard-settings-nav-item" data-settings-section="plugins"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg><span>Core plugins</span></button>
+                <button type="button" class="shard-settings-nav-item shard-settings-nav-disabled" data-settings-section="community-plugins" disabled><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span>Community plugins</span></button>
+
+                <div class="shard-settings-nav-divider"></div>
+                <div class="shard-settings-nav-cat">About</div>
+                <button type="button" class="shard-settings-nav-item shard-settings-nav-disabled" data-settings-section="about" disabled><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><span>About</span></button>
+              </div>
+              <div class="shard-settings-content">
+                <!-- Editor -->
+                <div class="shard-settings-section" data-settings-pane="editor">
+                  <div class="shard-settings-group">
+                    <h6 class="shard-settings-group-title">Display</h6>
+                    <div class="shard-settings-row">
+                      <div class="shard-settings-info">
+                        <span>Default view for new tabs</span>
+                        <span class="shard-settings-desc">The default view that a new Markdown tab gets opened in.</span>
+                      </div>
+                      <select id="shard-set-default-view" class="shard-settings-select"><option value="reading">Reading view</option><option value="live">Live preview</option><option value="source">Source mode</option></select>
+                    </div>
+                    <div class="shard-settings-row">
+                      <div class="shard-settings-info">
+                        <span>Readable line length</span>
+                        <span class="shard-settings-desc">Limit maximum line length. Less content fits onscreen, but long blocks of text are more readable.</span>
+                      </div>
+                      <label class="admin-switch"><input type="checkbox" id="shard-set-readable-line"><span class="admin-slider"></span></label>
+                    </div>
+                    <div class="shard-settings-row">
+                      <div class="shard-settings-info">
+                        <span>Strict line breaks</span>
+                        <span class="shard-settings-desc">In preview mode, ignore single line breaks according to the Markdown specification.</span>
+                      </div>
+                      <label class="admin-switch"><input type="checkbox" id="shard-set-strict-breaks"><span class="admin-slider"></span></label>
+                    </div>
+                    <div class="shard-settings-row">
+                      <div class="shard-settings-info">
+                        <span>Fold heading</span>
+                        <span class="shard-settings-desc">Lets you fold all content under a heading.</span>
+                      </div>
+                      <label class="admin-switch"><input type="checkbox" id="shard-set-fold-heading"><span class="admin-slider"></span></label>
+                    </div>
+                    <div class="shard-settings-row">
+                      <div class="shard-settings-info">
+                        <span>Fold indent</span>
+                        <span class="shard-settings-desc">Lets you fold indented lists and code blocks.</span>
+                      </div>
+                      <label class="admin-switch"><input type="checkbox" id="shard-set-fold-indent"><span class="admin-slider"></span></label>
+                    </div>
+                    <div class="shard-settings-row">
+                      <div class="shard-settings-info">
+                        <span>Show line numbers</span>
+                        <span class="shard-settings-desc">Show line numbers in the editor.</span>
+                      </div>
+                      <label class="admin-switch"><input type="checkbox" id="shard-set-line-numbers"><span class="admin-slider"></span></label>
+                    </div>
+                  </div>
+                  <div class="shard-settings-group">
+                    <h6 class="shard-settings-group-title">Behavior</h6>
+                    <div class="shard-settings-row">
+                      <div class="shard-settings-info">
+                        <span>Auto-pair brackets</span>
+                        <span class="shard-settings-desc">Automatically pair brackets and quotes.</span>
+                      </div>
+                      <label class="admin-switch"><input type="checkbox" id="shard-set-auto-brackets" checked><span class="admin-slider"></span></label>
+                    </div>
+                    <div class="shard-settings-row">
+                      <div class="shard-settings-info">
+                        <span>Auto-pair Markdown syntax</span>
+                        <span class="shard-settings-desc">Automatically pair Markdown syntax like ** and [[.</span>
+                      </div>
+                      <label class="admin-switch"><input type="checkbox" id="shard-set-auto-md" checked><span class="admin-slider"></span></label>
+                    </div>
+                    <div class="shard-settings-row">
+                      <div class="shard-settings-info">
+                        <span>Smart lists</span>
+                        <span class="shard-settings-desc">Automatically continue lists when pressing Enter.</span>
+                      </div>
+                      <label class="admin-switch"><input type="checkbox" id="shard-set-smart-lists" checked><span class="admin-slider"></span></label>
+                    </div>
+                    <div class="shard-settings-row">
+                      <div class="shard-settings-info">
+                        <span>Indent using tabs</span>
+                        <span class="shard-settings-desc">Use tabs instead of spaces for indentation.</span>
+                      </div>
+                      <label class="admin-switch"><input type="checkbox" id="shard-set-indent-tabs"><span class="admin-slider"></span></label>
+                    </div>
+                    <div class="shard-settings-row shard-settings-disabled" title="Coming soon">
+                      <div class="shard-settings-info">
+                        <span>Vim key bindings</span>
+                        <span class="shard-settings-desc">Use Vim key bindings in the editor.</span>
+                      </div>
+                      <label class="admin-switch"><input type="checkbox" id="shard-set-vim" disabled><span class="admin-slider"></span></label>
+                    </div>
+                  </div>
+                </div>
+                <!-- Files -->
+                <div class="shard-settings-section hidden" data-settings-pane="files">
+                  <div class="shard-settings-group">
+                    <h6 class="shard-settings-group-title">New notes</h6>
+                    <div class="shard-settings-row">
+                      <div class="shard-settings-info">
+                        <span>New note location</span>
+                        <span class="shard-settings-desc">Choose where new notes are created.</span>
+                      </div>
+                      <select id="shard-set-new-note-loc" class="shard-settings-select"><option value="vault-root">Vault folder</option><option value="same-folder">Same folder as current file</option><option value="folder">In the folder specified below</option></select>
+                    </div>
+                    <div class="shard-settings-row shard-settings-disabled" title="Coming soon">
+                      <div class="shard-settings-info">
+                        <span>New note folder</span>
+                        <span class="shard-settings-desc">The folder where new notes are created.</span>
+                      </div>
+                      <input type="text" id="shard-set-new-note-folder" class="shard-settings-input" placeholder="Folder path" disabled>
+                    </div>
+                  </div>
+                  <div class="shard-settings-group">
+                    <h6 class="shard-settings-group-title">Links</h6>
+                    <div class="shard-settings-row">
+                      <div class="shard-settings-info">
+                        <span>Use Wikilinks</span>
+                        <span class="shard-settings-desc">Use [[Wikilink]] syntax for internal links.</span>
+                      </div>
+                      <label class="admin-switch"><input type="checkbox" id="shard-set-wikilinks" checked><span class="admin-slider"></span></label>
+                    </div>
+                    <div class="shard-settings-row">
+                      <div class="shard-settings-info">
+                        <span>New link format</span>
+                        <span class="shard-settings-desc">Choose the format for new internal links.</span>
+                      </div>
+                      <select id="shard-set-link-format" class="shard-settings-select"><option value="shortest">Shortest path</option><option value="relative">Relative path</option><option value="absolute">Absolute path</option></select>
+                    </div>
+                    <div class="shard-settings-row">
+                      <div class="shard-settings-info">
+                        <span>Auto-update internal links</span>
+                        <span class="shard-settings-desc">Automatically update internal links when renaming notes.</span>
+                      </div>
+                      <label class="admin-switch"><input type="checkbox" id="shard-set-auto-links" checked><span class="admin-slider"></span></label>
+                    </div>
+                  </div>
+                  <div class="shard-settings-group">
+                    <h6 class="shard-settings-group-title">Safety</h6>
+                    <div class="shard-settings-row">
+                      <div class="shard-settings-info">
+                        <span>Confirm file deletion</span>
+                        <span class="shard-settings-desc">Show a confirmation dialog before deleting files.</span>
+                      </div>
+                      <label class="admin-switch"><input type="checkbox" id="shard-set-confirm-delete" checked><span class="admin-slider"></span></label>
+                    </div>
+                    <div class="shard-settings-row shard-settings-disabled" title="Coming soon">
+                      <div class="shard-settings-info">
+                        <span>Excluded files</span>
+                        <span class="shard-settings-desc">Files and folders to exclude from the vault.</span>
+                      </div>
+                      <button type="button" class="admin-btn-sm" disabled>Manage...</button>
+                    </div>
+                  </div>
+                </div>
+                <!-- Appearance -->
+                <div class="shard-settings-section hidden" data-settings-pane="appearance">
+                  <div class="shard-settings-group">
+                    <h6 class="shard-settings-group-title">Display</h6>
+                    <div class="shard-settings-row">
+                      <div class="shard-settings-info">
+                        <span>Font size</span>
+                        <span class="shard-settings-desc">The base font size for the editor.</span>
+                      </div>
+                      <div style="display:flex;align-items:center;gap:8px;">
+                        <input type="range" id="shard-set-font-size" min="10" max="32" value="16" style="width:120px;">
+                        <span id="shard-set-font-size-val" style="font-size:12px;min-width:24px;">16</span>
+                      </div>
+                    </div>
+                    <div class="shard-settings-row">
+                      <div class="shard-settings-info">
+                        <span>Quick font size adjustment</span>
+                        <span class="shard-settings-desc">Allow changing font size with Ctrl/Cmd + scroll.</span>
+                      </div>
+                      <label class="admin-switch"><input type="checkbox" id="shard-set-quick-font" checked><span class="admin-slider"></span></label>
+                    </div>
+                    <div class="shard-settings-row">
+                      <div class="shard-settings-info">
+                        <span>Show inline title</span>
+                        <span class="shard-settings-desc">Show the note title inline at the top of the editor.</span>
+                      </div>
+                      <label class="admin-switch"><input type="checkbox" id="shard-set-inline-title" checked><span class="admin-slider"></span></label>
+                    </div>
+                    <div class="shard-settings-row">
+                      <div class="shard-settings-info">
+                        <span>Monospace font mode</span>
+                        <span class="shard-settings-desc">Use monospace font throughout the vault interface.</span>
+                      </div>
+                      <label class="admin-switch"><input type="checkbox" id="shard-set-monotone-font"><span class="admin-slider"></span></label>
+                    </div>
+                    <div class="shard-settings-row shard-settings-disabled" title="Coming soon">
+                      <div class="shard-settings-info">
+                        <span>CSS snippets</span>
+                        <span class="shard-settings-desc">Custom CSS snippets for the editor.</span>
+                      </div>
+                      <button type="button" class="admin-btn-sm" disabled>Manage...</button>
+                    </div>
+                  </div>
+                </div>
+                <!-- Core Plugins -->
+                <div class="shard-settings-section hidden" data-settings-pane="plugins">
+                  <div id="shard-settings-plugins-list" style="display:flex;flex-direction:column;gap:6px;"></div>
+                </div>
+                <!-- Hotkeys -->
+                <div class="shard-settings-section hidden" data-settings-pane="hotkeys">
+                  <div style="padding:12px;text-align:center;opacity:0.5;font-size:13px;">Hotkey customization coming soon.</div>
+                </div>
+                <!-- General -->
+                <div class="shard-settings-section hidden" data-settings-pane="general">
+                  <div class="shard-settings-group">
+                    <h6 class="shard-settings-group-title">Startup</h6>
+                    <div class="shard-settings-row shard-settings-disabled" title="Coming soon">
+                      <div class="shard-settings-info">
+                        <span>Startup vault</span>
+                        <span class="shard-settings-desc">Choose which vault to open on startup.</span>
+                      </div>
+                      <select class="shard-settings-select" disabled><option>Last open vault</option></select>
+                    </div>
+                    <div class="shard-settings-row shard-settings-disabled" title="Coming soon">
+                      <div class="shard-settings-info">
+                        <span>Language</span>
+                        <span class="shard-settings-desc">The display language for the interface.</span>
+                      </div>
+                      <select class="shard-settings-select" disabled><option>English</option></select>
+                    </div>
+                  </div>
+                  <div class="shard-settings-group">
+                    <h6 class="shard-settings-group-title">Advanced</h6>
+                    <div class="shard-settings-row shard-settings-disabled" title="Coming soon">
+                      <div class="shard-settings-info">
+                        <span>Hardware acceleration</span>
+                        <span class="shard-settings-desc">Use GPU acceleration for rendering.</span>
+                      </div>
+                      <label class="admin-switch"><input type="checkbox" disabled><span class="admin-slider"></span></label>
+                    </div>
+                  </div>
+                </div>
+                <!-- Keychain -->
+                <div class="shard-settings-section hidden" data-settings-pane="keychain">
+                  <div style="padding:12px;text-align:center;opacity:0.5;font-size:13px;">Keychain integration coming soon.</div>
+                </div>
+                <!-- Community plugins -->
+                <div class="shard-settings-section hidden" data-settings-pane="community-plugins">
+                  <div style="padding:12px;text-align:center;opacity:0.5;font-size:13px;">Community plugin browsing and installation coming soon.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
       </div>
     </div>
   </div>
@@ -802,7 +1264,7 @@
     <button class="icon-rail-btn" id="rail-memory" title="Brain"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/></svg></button>
     <button class="icon-rail-btn" id="rail-notes" title="Notes"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5"/><path d="M8 17.5 15.5 10l2.5 2.5L10.5 20H8z"/></svg></button>
     <button class="icon-rail-btn" id="rail-tasks" title="Tasks"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M9 16l2 2 4-4"/></svg></button>
-    <button class="icon-rail-btn" id="rail-obsidian" title="Obsidian"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></button>
+    <button class="icon-rail-btn" id="rail-shard" title="Shard"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></button>
     <button class="icon-rail-btn" id="rail-theme" title="Theme"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 0 0 20 5 5 0 0 0 5-5 3 3 0 0 0-3-3h-2a3 3 0 0 1-3-3 5 5 0 0 1 5-5"/></svg></button>
     <div style="flex:1"></div>
     <!-- Static: bottom -->
@@ -1028,7 +1490,7 @@
           <span id="assistant-notif-dot" class="sidebar-notif-dot" style="display:none"></span>
         </div>
 
-        <div class="list-item" id="tool-obsidian-btn">
+        <div class="list-item" id="tool-shard-btn">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
             style="flex-shrink:0;opacity:0.5;">
@@ -1038,7 +1500,7 @@
             <line x1="16" y1="17" x2="8" y2="17"/>
             <polyline points="10 9 9 9 8 9"/>
           </svg>
-          <span class="grow">Obsidian</span>
+          <span class="grow">Shard</span>
         </div>
 
         <div class="list-item" id="tool-theme-btn">
@@ -1533,9 +1995,9 @@
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
             <span>System</span>
           </button>
-          <button class="settings-nav-item admin-only" data-settings-tab="obsidian">
+          <button class="settings-nav-item admin-only" data-settings-tab="shard">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-            <span>Obsidian</span>
+            <span>Shard</span>
           </button>
         </div>
         <div class="settings-panels">
@@ -2542,30 +3004,30 @@
           </div>
         </div>
 
-        <!-- ═══ OBSIDIAN TAB ═══ -->
-        <div data-settings-panel="obsidian" class="hidden">
+        <!-- ═══ SHARD TAB ═══ -->
+        <div data-settings-panel="shard" class="hidden">
           <div class="admin-card">
-            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>Obsidian Vaults</h2>
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>Shard Vaults</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Manage connected vaults, read/write access, and per-path permissions.</div>
             <div class="settings-col">
-              <div id="set-obsidian-vaults-list" style="margin-bottom:12px;"></div>
+              <div id="set-shard-vaults-list" style="margin-bottom:12px;"></div>
               <div style="display:flex;gap:8px;margin-top:12px;">
-                <button class="admin-btn-add" id="set-obsidian-add-vault-btn">+ Add Vault</button>
+                <button class="admin-btn-add" id="set-shard-add-vault-btn">+ Add Vault</button>
               </div>
-              <div id="set-obsidian-add-vault-form" class="hidden" style="margin-top:10px;padding:10px;border:1px solid var(--border);border-radius:8px;">
+              <div id="set-shard-add-vault-form" class="hidden" style="margin-top:10px;padding:10px;border:1px solid var(--border);border-radius:8px;">
                 <div class="settings-row">
                   <label class="settings-label">Vault Name</label>
-                  <input type="text" id="set-obsidian-new-name" class="settings-input" placeholder="My Vault" />
+                  <input type="text" id="set-shard-new-name" class="settings-input" placeholder="My Vault" />
                 </div>
                 <div class="settings-row">
                   <label class="settings-label">Vault Path</label>
-                  <input type="text" id="set-obsidian-new-path" class="settings-input" placeholder="C:\Users\You\Documents\Obsidian Vault" />
+                  <input type="text" id="set-shard-new-path" class="settings-input" placeholder="C:\Users\You\Documents\Shard Vault" />
                 </div>
                 <div style="display:flex;gap:8px;margin-top:8px;">
-                  <button class="admin-btn-add" id="set-obsidian-save-vault-btn">Add</button>
-                  <button class="admin-btn-delete" id="set-obsidian-cancel-vault-btn">Cancel</button>
+                  <button class="admin-btn-add" id="set-shard-save-vault-btn">Add</button>
+                  <button class="admin-btn-delete" id="set-shard-cancel-vault-btn">Cancel</button>
                 </div>
-                <div id="set-obsidian-add-status" style="margin-top:6px;font-size:12px;opacity:0.7;"></div>
+                <div id="set-shard-add-status" style="margin-top:6px;font-size:12px;opacity:0.7;"></div>
               </div>
             </div>
           </div>
@@ -2615,6 +3077,11 @@
 <script type="module" src="/static/js/chat.js?v=20260609ws"></script>
 <script type="module" src="/static/js/cookbook.js"></script>
 <script src="/static/js/cookbookSchedule.js"></script>
+<script nonce="{{CSP_NONCE}}">
+(function(){
+  if (window.electron || window.electronAPI) document.body.classList.add('electron');
+})();
+</script>
 <script type="module" src="/static/js/search-chat.js"></script>
 <script type="module" src="/static/js/compare/index.js"></script>
 <script type="module" src="/static/js/theme.js"></script>

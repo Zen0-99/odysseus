@@ -1,5 +1,5 @@
-# routes/obsidian_routes.py
-"""Obsidian vault sync API — read-only by default, write gated by permission."""
+# routes/shard_routes.py
+"""Shard vault sync API — read-only by default, write gated by permission."""
 
 from __future__ import annotations
 
@@ -14,11 +14,11 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from core.database import SessionLocal, Obsidian, ObsidianVault, ObsidianPermission
+from core.database import SessionLocal, Shard, ShardVault, ShardPermission
 from core.middleware import require_admin
 from src.auth_helpers import effective_user, get_current_user
-from src.obsidian_graph import build_graph, build_timeline
-from src.obsidian_watcher import get_watcher
+from src.shard_graph import build_graph, build_timeline
+from src.shard_watcher import get_watcher
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +82,7 @@ def _validate_vault_path(vault_path: str) -> Path:
     return p
 
 
-def _vault_to_dict(v: ObsidianVault) -> Dict[str, Any]:
+def _vault_to_dict(v: ShardVault) -> Dict[str, Any]:
     return {
         "id": v.id,
         "name": v.name,
@@ -97,7 +97,7 @@ def _vault_to_dict(v: ObsidianVault) -> Dict[str, Any]:
     }
 
 
-def _perm_to_dict(p: ObsidianPermission) -> Dict[str, Any]:
+def _perm_to_dict(p: ShardPermission) -> Dict[str, Any]:
     return {
         "id": p.id,
         "vault_id": p.vault_id,
@@ -120,14 +120,14 @@ def _effective_permission(
     3. Regex rules
     4. Vault default (write_enabled -> write, else read)
     """
-    vault = db.query(ObsidianVault).filter_by(id=vault_id, owner=owner).first()
+    vault = db.query(ShardVault).filter_by(id=vault_id, owner=owner).first()
     if not vault or not vault.read_enabled:
         return "none"
 
     rules = (
-        db.query(ObsidianPermission)
+        db.query(ShardPermission)
         .filter_by(vault_id=vault_id, owner=owner)
-        .order_by(ObsidianPermission.priority.desc())
+        .order_by(ShardPermission.priority.desc())
         .all()
     )
 
@@ -162,8 +162,8 @@ def _effective_permission(
     return "write" if vault.write_enabled else "read"
 
 
-def _note_to_dict(note: Obsidian) -> Dict[str, Any]:
-    """Serialize Obsidian note to API-friendly dict (hides vault_path)."""
+def _note_to_dict(note: Shard) -> Dict[str, Any]:
+    """Serialize Shard note to API-friendly dict (hides vault_path)."""
     return {
         "id": note.id,
         "rel_path": note.rel_path,
@@ -194,15 +194,15 @@ def _safe_json(raw: Optional[str], default: Any) -> Any:
 # Router
 # ---------------------------------------------------------------------------
 
-def setup_obsidian_routes() -> APIRouter:
-    router = APIRouter(prefix="/api/obsidian", tags=["obsidian"])
+def setup_shard_routes() -> APIRouter:
+    router = APIRouter(prefix="/api/shard", tags=["shard"])
 
     # -----------------------------------------------------------------------
     # Connection management
     # -----------------------------------------------------------------------
 
     @router.post("/connect")
-    async def obsidian_connect(req: ConnectRequest, request: Request):
+    async def shard_connect(req: ConnectRequest, request: Request):
         """Connect a vault — creates a vault record if new."""
         require_admin(request)
         owner = _user(request)
@@ -216,7 +216,7 @@ def setup_obsidian_routes() -> APIRouter:
 
         db = SessionLocal()
         try:
-            existing = db.query(ObsidianVault).filter_by(id=vault_id).first()
+            existing = db.query(ShardVault).filter_by(id=vault_id).first()
             if existing:
                 existing.is_active = True
                 existing.read_enabled = req.read_enabled
@@ -224,7 +224,7 @@ def setup_obsidian_routes() -> APIRouter:
                 if req.name:
                     existing.name = req.name
             else:
-                db.add(ObsidianVault(
+                db.add(ShardVault(
                     id=vault_id,
                     owner=owner,
                     name=req.name or vault.name,
@@ -235,37 +235,37 @@ def setup_obsidian_routes() -> APIRouter:
                 ))
             db.commit()
 
-            count = db.query(Obsidian).filter_by(
+            count = db.query(Shard).filter_by(
                 owner=owner, vault_path=str(vault)
             ).count()
             # Update vault note_count
-            v = db.query(ObsidianVault).filter_by(id=vault_id).first()
+            v = db.query(ShardVault).filter_by(id=vault_id).first()
             if v:
                 v.note_count = count
                 db.commit()
         finally:
             db.close()
 
-        os.environ[f"_ODY_OBSIDIAN_VAULT_{owner}"] = str(vault)
+        os.environ[f"_ODY_SHARD_VAULT_{owner}"] = str(vault)
         return {"ok": True, "vault_id": vault_id, "vault_path": vault.name, "synced_notes": count}
 
     @router.post("/disconnect")
-    async def obsidian_disconnect(request: Request):
+    async def shard_disconnect(request: Request):
         """Disconnect the legacy single vault."""
         require_admin(request)
         owner = _user(request)
-        vault_env = os.environ.get(f"_ODY_OBSIDIAN_VAULT_{owner}")
+        vault_env = os.environ.get(f"_ODY_SHARD_VAULT_{owner}")
         if not vault_env:
             raise HTTPException(400, "No vault currently connected")
 
         watcher = get_watcher()
         watcher.disconnect(owner, vault_env)
-        os.environ.pop(f"_ODY_OBSIDIAN_VAULT_{owner}", None)
+        os.environ.pop(f"_ODY_SHARD_VAULT_{owner}", None)
 
         db = SessionLocal()
         try:
             vault_id = f"{owner}:{vault_env}"
-            v = db.query(ObsidianVault).filter_by(id=vault_id).first()
+            v = db.query(ShardVault).filter_by(id=vault_id).first()
             if v:
                 v.is_active = False
                 db.commit()
@@ -275,14 +275,14 @@ def setup_obsidian_routes() -> APIRouter:
         return {"ok": True}
 
     @router.get("/status")
-    async def obsidian_status(request: Request):
+    async def shard_status(request: Request):
         """Return connection status for current user."""
         owner = _user(request)
         db = SessionLocal()
         try:
-            vaults = db.query(ObsidianVault).filter_by(owner=owner, is_active=True).all()
+            vaults = db.query(ShardVault).filter_by(owner=owner, is_active=True).all()
             # Update note_count from disk for each vault
-            from src.obsidian_fs import list_notes
+            from src.shard_fs import list_notes
             result = []
             for v in vaults:
                 d = _vault_to_dict(v)
@@ -292,7 +292,7 @@ def setup_obsidian_routes() -> APIRouter:
                 except Exception:
                     pass
                 result.append(d)
-            vault_env = os.environ.get(f"_ODY_OBSIDIAN_VAULT_{owner}")
+            vault_env = os.environ.get(f"_ODY_SHARD_VAULT_{owner}")
             watcher = get_watcher()
             connected = watcher.is_connected(owner, vault_env) if vault_env else False
             return {
@@ -313,8 +313,8 @@ def setup_obsidian_routes() -> APIRouter:
         owner = _user(request)
         db = SessionLocal()
         try:
-            vaults = db.query(ObsidianVault).filter_by(owner=owner).order_by(
-                ObsidianVault.updated_at.desc()
+            vaults = db.query(ShardVault).filter_by(owner=owner).order_by(
+                ShardVault.updated_at.desc()
             ).all()
             return {"vaults": [_vault_to_dict(v) for v in vaults]}
         finally:
@@ -323,7 +323,7 @@ def setup_obsidian_routes() -> APIRouter:
     @router.post("/vaults")
     async def add_vault(req: ConnectRequest, request: Request):
         """Add and connect a new vault."""
-        return await obsidian_connect(req, request)
+        return await shard_connect(req, request)
 
     @router.delete("/vaults/{vault_id}")
     async def remove_vault(vault_id: str, request: Request):
@@ -332,7 +332,7 @@ def setup_obsidian_routes() -> APIRouter:
         owner = _user(request)
         db = SessionLocal()
         try:
-            vault = db.query(ObsidianVault).filter_by(id=vault_id, owner=owner).first()
+            vault = db.query(ShardVault).filter_by(id=vault_id, owner=owner).first()
             if not vault:
                 raise HTTPException(404, "Vault not found")
 
@@ -351,7 +351,7 @@ def setup_obsidian_routes() -> APIRouter:
         owner = _user(request)
         db = SessionLocal()
         try:
-            vault = db.query(ObsidianVault).filter_by(id=vault_id, owner=owner).first()
+            vault = db.query(ShardVault).filter_by(id=vault_id, owner=owner).first()
             if not vault:
                 raise HTTPException(404, "Vault not found")
             if req.name is not None:
@@ -377,13 +377,13 @@ def setup_obsidian_routes() -> APIRouter:
         owner = _user(request)
         db = SessionLocal()
         try:
-            vault = db.query(ObsidianVault).filter_by(id=vault_id, owner=owner).first()
+            vault = db.query(ShardVault).filter_by(id=vault_id, owner=owner).first()
             if not vault:
                 raise HTTPException(404, "Vault not found")
             rules = (
-                db.query(ObsidianPermission)
+                db.query(ShardPermission)
                 .filter_by(vault_id=vault_id, owner=owner)
-                .order_by(ObsidianPermission.priority.desc())
+                .order_by(ShardPermission.priority.desc())
                 .all()
             )
             return {"permissions": [_perm_to_dict(r) for r in rules]}
@@ -397,10 +397,10 @@ def setup_obsidian_routes() -> APIRouter:
         owner = _user(request)
         db = SessionLocal()
         try:
-            vault = db.query(ObsidianVault).filter_by(id=vault_id, owner=owner).first()
+            vault = db.query(ShardVault).filter_by(id=vault_id, owner=owner).first()
             if not vault:
                 raise HTTPException(404, "Vault not found")
-            rule = ObsidianPermission(
+            rule = ShardPermission(
                 id=uuid.uuid4().hex,
                 vault_id=vault_id,
                 owner=owner,
@@ -424,7 +424,7 @@ def setup_obsidian_routes() -> APIRouter:
         db = SessionLocal()
         try:
             rule = (
-                db.query(ObsidianPermission)
+                db.query(ShardPermission)
                 .filter_by(id=perm_id, vault_id=vault_id, owner=owner)
                 .first()
             )
@@ -441,7 +441,7 @@ def setup_obsidian_routes() -> APIRouter:
     # -----------------------------------------------------------------------
 
     @router.get("/notes")
-    async def obsidian_list_notes(
+    async def shard_list_notes(
         request: Request,
         vault_id: Optional[str] = None,
         q: Optional[str] = None,
@@ -451,18 +451,18 @@ def setup_obsidian_routes() -> APIRouter:
         limit: int = 100,
         offset: int = 0,
     ):
-        """List Obsidian notes directly from filesystem."""
+        """List Shard notes directly from filesystem."""
         owner = _user(request)
         db = SessionLocal()
         try:
-            vault = db.query(ObsidianVault).filter_by(id=vault_id, owner=owner).first() if vault_id else None
+            vault = db.query(ShardVault).filter_by(id=vault_id, owner=owner).first() if vault_id else None
             if vault_id and not vault:
                 raise HTTPException(404, "Vault not found")
-            vault_path = vault.path if vault else os.environ.get(f"_ODY_OBSIDIAN_VAULT_{owner}")
+            vault_path = vault.path if vault else os.environ.get(f"_ODY_SHARD_VAULT_{owner}")
             if not vault_path:
                 return {"total": 0, "offset": offset, "limit": limit, "notes": []}
 
-            from src.obsidian_fs import list_notes
+            from src.shard_fs import list_notes
             notes = list_notes(vault_path, folder=folder, q=q)
             if tag:
                 notes = [n for n in notes if tag in n.get("tags", [])]
@@ -473,22 +473,22 @@ def setup_obsidian_routes() -> APIRouter:
             db.close()
 
     @router.get("/notes/{note_id:path}")
-    async def obsidian_get_note(note_id: str, request: Request):
+    async def shard_get_note(note_id: str, request: Request):
         """Get a single note directly from filesystem."""
         owner = _user(request)
         db = SessionLocal()
         try:
-            vault = db.query(ObsidianVault).filter_by(owner=owner, is_active=True).first()
-            vault_path = vault.path if vault else os.environ.get(f"_ODY_OBSIDIAN_VAULT_{owner}")
+            vault = db.query(ShardVault).filter_by(owner=owner, is_active=True).first()
+            vault_path = vault.path if vault else os.environ.get(f"_ODY_SHARD_VAULT_{owner}")
             if not vault_path:
                 raise HTTPException(400, "No vault connected")
 
-            from src.obsidian_fs import get_note
+            from src.shard_fs import get_note
             note = get_note(vault_path, note_id)
             if not note:
                 raise HTTPException(404, "Note not found")
             # Resolve backlinks
-            from src.obsidian_fs import list_notes, compute_backlinks
+            from src.shard_fs import list_notes, compute_backlinks
             all_notes = list_notes(vault_path)
             compute_backlinks(all_notes)
             resolved = []
@@ -505,37 +505,37 @@ def setup_obsidian_routes() -> APIRouter:
     # -----------------------------------------------------------------------
 
     @router.get("/folders")
-    async def obsidian_folders(request: Request, vault_id: Optional[str] = None):
+    async def shard_folders(request: Request, vault_id: Optional[str] = None):
         """Return folder tree for a vault from filesystem."""
         owner = _user(request)
         db = SessionLocal()
         try:
-            vault = db.query(ObsidianVault).filter_by(id=vault_id, owner=owner).first() if vault_id else None
+            vault = db.query(ShardVault).filter_by(id=vault_id, owner=owner).first() if vault_id else None
             if vault_id and not vault:
                 raise HTTPException(404, "Vault not found")
-            vault_path = vault.path if vault else os.environ.get(f"_ODY_OBSIDIAN_VAULT_{owner}")
+            vault_path = vault.path if vault else os.environ.get(f"_ODY_SHARD_VAULT_{owner}")
             if not vault_path:
                 return {"folders": []}
 
-            from src.obsidian_fs import list_folders
+            from src.shard_fs import list_folders
             return {"folders": list_folders(vault_path)}
         finally:
             db.close()
 
     @router.get("/tags")
-    async def obsidian_tags(request: Request, vault_id: Optional[str] = None):
+    async def shard_tags(request: Request, vault_id: Optional[str] = None):
         """Return unique tags with note counts from filesystem."""
         owner = _user(request)
         db = SessionLocal()
         try:
-            vault = db.query(ObsidianVault).filter_by(id=vault_id, owner=owner).first() if vault_id else None
+            vault = db.query(ShardVault).filter_by(id=vault_id, owner=owner).first() if vault_id else None
             if vault_id and not vault:
                 raise HTTPException(404, "Vault not found")
-            vault_path = vault.path if vault else os.environ.get(f"_ODY_OBSIDIAN_VAULT_{owner}")
+            vault_path = vault.path if vault else os.environ.get(f"_ODY_SHARD_VAULT_{owner}")
             if not vault_path:
                 return {"tags": []}
 
-            from src.obsidian_fs import list_tags
+            from src.shard_fs import list_tags
             return {"tags": list_tags(vault_path)}
         finally:
             db.close()
@@ -551,10 +551,10 @@ def setup_obsidian_routes() -> APIRouter:
         owner = _user(request)
         db = SessionLocal()
         try:
-            vault = db.query(ObsidianVault).filter_by(id=vault_id, owner=owner).first()
+            vault = db.query(ShardVault).filter_by(id=vault_id, owner=owner).first()
             if not vault:
                 raise HTTPException(404, "Vault not found")
-            from src.obsidian_watcher import get_watcher
+            from src.shard_watcher import get_watcher
             watcher = get_watcher()
             ok, msg = watcher.connect(owner, vault.path)
             if not ok:
@@ -564,42 +564,42 @@ def setup_obsidian_routes() -> APIRouter:
             db.close()
 
     @router.get("/graph")
-    async def obsidian_graph(request: Request, vault_id: Optional[str] = None):
+    async def shard_graph(request: Request, vault_id: Optional[str] = None):
         """Return graph nodes/edges/groups for vis-network canvas."""
         owner = _user(request)
         db = SessionLocal()
         try:
             if vault_id:
-                vault = db.query(ObsidianVault).filter_by(id=vault_id, owner=owner).first()
+                vault = db.query(ShardVault).filter_by(id=vault_id, owner=owner).first()
                 if not vault:
                     raise HTTPException(404, "Vault not found")
                 vault_env = vault.path
             else:
-                vault_env = os.environ.get(f"_ODY_OBSIDIAN_VAULT_{owner}")
+                vault_env = os.environ.get(f"_ODY_SHARD_VAULT_{owner}")
             if not vault_env:
                 raise HTTPException(400, "No vault connected")
-            from src.obsidian_fs import list_notes
+            from src.shard_fs import list_notes
             notes = list_notes(vault_env)
             return build_graph(notes)
         finally:
             db.close()
 
     @router.get("/timeline")
-    async def obsidian_timeline(request: Request, vault_id: Optional[str] = None):
+    async def shard_timeline(request: Request, vault_id: Optional[str] = None):
         """Return chronological frames for timeline animation player."""
         owner = _user(request)
         db = SessionLocal()
         try:
             if vault_id:
-                vault = db.query(ObsidianVault).filter_by(id=vault_id, owner=owner).first()
+                vault = db.query(ShardVault).filter_by(id=vault_id, owner=owner).first()
                 if not vault:
                     raise HTTPException(404, "Vault not found")
                 vault_env = vault.path
             else:
-                vault_env = os.environ.get(f"_ODY_OBSIDIAN_VAULT_{owner}")
+                vault_env = os.environ.get(f"_ODY_SHARD_VAULT_{owner}")
             if not vault_env:
                 raise HTTPException(400, "No vault connected")
-            from src.obsidian_fs import list_notes
+            from src.shard_fs import list_notes
             notes = list_notes(vault_env)
             return {"frames": build_timeline(notes)}
         finally:
@@ -610,15 +610,15 @@ def setup_obsidian_routes() -> APIRouter:
     # -----------------------------------------------------------------------
 
     @router.post("/notes/{note_id:path}/edit")
-    async def obsidian_edit_note(note_id: str, req: EditRequest, request: Request):
+    async def shard_edit_note(note_id: str, req: EditRequest, request: Request):
         """Edit a note — gated by vault + per-path permissions."""
         require_admin(request)
         owner = _user(request)
         db = SessionLocal()
         try:
             # Find active vault
-            vault = db.query(ObsidianVault).filter_by(owner=owner, is_active=True).first()
-            vault_path = vault.path if vault else os.environ.get(f"_ODY_OBSIDIAN_VAULT_{owner}")
+            vault = db.query(ShardVault).filter_by(owner=owner, is_active=True).first()
+            vault_path = vault.path if vault else os.environ.get(f"_ODY_SHARD_VAULT_{owner}")
             if not vault_path:
                 raise HTTPException(400, "No vault connected")
 
@@ -629,7 +629,7 @@ def setup_obsidian_routes() -> APIRouter:
             if perm == "read":
                 raise HTTPException(403, "This note is read-only. Add a write permission rule to allow edits.")
 
-            strategy = OBSIDIAN_EDIT_STRATEGIES.get("override")
+            strategy = SHARD_EDIT_STRATEGIES.get("override")
             if not strategy:
                 raise HTTPException(400, "Edit strategy not available")
 
@@ -682,7 +682,7 @@ def _strategy_override(note, content):
     return {"action": "override"}
 
 
-OBSIDIAN_EDIT_STRATEGIES: Dict[str, Any] = {
+SHARD_EDIT_STRATEGIES: Dict[str, Any] = {
     "readonly": _strategy_readonly,
     "duplicate": _strategy_duplicate,
     "append": _strategy_append,

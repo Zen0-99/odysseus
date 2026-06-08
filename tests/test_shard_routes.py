@@ -1,4 +1,4 @@
-"""Tests for Obsidian API routes."""
+"""Tests for Shard API routes."""
 
 from __future__ import annotations
 
@@ -14,15 +14,15 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from routes.obsidian_routes import setup_obsidian_routes
-from core.database import engine, Base, SessionLocal, Obsidian
+from routes.shard_routes import setup_shard_routes
+from core.database import engine, Base, SessionLocal, Shard
 
 
 @pytest.fixture(scope="module")
 def client():
     Base.metadata.create_all(engine)
     app = FastAPI()
-    router = setup_obsidian_routes()
+    router = setup_shard_routes()
     app.include_router(router)
 
     from unittest.mock import MagicMock
@@ -50,23 +50,23 @@ def test_connect_disconnect(client):
         vault.mkdir()
         (vault / "hello.md").write_text("# Hello")
 
-        r = client.post("/api/obsidian/connect", json={"vault_path": str(vault)})
+        r = client.post("/api/shard/connect", json={"vault_path": str(vault)})
         assert r.status_code == 200, r.text
         data = r.json()
         assert data["ok"] is True
         assert data["vault_path"] == "vault"
 
-        r2 = client.get("/api/obsidian/status")
+        r2 = client.get("/api/shard/status")
         assert r2.status_code == 200
         assert r2.json()["connected"] is True
 
-        r3 = client.post("/api/obsidian/disconnect")
+        r3 = client.post("/api/shard/disconnect")
         assert r3.status_code == 200
         assert r3.json()["ok"] is True
 
 
 def test_connect_rejects_missing_path(client):
-    r = client.post("/api/obsidian/connect", json={"vault_path": "/no/such/vault"})
+    r = client.post("/api/shard/connect", json={"vault_path": "/no/such/vault"})
     assert r.status_code == 400
     assert "does not exist" in r.json()["detail"]
 
@@ -78,9 +78,9 @@ def test_list_notes(client):
         (vault / "a.md").write_text("---\ntitle: Alpha\ntags: [idea]\n---\nBody A")
         (vault / "b.md").write_text("---\ntitle: Beta\ntags: [task]\n---\nBody B")
 
-        client.post("/api/obsidian/connect", json={"vault_path": str(vault)})
+        client.post("/api/shard/connect", json={"vault_path": str(vault)})
 
-        r = client.get("/api/obsidian/notes")
+        r = client.get("/api/shard/notes")
         assert r.status_code == 200
         data = r.json()
         assert data["total"] >= 2
@@ -89,11 +89,11 @@ def test_list_notes(client):
         assert "Beta" in titles
 
         # Search filter
-        r2 = client.get("/api/obsidian/notes?q=Alpha")
+        r2 = client.get("/api/shard/notes?q=Alpha")
         assert r2.status_code == 200
         assert all("Alpha" in (n["title"] + n["content"]) for n in r2.json()["notes"])
 
-        client.post("/api/obsidian/disconnect")
+        client.post("/api/shard/disconnect")
 
 
 def test_get_note(client):
@@ -102,19 +102,19 @@ def test_get_note(client):
         vault.mkdir()
         (vault / "x.md").write_text("# X")
 
-        client.post("/api/obsidian/connect", json={"vault_path": str(vault)})
+        client.post("/api/shard/connect", json={"vault_path": str(vault)})
 
         # Need to find the note id
-        r = client.get("/api/obsidian/notes")
+        r = client.get("/api/shard/notes")
         notes = r.json()["notes"]
         assert len(notes) >= 1
         note_id = notes[0]["id"]
 
-        r2 = client.get(f"/api/obsidian/notes/{note_id}")
+        r2 = client.get(f"/api/shard/notes/{note_id}")
         assert r2.status_code == 200
         assert r2.json()["rel_path"] == notes[0]["rel_path"]
 
-        client.post("/api/obsidian/disconnect")
+        client.post("/api/shard/disconnect")
 
 
 def test_graph_endpoint(client):
@@ -124,16 +124,16 @@ def test_graph_endpoint(client):
         (vault / "a.md").write_text("---\ntitle: A\n---\n[[b]]")
         (vault / "b.md").write_text("---\ntitle: B\n---\n")
 
-        client.post("/api/obsidian/connect", json={"vault_path": str(vault)})
+        client.post("/api/shard/connect", json={"vault_path": str(vault)})
 
-        r = client.get("/api/obsidian/graph")
+        r = client.get("/api/shard/graph")
         assert r.status_code == 200
         g = r.json()
         assert "nodes" in g
         assert "edges" in g
         assert "groups" in g
 
-        client.post("/api/obsidian/disconnect")
+        client.post("/api/shard/disconnect")
 
 
 def test_timeline_endpoint(client):
@@ -142,15 +142,15 @@ def test_timeline_endpoint(client):
         vault.mkdir()
         (vault / "a.md").write_text("---\ntitle: A\n---\n")
 
-        client.post("/api/obsidian/connect", json={"vault_path": str(vault)})
+        client.post("/api/shard/connect", json={"vault_path": str(vault)})
 
-        r = client.get("/api/obsidian/timeline")
+        r = client.get("/api/shard/timeline")
         assert r.status_code == 200
         t = r.json()
         assert "frames" in t
         assert len(t["frames"]) >= 1
 
-        client.post("/api/obsidian/disconnect")
+        client.post("/api/shard/disconnect")
 
 
 def test_edit_readonly_rejected(client):
@@ -159,15 +159,15 @@ def test_edit_readonly_rejected(client):
         vault.mkdir()
         (vault / "lock.md").write_text("---\ntitle: Locked\n---\nsecret")
 
-        client.post("/api/obsidian/connect", json={"vault_path": str(vault)})
+        client.post("/api/shard/connect", json={"vault_path": str(vault)})
 
-        r = client.get("/api/obsidian/notes")
+        r = client.get("/api/shard/notes")
         notes = r.json()["notes"]
         note_id = notes[0]["id"]
 
         # Default edit_permission is "readonly"
-        r2 = client.post(f"/api/obsidian/notes/{note_id}/edit", json={"content": "hacked"})
+        r2 = client.post(f"/api/shard/notes/{note_id}/edit", json={"content": "hacked"})
         assert r2.status_code == 403
         assert "read-only" in r2.json()["detail"].lower()
 
-        client.post("/api/obsidian/disconnect")
+        client.post("/api/shard/disconnect")

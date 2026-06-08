@@ -1712,9 +1712,9 @@ class Integration(TimestampMixin, Base):
     enabled = Column(Boolean, default=True)
 
 
-class Obsidian(TimestampMixin, Base):
-    """A note from a connected Obsidian vault."""
-    __tablename__ = "obsidian"
+class Shard(TimestampMixin, Base):
+    """A note from a connected Shard vault."""
+    __tablename__ = "shard"
 
     id               = Column(String, primary_key=True, index=True)
     owner            = Column(String, nullable=True, index=True)
@@ -1735,18 +1735,18 @@ class Obsidian(TimestampMixin, Base):
     sync_status      = Column(String, nullable=True, default="synced")
 
     __table_args__ = (
-        Index('ix_obsidian_owner', 'owner'),
-        Index('ix_obsidian_vault', 'vault_path'),
-        Index('ix_obsidian_search', 'title', 'plaintext'),
+        Index('ix_shard_owner', 'owner'),
+        Index('ix_shard_vault', 'vault_path'),
+        Index('ix_shard_search', 'title', 'plaintext'),
     )
 
 
 
 
 
-class ObsidianVault(TimestampMixin, Base):
-    """A connected Obsidian vault with read/write settings."""
-    __tablename__ = "obsidian_vaults"
+class ShardVault(TimestampMixin, Base):
+    """A connected Shard vault with read/write settings."""
+    __tablename__ = "shard_vaults"
 
     id            = Column(String, primary_key=True, index=True)
     owner         = Column(String, nullable=True, index=True)
@@ -1759,14 +1759,14 @@ class ObsidianVault(TimestampMixin, Base):
     note_count    = Column(Integer, default=0)
 
     __table_args__ = (
-        Index('ix_obsidian_vaults_owner', 'owner'),
-        Index('ix_obsidian_vaults_path', 'path'),
+        Index('ix_shard_vaults_owner', 'owner'),
+        Index('ix_shard_vaults_path', 'path'),
     )
 
 
-class ObsidianPermission(TimestampMixin, Base):
+class ShardPermission(TimestampMixin, Base):
     """Per-path permission override within a vault."""
-    __tablename__ = "obsidian_permissions"
+    __tablename__ = "shard_permissions"
 
     id           = Column(String, primary_key=True, index=True)
     vault_id     = Column(String, nullable=False, index=True)
@@ -1778,8 +1778,8 @@ class ObsidianPermission(TimestampMixin, Base):
     description  = Column(String, nullable=True)
 
     __table_args__ = (
-        Index('ix_obsidian_perm_vault', 'vault_id'),
-        Index('ix_obsidian_perm_owner', 'owner'),
+        Index('ix_shard_perm_vault', 'vault_id'),
+        Index('ix_shard_perm_owner', 'owner'),
     )
 
 

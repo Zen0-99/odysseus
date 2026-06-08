@@ -1,9 +1,9 @@
 /**
- * Obsidian Vault — floating modal panel for vault sync, graph, and timeline.
+ * Shard Vault — floating modal panel for vault sync, graph, and timeline.
  */
 
 import { makeWindowDraggable } from './windowDrag.js';
-import { obsidianMdToHtml, buildNoteCache } from './obsidianMarkdown.js';
+import { shardMdToHtml, buildNoteCache } from './shardMarkdown.js';
 import { styledConfirm, styledPrompt } from './ui.js';
 import {
   PluginManager, createAppApi, CORE_PLUGINS,
@@ -12,7 +12,7 @@ import {
   BookmarksPlugin, TagsPlugin, SearchPlugin,
   DailyNotesPlugin, TemplatesPlugin, PagePreviewPlugin,
   WordCountPlugin, RandomNotePlugin,
-} from './obsidianPluginApi.js';
+} from './shardPluginApi.js';
 
 const API_BASE = window.location.origin;
 
@@ -34,21 +34,21 @@ let _vaults = [];
 let _selectedVaultId = null;
 let _permissions = [];
 let _pluginManager = null;
-let _obsidianApp = null;
+let _shardApp = null;
 
 function _showLoading(text = 'Loading vault...') {
-  const overlay = document.getElementById('obsidian-loading-overlay');
-  const txt = overlay?.querySelector('.obsidian-loading-text');
+  const overlay = document.getElementById('shard-loading-overlay');
+  const txt = overlay?.querySelector('.shard-loading-text');
   if (overlay) overlay.classList.remove('hidden');
   if (txt) txt.textContent = text;
 }
 function _hideLoading() {
-  document.getElementById('obsidian-loading-overlay')?.classList.add('hidden');
+  document.getElementById('shard-loading-overlay')?.classList.add('hidden');
 }
 
 export async function openPanel() {
-  console.log('[obsidian] openPanel called');
-  const modal = document.getElementById('obsidian-modal');
+  console.log('[shard] openPanel called');
+  const modal = document.getElementById('shard-modal');
   if (!modal) return;
   if (_open) { _bringToFront(); return; }
   _open = true;
@@ -59,9 +59,9 @@ export async function openPanel() {
   const content = modal.querySelector('.modal-content');
   if (content) {
     try {
-      const saved = JSON.parse(localStorage.getItem('obsidian-pos'));
+      const saved = JSON.parse(localStorage.getItem('shard-pos'));
       if (saved && saved.fullscreen) {
-        _enterObsidianFullscreen(content);
+        _enterShardFullscreen(content);
       } else if (saved && saved.left && saved.top) {
         content.style.position = 'fixed';
         content.style.left = saved.left;
@@ -82,7 +82,7 @@ export async function openPanel() {
     // restore instantly and the fetch can run silently in background.
     let hasCache = false;
     try {
-      const cached = localStorage.getItem('obsidian-vaults');
+      const cached = localStorage.getItem('shard-vaults');
       if (cached) {
         const { ts } = JSON.parse(cached);
         if (Date.now() - ts < 10 * 60 * 1000) hasCache = true;
@@ -99,13 +99,13 @@ export async function openPanel() {
     _loadVaults().catch(() => {});
   }
 
-  document.getElementById('tool-obsidian-btn')?.classList.add('active');
-  document.addEventListener('keydown', _obsidianKeyHandler);
+  document.getElementById('tool-shard-btn')?.classList.add('active');
+  document.addEventListener('keydown', _shardKeyHandler);
 }
 
 export function closePanel() {
-  const modal = document.getElementById('obsidian-modal');
-  console.log('[obsidian] closePanel called; _open=', _open, 'modal=', !!modal);
+  const modal = document.getElementById('shard-modal');
+  console.log('[shard] closePanel called; _open=', _open, 'modal=', !!modal);
   if (!modal || !_open) return;
   // Don't close if quick switcher or command palette is open — close those first
   if (_quickSwitcherEl) { _hideQuickSwitcher(); return; }
@@ -113,27 +113,27 @@ export function closePanel() {
   _open = false;
   _rootDropWired = false;
   modal.classList.add('hidden');
-  document.getElementById('tool-obsidian-btn')?.classList.remove('active');
-  document.removeEventListener('keydown', _obsidianKeyHandler);
+  document.getElementById('tool-shard-btn')?.classList.remove('active');
+  document.removeEventListener('keydown', _shardKeyHandler);
   _hideQuickSwitcher();
   _hideCommandPalette();
 }
 
 export function togglePanel() {
-  console.log('[obsidian] togglePanel; _open=', _open);
+  console.log('[shard] togglePanel; _open=', _open);
   if (_open) closePanel(); else openPanel();
 }
 
 // Wire close button immediately at module load (module scripts are deferred,
 // so the DOM element already exists). Use capture phase so the handler
 // fires before windowDrag's synthetic-click swallow listener.
-document.getElementById('close-obsidian-modal')?.addEventListener('click', () => closePanel(), true);
+document.getElementById('close-shard-modal')?.addEventListener('click', () => closePanel(), true);
 
 // Keep _open in sync when the modal is hidden via backdrop click (ui.js
 // adds .hidden directly without calling our closePanel).
-document.getElementById('obsidian-modal')?.addEventListener('mousedown', (e) => {
+document.getElementById('shard-modal')?.addEventListener('mousedown', (e) => {
   if (e.target === e.currentTarget && _open) {
-    console.log('[obsidian] backdrop click detected, syncing _open');
+    console.log('[shard] backdrop click detected, syncing _open');
     closePanel();
   }
 });
@@ -141,17 +141,17 @@ document.getElementById('obsidian-modal')?.addEventListener('mousedown', (e) => 
 export function isOpen() { return _open; }
 
 function _bringToFront() {
-  const modal = document.getElementById('obsidian-modal');
+  const modal = document.getElementById('shard-modal');
   if (!modal) return;
   const z = 260;
   modal.style.zIndex = z;
 }
 
-function _enterObsidianFullscreen(content) {
-  const modal = document.getElementById('obsidian-modal');
+function _enterShardFullscreen(content) {
+  const modal = document.getElementById('shard-modal');
   if (!modal || !content) return;
-  if (modal.classList.contains('obsidian-fullscreen')) return;
-  modal.classList.add('obsidian-fullscreen');
+  if (modal.classList.contains('shard-fullscreen')) return;
+  modal.classList.add('shard-fullscreen');
   content.style.position = 'fixed';
   content.style.left = '0';
   content.style.top = '0';
@@ -162,14 +162,14 @@ function _enterObsidianFullscreen(content) {
   content.style.borderRadius = '0';
   content.style.margin = '0';
   content.style.transform = 'none';
-  try { localStorage.setItem('obsidian-pos', JSON.stringify({ fullscreen: true })); } catch {}
+  try { localStorage.setItem('shard-pos', JSON.stringify({ fullscreen: true })); } catch {}
 }
 
-function _exitObsidianFullscreen(content, cx, cy) {
-  const modal = document.getElementById('obsidian-modal');
+function _exitShardFullscreen(content, cx, cy) {
+  const modal = document.getElementById('shard-modal');
   if (!modal || !content) return;
-  if (!modal.classList.contains('obsidian-fullscreen')) return;
-  modal.classList.remove('obsidian-fullscreen');
+  if (!modal.classList.contains('shard-fullscreen')) return;
+  modal.classList.remove('shard-fullscreen');
   content.style.width = '';
   content.style.maxWidth = '';
   content.style.height = '';
@@ -189,7 +189,7 @@ function _exitObsidianFullscreen(content, cx, cy) {
 
 function _wireDrag() {
   if (_dragWired) return;
-  const modal = document.getElementById('obsidian-modal');
+  const modal = document.getElementById('shard-modal');
   const content = modal?.querySelector('.modal-content');
   const header = modal?.querySelector('.modal-header');
   if (!modal || !content || !header) return;
@@ -199,30 +199,30 @@ function _wireDrag() {
     makeWindowDraggable(modal, {
       content,
       header,
-      fsClass: 'obsidian-fullscreen',
+      fsClass: 'shard-fullscreen',
       enableDock: true,
       enableLeftDock: true,
-      onEnterFullscreen: () => _enterObsidianFullscreen(content),
-      onExitFullscreen: (cx, cy) => _exitObsidianFullscreen(content, cx, cy),
+      onEnterFullscreen: () => _enterShardFullscreen(content),
+      onExitFullscreen: (cx, cy) => _exitShardFullscreen(content, cx, cy),
       onDragEnd: () => {
         try {
-          localStorage.setItem('obsidian-pos', JSON.stringify({ left: content.style.left, top: content.style.top }));
+          localStorage.setItem('shard-pos', JSON.stringify({ left: content.style.left, top: content.style.top }));
         } catch {}
       },
     });
   } catch (e) {
-    console.warn('[obsidian] makeWindowDraggable failed:', e);
+    console.warn('[shard] makeWindowDraggable failed:', e);
   }
 
   // Note tab bar — event delegation for tab switching, closing, and new tab
-  document.getElementById('obsidian-note-tabs')?.addEventListener('click', (e) => {
-    const newBtn = e.target.closest('.obsidian-tab-new');
+  document.getElementById('shard-note-tabs')?.addEventListener('click', (e) => {
+    const newBtn = e.target.closest('.shard-tab-new');
     if (newBtn) {
       _showNewNotePrompt();
       return;
     }
-    const closeBtn = e.target.closest('.obsidian-tab-close');
-    const tabBtn = e.target.closest('.obsidian-tab');
+    const closeBtn = e.target.closest('.shard-tab-close');
+    const tabBtn = e.target.closest('.shard-tab');
     if (!tabBtn) return;
     const noteId = tabBtn.dataset.noteId;
     if (closeBtn && noteId) {
@@ -251,7 +251,7 @@ function _wireDrag() {
   });
 
   // Tab bar drag-and-drop
-  const tabBar = document.getElementById('obsidian-note-tabs');
+  const tabBar = document.getElementById('shard-note-tabs');
   if (tabBar) {
     let dragCounter = 0;
     tabBar.addEventListener('dragenter', (e) => {
@@ -278,7 +278,7 @@ function _wireDrag() {
       if (!noteId) return;
       const note = _notes.find(n => n.id === noteId);
       if (!note) return;
-      const droppedOnTab = e.target.closest('.obsidian-tab');
+      const droppedOnTab = e.target.closest('.shard-tab');
       if (droppedOnTab) {
         // Dropped on existing tab: replace that tab's note
         const existingId = droppedOnTab.dataset.noteId;
@@ -297,11 +297,11 @@ function _wireDrag() {
   }
 
   // Back / Forward navigation
-  document.getElementById('obsidian-back-btn')?.addEventListener('click', _goBack);
-  document.getElementById('obsidian-forward-btn')?.addEventListener('click', _goForward);
+  document.getElementById('shard-back-btn')?.addEventListener('click', _goBack);
+  document.getElementById('shard-forward-btn')?.addEventListener('click', _goForward);
 
   // Search — debounced backend fetch that updates the tree
-  const searchInput = document.getElementById('obsidian-search');
+  const searchInput = document.getElementById('shard-search');
   if (searchInput) {
     let searchDebounce;
     searchInput.addEventListener('input', (e) => {
@@ -315,21 +315,21 @@ function _wireDrag() {
   }
 
   // Vault management
-  document.getElementById('obsidian-save-vault-btn')?.addEventListener('click', _saveNewVault);
-  document.getElementById('obsidian-cancel-vault-btn')?.addEventListener('click', _hideAddVaultForm);
+  document.getElementById('shard-save-vault-btn')?.addEventListener('click', _saveNewVault);
+  document.getElementById('shard-cancel-vault-btn')?.addEventListener('click', _hideAddVaultForm);
 
   // Browse button — use File System Access API when available, else file input
-  const browseBtn = document.getElementById('obsidian-browse-vault-btn');
-  const fileInput = document.getElementById('obsidian-vault-file-input');
+  const browseBtn = document.getElementById('shard-browse-vault-btn');
+  const fileInput = document.getElementById('shard-vault-file-input');
   if (browseBtn && fileInput) {
     browseBtn.addEventListener('click', async () => {
       if (window.showDirectoryPicker) {
         try {
           const handle = await window.showDirectoryPicker();
-          const pathInput = document.getElementById('obsidian-new-vault-path');
+          const pathInput = document.getElementById('shard-new-vault-path');
           if (pathInput) pathInput.value = handle.name;
         } catch (err) {
-          if (err.name !== 'AbortError') console.warn('[obsidian] directory picker failed:', err);
+          if (err.name !== 'AbortError') console.warn('[shard] directory picker failed:', err);
         }
         return;
       }
@@ -339,7 +339,7 @@ function _wireDrag() {
     fileInput.addEventListener('change', (e) => {
       const files = e.target.files;
       if (!files || !files.length) return;
-      const pathInput = document.getElementById('obsidian-new-vault-path');
+      const pathInput = document.getElementById('shard-new-vault-path');
       const relPath = files[0].webkitRelativePath || '';
       const folderName = relPath.split('/')[0] || '';
       const fullPath = files[0].path || '';
@@ -352,27 +352,27 @@ function _wireDrag() {
   _wireVaultDropdown();
 
   // Permissions button
-  document.getElementById('obsidian-vault-perm-btn')?.addEventListener('click', () => {
+  document.getElementById('shard-vault-perm-btn')?.addEventListener('click', () => {
     _switchTab('permissions');
   });
 
   // Permission management
-  document.getElementById('obsidian-vault-read-all')?.addEventListener('change', _updateVaultToggles);
-  document.getElementById('obsidian-vault-write-all')?.addEventListener('change', _updateVaultToggles);
-  document.getElementById('obsidian-add-perm-btn')?.addEventListener('click', _addPermission);
+  document.getElementById('shard-vault-read-all')?.addEventListener('change', _updateVaultToggles);
+  document.getElementById('shard-vault-write-all')?.addEventListener('change', _updateVaultToggles);
+  document.getElementById('shard-add-perm-btn')?.addEventListener('click', _addPermission);
 
   // Refresh button
-  document.getElementById('obsidian-refresh-btn')?.addEventListener('click', _refreshVault);
+  document.getElementById('shard-refresh-btn')?.addEventListener('click', _refreshVault);
 
   // Connect / Disconnect (legacy - keep for compatibility)
-  document.getElementById('obsidian-connect-btn')?.addEventListener('click', _connectVault);
-  document.getElementById('obsidian-disconnect-btn')?.addEventListener('click', _disconnectVault);
+  document.getElementById('shard-connect-btn')?.addEventListener('click', _connectVault);
+  document.getElementById('shard-disconnect-btn')?.addEventListener('click', _disconnectVault);
 
   // Resize panes
   _wireResizeHandles();
 
   // Mode icon custom tooltip
-  const modeIcon = document.getElementById('obsidian-mode-icon');
+  const modeIcon = document.getElementById('shard-mode-icon');
   if (modeIcon) {
     modeIcon.addEventListener('mouseenter', () => _showModeTooltip(modeIcon));
     modeIcon.addEventListener('mouseleave', _hideModeTooltip);
@@ -385,7 +385,7 @@ async function _loadVaults() {
   try {
     // Restore from cache first
     try {
-      const cached = localStorage.getItem('obsidian-vaults');
+      const cached = localStorage.getItem('shard-vaults');
       if (cached) {
         const { vaults, ts } = JSON.parse(cached);
         if (Date.now() - ts < 10 * 60 * 1000) {
@@ -393,34 +393,34 @@ async function _loadVaults() {
           _populateVaultDropdown();
           if (_vaults.length > 0 && !_selectedVaultId) {
             let lastVault = null;
-            try { lastVault = localStorage.getItem('obsidian-last-vault'); } catch {}
+            try { lastVault = localStorage.getItem('shard-last-vault'); } catch {}
             const target = _vaults.find(v => v.id === lastVault) ? lastVault : _vaults[0].id;
             _selectVault(target);
           }
         }
       }
     } catch {}
-    const r = await fetch(`${API_BASE}/api/obsidian/status`, { credentials: 'same-origin' });
+    const r = await fetch(`${API_BASE}/api/shard/status`, { credentials: 'same-origin' });
     const s = r.ok ? await r.json() : {};
     _vaults = s.vaults || [];
-    try { localStorage.setItem('obsidian-vaults', JSON.stringify({ vaults: _vaults, ts: Date.now() })); } catch {}
+    try { localStorage.setItem('shard-vaults', JSON.stringify({ vaults: _vaults, ts: Date.now() })); } catch {}
     _populateVaultDropdown();
     if (_vaults.length > 0 && !_selectedVaultId) {
       let lastVault = null;
-      try { lastVault = localStorage.getItem('obsidian-last-vault'); } catch {}
+      try { lastVault = localStorage.getItem('shard-last-vault'); } catch {}
       const target = _vaults.find(v => v.id === lastVault) ? lastVault : _vaults[0].id;
       _selectVault(target);
     }
   } catch (e) {
-    console.error('[obsidian] load vaults failed', e);
+    console.error('[shard] load vaults failed', e);
     // Keep cached vaults if fetch fails
     if (!_vaults.length) _vaults = [];
   }
 }
 
 function _populateVaultDropdown() {
-  const menu = document.getElementById('obsidian-vault-dropdown-menu');
-  const label = document.getElementById('obsidian-vault-dropdown-label');
+  const menu = document.getElementById('shard-vault-dropdown-menu');
+  const label = document.getElementById('shard-vault-dropdown-label');
   if (!menu) return;
 
   const vault = _vaults.find(v => v.id === _selectedVaultId);
@@ -429,10 +429,10 @@ function _populateVaultDropdown() {
 
   let html = '';
   if (!_vaults.length) {
-    html = '<div class="obsidian-vault-dropdown-item" style="opacity:0.5;cursor:default;"><span class="vault-name">No vaults</span></div>';
+    html = '<div class="shard-vault-dropdown-item" style="opacity:0.5;cursor:default;"><span class="vault-name">No vaults</span></div>';
   } else {
     html = _vaults.map(v => `
-      <div class="obsidian-vault-dropdown-item ${_selectedVaultId === v.id ? 'selected' : ''}" data-id="${v.id}">
+      <div class="shard-vault-dropdown-item ${_selectedVaultId === v.id ? 'selected' : ''}" data-id="${v.id}">
         <span class="vault-name">${_esc(v.name)} <span style="opacity:0.5;font-size:11px;">(${v.note_count || 0})</span></span>
         <button class="vault-menu-btn" data-id="${v.id}" title="Vault options" aria-label="Vault options">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
@@ -442,25 +442,25 @@ function _populateVaultDropdown() {
   }
 
   html += `
-    <div class="obsidian-vault-dropdown-item obsidian-vault-dropdown-add" id="obsidian-add-vault-item">
+    <div class="shard-vault-dropdown-item shard-vault-dropdown-add" id="shard-add-vault-item">
       <span class="vault-name">+ Add new vault</span>
     </div>
   `;
   menu.innerHTML = html;
 
-  document.getElementById('obsidian-add-vault-item')?.addEventListener('click', (e) => {
+  document.getElementById('shard-add-vault-item')?.addEventListener('click', (e) => {
     e.stopPropagation();
     _closeVaultDropdown();
     _showAddVaultForm();
   });
 
   // Wire vault selection
-  menu.querySelectorAll('.obsidian-vault-dropdown-item:not(.obsidian-vault-dropdown-add)').forEach(item => {
+  menu.querySelectorAll('.shard-vault-dropdown-item:not(.shard-vault-dropdown-add)').forEach(item => {
     item.addEventListener('click', (e) => {
       if (e.target.closest('.vault-menu-btn')) return;
       _closeVaultDropdown();
       _selectVault(item.dataset.id);
-      try { localStorage.setItem('obsidian-last-vault', item.dataset.id); } catch {}
+      try { localStorage.setItem('shard-last-vault', item.dataset.id); } catch {}
     });
   });
 
@@ -475,13 +475,13 @@ function _populateVaultDropdown() {
 }
 
 function _wireVaultDropdown() {
-  const wrap = document.getElementById('obsidian-vault-dropdown-wrap');
-  const trigger = document.getElementById('obsidian-vault-dropdown-trigger');
+  const wrap = document.getElementById('shard-vault-dropdown-wrap');
+  const trigger = document.getElementById('shard-vault-dropdown-trigger');
   if (!trigger || !wrap) return;
 
   trigger.addEventListener('click', (e) => {
     e.stopPropagation();
-    const menu = document.getElementById('obsidian-vault-dropdown-menu');
+    const menu = document.getElementById('shard-vault-dropdown-menu');
     if (!menu) return;
     const isHidden = menu.classList.contains('hidden');
     if (isHidden) {
@@ -499,8 +499,8 @@ function _wireVaultDropdown() {
 }
 
 function _closeVaultDropdown() {
-  const menu = document.getElementById('obsidian-vault-dropdown-menu');
-  const wrap = document.getElementById('obsidian-vault-dropdown-wrap');
+  const menu = document.getElementById('shard-vault-dropdown-menu');
+  const wrap = document.getElementById('shard-vault-dropdown-wrap');
   if (menu) menu.classList.add('hidden');
   if (wrap) wrap.classList.remove('open');
 }
@@ -516,19 +516,19 @@ async function _selectVault(vaultId) {
   _renderNoteTabs();
   _renderBreadcrumb(null);
   _updateNavButtons();
-  const preview = document.getElementById('obsidian-preview');
+  const preview = document.getElementById('shard-preview');
   if (preview) { preview.innerHTML = ''; preview.style.display = 'none'; }
-  const rightPane = document.getElementById('obsidian-right-pane');
+  const rightPane = document.getElementById('shard-right-pane');
   if (rightPane) {
-    rightPane.querySelector('#obsidian-right-placeholder')?.classList.remove('hidden');
-    document.getElementById('obsidian-right-tabs')?.classList.add('hidden');
-    document.getElementById('obsidian-right-panes')?.classList.add('hidden');
+    rightPane.querySelector('#shard-right-placeholder')?.classList.remove('hidden');
+    document.getElementById('shard-right-tabs')?.classList.add('hidden');
+    document.getElementById('shard-right-panes')?.classList.add('hidden');
   }
-  const searchInput = document.getElementById('obsidian-search');
+  const searchInput = document.getElementById('shard-search');
   if (searchInput) searchInput.value = '';
   const vault = _vaults.find(v => v.id === vaultId);
-  const mainPanel = document.getElementById('obsidian-main-panel');
-  const folderTree = document.getElementById('obsidian-folder-tree');
+  const mainPanel = document.getElementById('shard-main-panel');
+  const folderTree = document.getElementById('shard-folder-tree');
 
   _populateVaultDropdown();
   _hideAddVaultForm();
@@ -547,8 +547,8 @@ async function _selectVault(vaultId) {
   if (folderTree) folderTree.classList.remove('hidden');
 
   // Update permission toggles
-  const readCb = document.getElementById('obsidian-vault-read-all');
-  const writeCb = document.getElementById('obsidian-vault-write-all');
+  const readCb = document.getElementById('shard-vault-read-all');
+  const writeCb = document.getElementById('shard-vault-write-all');
   if (readCb) readCb.checked = vault.read_enabled;
   if (writeCb) writeCb.checked = vault.write_enabled;
 
@@ -571,7 +571,7 @@ let _folders = [];
 
 function _restoreCachedFolders(vaultId) {
   try {
-    const cached = localStorage.getItem(`obsidian-folders-${vaultId}`);
+    const cached = localStorage.getItem(`shard-folders-${vaultId}`);
     if (cached) {
       const { folders, ts } = JSON.parse(cached);
       if (Date.now() - ts < 10 * 60 * 1000) {
@@ -587,16 +587,16 @@ function _restoreCachedFolders(vaultId) {
 async function _loadFolders() {
   if (!_selectedVaultId) return;
   try {
-    const r = await fetch(`${API_BASE}/api/obsidian/folders?vault_id=${encodeURIComponent(_selectedVaultId)}`, { credentials: 'same-origin' });
+    const r = await fetch(`${API_BASE}/api/shard/folders?vault_id=${encodeURIComponent(_selectedVaultId)}`, { credentials: 'same-origin' });
     if (!r.ok) return;
     const data = await r.json();
     _folders = data.folders || [];
     _renderFolderTree();
     try {
-      localStorage.setItem(`obsidian-folders-${_selectedVaultId}`, JSON.stringify({ folders: _folders, ts: Date.now() }));
+      localStorage.setItem(`shard-folders-${_selectedVaultId}`, JSON.stringify({ folders: _folders, ts: Date.now() }));
     } catch {}
   } catch (e) {
-    console.error('[obsidian] load folders failed', e);
+    console.error('[shard] load folders failed', e);
     _folders = [];
     _renderFolderTree();
   }
@@ -632,14 +632,14 @@ function _renderFolderTreeNode(node, depth = 0) {
   const isSelected = _selectedFolder === node.path;
   const arrowClass = isExpanded ? 'expanded' : (isEmpty ? 'leaf' : '');
   const depthClass = depth > 0 ? 'sub' : 'root';
-  const liClass = `obsidian-tree-${depthClass}${isExpanded ? ' expanded' : ''}`;
+  const liClass = `shard-tree-${depthClass}${isExpanded ? ' expanded' : ''}`;
 
   let html = '';
   if (node.name) {
     html += `<li class="${liClass}">
-      <div class="obsidian-tree-row ${depthClass} ${isSelected ? 'selected' : ''}" data-folder="${_esc(node.path)}">
-        <span class="obsidian-tree-arrow ${arrowClass}"></span>
-        <span class="obsidian-tree-name">${_esc(node.name)}</span>
+      <div class="shard-tree-row ${depthClass} ${isSelected ? 'selected' : ''}" data-folder="${_esc(node.path)}">
+        <span class="shard-tree-arrow ${arrowClass}"></span>
+        <span class="shard-tree-name">${_esc(node.name)}</span>
       </div>`;
   }
 
@@ -651,10 +651,10 @@ function _renderFolderTreeNode(node, depth = 0) {
       html += _renderFolderTreeNode(node.children[childName], depth + 1);
     }
     for (const f of files) {
-      html += `<li class="obsidian-tree-sub">
-        <div class="obsidian-tree-row sub ${f.id === _selectedNoteId ? 'selected' : ''}" data-note-id="${_esc(f.id)}" draggable="true">
-          <span class="obsidian-tree-arrow leaf"></span>
-          <span class="obsidian-tree-name">${_esc(f.title)}</span>
+      html += `<li class="shard-tree-sub">
+        <div class="shard-tree-row sub ${f.id === _selectedNoteId ? 'selected' : ''}" data-note-id="${_esc(f.id)}" draggable="true">
+          <span class="shard-tree-arrow leaf"></span>
+          <span class="shard-tree-name">${_esc(f.title)}</span>
         </div>
       </li>`;
     }
@@ -665,10 +665,10 @@ function _renderFolderTreeNode(node, depth = 0) {
 }
 
 function _renderFolderTree() {
-  const tree = document.getElementById('obsidian-folder-tree');
+  const tree = document.getElementById('shard-folder-tree');
   if (!tree) return;
 
-  console.log('[obsidian] _renderFolderTree — _folders:', _folders.length, '_notes:', _notes.length);
+  console.log('[shard] _renderFolderTree — _folders:', _folders.length, '_notes:', _notes.length);
 
   // Build tree from folders, then attach notes
   const root = _buildFolderTree(_folders);
@@ -700,10 +700,10 @@ function _renderFolderTree() {
   // Root-level files (notes with no folder)
   const rootFiles = [...root.files].sort((a, b) => a.title.localeCompare(b.title));
   for (const f of rootFiles) {
-    html += `<li class="obsidian-tree-root">
-      <div class="obsidian-tree-row root ${f.id === _selectedNoteId ? 'selected' : ''}" data-note-id="${_esc(f.id)}" draggable="true">
-        <span class="obsidian-tree-arrow leaf"></span>
-        <span class="obsidian-tree-name">${_esc(f.title)}</span>
+    html += `<li class="shard-tree-root">
+      <div class="shard-tree-row root ${f.id === _selectedNoteId ? 'selected' : ''}" data-note-id="${_esc(f.id)}" draggable="true">
+        <span class="shard-tree-arrow leaf"></span>
+        <span class="shard-tree-name">${_esc(f.title)}</span>
       </div>
     </li>`;
   }
@@ -711,7 +711,7 @@ function _renderFolderTree() {
   tree.innerHTML = html;
 
   // Wire interactions — toggle classes directly for smooth animation (no re-render)
-  tree.querySelectorAll('.obsidian-tree-row').forEach(row => {
+  tree.querySelectorAll('.shard-tree-row').forEach(row => {
     row.addEventListener('click', (e) => {
       // Note click
       if (row.dataset.noteId) {
@@ -723,7 +723,7 @@ function _renderFolderTree() {
       const folder = row.dataset.folder;
       if (folder) {
         const li = row.closest('li');
-        const arrow = row.querySelector('.obsidian-tree-arrow');
+        const arrow = row.querySelector('.shard-tree-arrow');
         const isLeaf = arrow?.classList.contains('leaf');
         if (!isLeaf && li) {
           const nowExpanded = li.classList.toggle('expanded');
@@ -742,11 +742,11 @@ function _renderFolderTree() {
       row.addEventListener('dragstart', (e) => {
         e.dataTransfer.setData('text/plain', row.dataset.noteId);
         e.dataTransfer.effectAllowed = 'copy';
-        tree.classList.add('obsidian-dragging');
+        tree.classList.add('shard-dragging');
       });
       row.addEventListener('dragend', () => {
-        tree.classList.remove('obsidian-dragging');
-        tree.classList.remove('obsidian-root-drag-over');
+        tree.classList.remove('shard-dragging');
+        tree.classList.remove('shard-root-drag-over');
       });
     }
 
@@ -773,7 +773,7 @@ function _renderFolderTree() {
         if (note) note.folder = folder;
         _renderFolderTree();
         try {
-          const r = await fetch(`${API_BASE}/api/obsidian/notes/${encodeURIComponent(noteId)}/move`, {
+          const r = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(noteId)}/move`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'same-origin',
@@ -784,13 +784,13 @@ function _renderFolderTree() {
             if (note) note.folder = oldFolder;
             _renderFolderTree();
             const data = await r.json().catch(() => ({}));
-            console.error('[obsidian] move note failed:', data.detail || r.status);
+            console.error('[shard] move note failed:', data.detail || r.status);
           }
         } catch (err) {
           // Revert optimistic update on error
           if (note) note.folder = oldFolder;
           _renderFolderTree();
-          console.error('[obsidian] move note error:', err);
+          console.error('[shard] move note error:', err);
         }
       });
     }
@@ -809,7 +809,7 @@ function _renderFolderTree() {
 
   // Blank area context menu on the tree itself
   tree.addEventListener('contextmenu', (e) => {
-    if (e.target.closest('.obsidian-tree-row')) return;
+    if (e.target.closest('.shard-tree-row')) return;
     e.preventDefault();
     e.stopPropagation();
     _showBlankContextMenu(e);
@@ -820,20 +820,20 @@ function _renderFolderTree() {
     _rootDropWired = true;
     tree.addEventListener('dragover', (e) => {
       // Only handle if not over a folder row (those have their own handlers)
-      if (e.target.closest('.obsidian-tree-row[data-folder]')) return;
+      if (e.target.closest('.shard-tree-row[data-folder]')) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = 'copy';
-      tree.classList.add('obsidian-root-drag-over');
+      tree.classList.add('shard-root-drag-over');
     });
     tree.addEventListener('dragleave', (e) => {
-      if (e.target.closest('.obsidian-tree-row[data-folder]')) return;
-      tree.classList.remove('obsidian-root-drag-over');
+      if (e.target.closest('.shard-tree-row[data-folder]')) return;
+      tree.classList.remove('shard-root-drag-over');
     });
     tree.addEventListener('drop', async (e) => {
       // Only handle if dropped on empty space (not on a folder row)
-      if (e.target.closest('.obsidian-tree-row[data-folder]')) return;
+      if (e.target.closest('.shard-tree-row[data-folder]')) return;
       e.preventDefault();
-      tree.classList.remove('obsidian-root-drag-over');
+      tree.classList.remove('shard-root-drag-over');
       const noteId = e.dataTransfer.getData('text/plain');
       if (!noteId) return;
       // Optimistic UI: move to root
@@ -842,7 +842,7 @@ function _renderFolderTree() {
       if (note) note.folder = '';
       _renderFolderTree();
       try {
-        const r = await fetch(`${API_BASE}/api/obsidian/notes/${encodeURIComponent(noteId)}/move`, {
+        const r = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(noteId)}/move`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'same-origin',
@@ -852,50 +852,50 @@ function _renderFolderTree() {
           if (note) note.folder = oldFolder;
           _renderFolderTree();
           const data = await r.json().catch(() => ({}));
-          console.error('[obsidian] move to root failed:', data.detail || r.status);
+          console.error('[shard] move to root failed:', data.detail || r.status);
         }
       } catch (err) {
         if (note) note.folder = oldFolder;
         _renderFolderTree();
-        console.error('[obsidian] move to root error:', err);
+        console.error('[shard] move to root error:', err);
       }
     });
   }
 }
 
 function _updateTreeSelection() {
-  const tree = document.getElementById('obsidian-folder-tree');
+  const tree = document.getElementById('shard-folder-tree');
   if (!tree) return;
-  tree.querySelectorAll('.obsidian-tree-row').forEach(row => {
+  tree.querySelectorAll('.shard-tree-row').forEach(row => {
     const shouldSelect = row.dataset.folder === _selectedFolder || row.dataset.noteId === _selectedNoteId;
     row.classList.toggle('selected', shouldSelect);
   });
 }
 
 function _showAddVaultForm() {
-  const form = document.getElementById('obsidian-add-vault-form');
+  const form = document.getElementById('shard-add-vault-form');
   if (form) {
     form.classList.remove('hidden');
     // Clear inputs
-    const nameInput = document.getElementById('obsidian-new-vault-name');
-    const pathInput = document.getElementById('obsidian-new-vault-path');
+    const nameInput = document.getElementById('shard-new-vault-name');
+    const pathInput = document.getElementById('shard-new-vault-path');
     if (nameInput) nameInput.value = '';
     if (pathInput) pathInput.value = '';
   }
-  const hint = document.getElementById('obsidian-browse-hint');
+  const hint = document.getElementById('shard-browse-hint');
   if (hint) { hint.style.display = 'none'; hint.textContent = ''; }
 }
 
 function _hideAddVaultForm() {
-  document.getElementById('obsidian-add-vault-form')?.classList.add('hidden');
-  const status = document.getElementById('obsidian-add-vault-status');
+  document.getElementById('shard-add-vault-form')?.classList.add('hidden');
+  const status = document.getElementById('shard-add-vault-status');
   if (status) status.textContent = '';
 }
 
 async function _saveNewVault() {
-  const nameInput = document.getElementById('obsidian-new-vault-name');
-  const pathInput = document.getElementById('obsidian-new-vault-path');
-  const statusEl = document.getElementById('obsidian-add-vault-status');
+  const nameInput = document.getElementById('shard-new-vault-name');
+  const pathInput = document.getElementById('shard-new-vault-path');
+  const statusEl = document.getElementById('shard-add-vault-status');
   const name = nameInput?.value.trim();
   const path = pathInput?.value.trim();
   if (!path) { if (statusEl) statusEl.textContent = 'Enter a vault path'; return; }
@@ -903,7 +903,7 @@ async function _saveNewVault() {
   if (statusEl) statusEl.textContent = 'Connecting...';
   _showLoading('Adding vault...');
   try {
-    const r = await fetch(`${API_BASE}/api/obsidian/connect`, {
+    const r = await fetch(`${API_BASE}/api/shard/connect`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
@@ -929,14 +929,14 @@ async function _saveNewVault() {
 // ── Legacy single-vault connect/disconnect (kept for compatibility) ──
 
 async function _connectVault() {
-  const pathInput = document.getElementById('obsidian-vault-path');
-  const statusEl = document.getElementById('obsidian-connect-status');
+  const pathInput = document.getElementById('shard-vault-path');
+  const statusEl = document.getElementById('shard-connect-status');
   const path = pathInput?.value.trim();
   if (!path) { if (statusEl) statusEl.textContent = 'Enter a vault path'; return; }
 
   if (statusEl) statusEl.textContent = 'Connecting...';
   try {
-    const r = await fetch(`${API_BASE}/api/obsidian/connect`, {
+    const r = await fetch(`${API_BASE}/api/shard/connect`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
@@ -957,7 +957,7 @@ async function _connectVault() {
 
 async function _disconnectVault() {
   try {
-    await fetch(`${API_BASE}/api/obsidian/disconnect`, { method: 'POST', credentials: 'same-origin' });
+    await fetch(`${API_BASE}/api/shard/disconnect`, { method: 'POST', credentials: 'same-origin' });
     _selectedVaultId = null;
     await _loadVaults();
   } catch (e) { /* ignore */ }
@@ -968,7 +968,7 @@ async function _removeVault(vaultId) {
   if (!vault) return;
   if (!confirm(`Remove vault "${_esc(vault.name)}" from Odysseus?\n\nNotes stay on disk. This only removes the connection.`)) return;
   try {
-    const r = await fetch(`${API_BASE}/api/obsidian/vaults/${encodeURIComponent(vaultId)}`, {
+    const r = await fetch(`${API_BASE}/api/shard/vaults/${encodeURIComponent(vaultId)}`, {
       method: 'DELETE',
       credentials: 'same-origin',
     });
@@ -977,7 +977,7 @@ async function _removeVault(vaultId) {
       await _loadVaults();
     }
   } catch (e) {
-    console.error('[obsidian] remove vault failed', e);
+    console.error('[shard] remove vault failed', e);
   }
 }
 
@@ -986,8 +986,8 @@ async function _removeVault(vaultId) {
 function _switchTab(tab) {
   _activeTab = tab;
   _renderNoteTabs();
-  document.querySelectorAll('[data-obsidian-content]').forEach(p => {
-    const isActive = p.dataset.obsidianContent === tab;
+  document.querySelectorAll('[data-shard-content]').forEach(p => {
+    const isActive = p.dataset.shardContent === tab;
     p.classList.toggle('hidden', !isActive);
   });
   if (tab === 'permissions') _renderPermissions();
@@ -1023,8 +1023,8 @@ function _navigateToNote(noteId, addToHistory = true, openNewTab = false) {
   _renderNoteTabs();
   _renderBreadcrumb(note);
   _updateNavButtons();
-  document.querySelectorAll('[data-obsidian-content]').forEach(p => {
-    p.classList.toggle('hidden', p.dataset.obsidianContent !== 'note');
+  document.querySelectorAll('[data-shard-content]').forEach(p => {
+    p.classList.toggle('hidden', p.dataset.shardContent !== 'note');
   });
   _renderFolderTree();
   _updateTreeSelection();
@@ -1046,7 +1046,7 @@ function _goForward() {
 }
 
 function _updateModeIcon() {
-  const icon = document.getElementById('obsidian-mode-icon');
+  const icon = document.getElementById('shard-mode-icon');
   if (!icon) return;
   const penSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
   const eyeSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
@@ -1064,7 +1064,7 @@ let _modeTooltipEl = null;
 function _ensureModeTooltip() {
   if (_modeTooltipEl) return _modeTooltipEl;
   _modeTooltipEl = document.createElement('div');
-  _modeTooltipEl.className = 'obsidian-mode-tooltip';
+  _modeTooltipEl.className = 'shard-mode-tooltip';
   document.body.appendChild(_modeTooltipEl);
   return _modeTooltipEl;
 }
@@ -1072,7 +1072,7 @@ function _showModeTooltip(icon) {
   const tip = _ensureModeTooltip();
   const current = _previewMode === 'preview' ? 'Reading' : _previewMode === 'live' ? 'Live Preview' : 'Source';
   const target  = _previewMode === 'preview' ? (_editModePref === 'edit' ? 'Source' : 'Live Preview') : 'Reading';
-  tip.innerHTML = `<div class="obsidian-tooltip-line"><strong>Current View:</strong> ${current}</div><div class="obsidian-tooltip-line">Click for: ${target}</div>`;
+  tip.innerHTML = `<div class="shard-tooltip-line"><strong>Current View:</strong> ${current}</div><div class="shard-tooltip-line">Click for: ${target}</div>`;
   tip.style.display = 'block';
   const rect = icon.getBoundingClientRect();
   const tRect = tip.getBoundingClientRect();
@@ -1107,17 +1107,17 @@ function _closeCurrentTab() {
   _selectedNoteId = null;
   _historyStack = [];
   _historyIndex = -1;
-  document.getElementById('obsidian-preview').innerHTML = '';
-  document.getElementById('obsidian-preview').style.display = 'none';
-  const modeIcon = document.getElementById('obsidian-mode-icon');
+  document.getElementById('shard-preview').innerHTML = '';
+  document.getElementById('shard-preview').style.display = 'none';
+  const modeIcon = document.getElementById('shard-mode-icon');
   if (modeIcon) modeIcon.style.display = 'none';
-  const noteMenuBtn = document.getElementById('obsidian-note-menu-btn');
+  const noteMenuBtn = document.getElementById('shard-note-menu-btn');
   if (noteMenuBtn) noteMenuBtn.style.display = 'none';
-  const rightPane = document.getElementById('obsidian-right-pane');
+  const rightPane = document.getElementById('shard-right-pane');
   if (rightPane) {
-    rightPane.querySelector('#obsidian-right-placeholder')?.classList.remove('hidden');
-    document.getElementById('obsidian-right-tabs')?.classList.add('hidden');
-    document.getElementById('obsidian-right-panes')?.classList.add('hidden');
+    rightPane.querySelector('#shard-right-placeholder')?.classList.remove('hidden');
+    document.getElementById('shard-right-tabs')?.classList.add('hidden');
+    document.getElementById('shard-right-panes')?.classList.add('hidden');
   }
   _renderNoteTabs();
   _renderBreadcrumb(null);
@@ -1125,22 +1125,22 @@ function _closeCurrentTab() {
 }
 
 function _renderNoteTabs() {
-  const bar = document.getElementById('obsidian-note-tabs');
+  const bar = document.getElementById('shard-note-tabs');
   if (!bar) return;
   if (!_openTabs.length) {
-    bar.innerHTML = `<button class="obsidian-tab-new" title="New note">+</button>`;
+    bar.innerHTML = `<button class="shard-tab-new" title="New note">+</button>`;
     return;
   }
   const html = _openTabs.map(noteId => {
     const note = _notes.find(n => n.id === noteId);
     const title = _esc(note ? note.title : noteId);
     const active = noteId === _selectedNoteId ? 'active' : '';
-    return `<button class="obsidian-tab ${active}" data-note-id="${_esc(noteId)}" title="${title}">
+    return `<button class="shard-tab ${active}" data-note-id="${_esc(noteId)}" title="${title}">
       <span style="flex:1;overflow:hidden;text-overflow:ellipsis;min-width:0;text-align:left;">${title}</span>
-      <span class="obsidian-tab-close" data-note-id="${_esc(noteId)}">&times;</span>
+      <span class="shard-tab-close" data-note-id="${_esc(noteId)}">&times;</span>
     </button>`;
   }).join('');
-  bar.innerHTML = html + `<button class="obsidian-tab-new" title="New note">+</button>`;
+  bar.innerHTML = html + `<button class="shard-tab-new" title="New note">+</button>`;
 }
 
 async function _showNewNotePrompt() {
@@ -1154,7 +1154,7 @@ async function _showNewNotePrompt() {
     counter++;
   }
   try {
-    const r = await fetch(`${API_BASE}/api/obsidian/notes/${encodeURIComponent(name)}/edit`, {
+    const r = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(name)}/edit`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content: '' }),
@@ -1168,15 +1168,15 @@ async function _showNewNotePrompt() {
       if (note) _navigateToNote(note.id, true, true);
     } else {
       const data = await r.json().catch(() => ({}));
-      console.error('[obsidian] create note failed:', data.detail || r.status);
+      console.error('[shard] create note failed:', data.detail || r.status);
     }
   } catch (e) {
-    console.error('[obsidian] create note failed', e);
+    console.error('[shard] create note failed', e);
   }
 }
 
 function _renderBreadcrumb(note) {
-  const el = document.getElementById('obsidian-breadcrumb');
+  const el = document.getElementById('shard-breadcrumb');
   if (!el) return;
   if (!note) {
     el.innerHTML = '';
@@ -1185,12 +1185,12 @@ function _renderBreadcrumb(note) {
   const parts = (note.folder || '').split('/').filter(Boolean);
   const pathParts = parts.map((part, i) => {
     const path = parts.slice(0, i + 1).join('/');
-    return `<span class="obsidian-breadcrumb-part" data-folder="${_esc(path)}">${_esc(part)}</span>`;
-  }).join('<span class="obsidian-breadcrumb-sep">/</span>');
-  const title = `<span class="obsidian-breadcrumb-current">${_esc(note.title)}</span>`;
-  const sep = parts.length ? '<span class="obsidian-breadcrumb-sep">/</span>' : '';
+    return `<span class="shard-breadcrumb-part" data-folder="${_esc(path)}">${_esc(part)}</span>`;
+  }).join('<span class="shard-breadcrumb-sep">/</span>');
+  const title = `<span class="shard-breadcrumb-current">${_esc(note.title)}</span>`;
+  const sep = parts.length ? '<span class="shard-breadcrumb-sep">/</span>' : '';
   el.innerHTML = (pathParts ? pathParts + sep : '') + title;
-  el.querySelectorAll('.obsidian-breadcrumb-part').forEach(p => {
+  el.querySelectorAll('.shard-breadcrumb-part').forEach(p => {
     p.addEventListener('click', () => {
       _selectedFolder = p.dataset.folder;
       _renderFolderTree();
@@ -1199,8 +1199,8 @@ function _renderBreadcrumb(note) {
 }
 
 function _updateNavButtons() {
-  const back = document.getElementById('obsidian-back-btn');
-  const forward = document.getElementById('obsidian-forward-btn');
+  const back = document.getElementById('shard-back-btn');
+  const forward = document.getElementById('shard-forward-btn');
   if (back) back.disabled = _historyIndex <= 0;
   if (forward) forward.disabled = _historyIndex >= _historyStack.length - 1;
 }
@@ -1211,15 +1211,15 @@ let _activeLeftTab = 'files';
 
 function _switchLeftTab(tab) {
   _activeLeftTab = tab;
-  document.querySelectorAll('#obsidian-left-tabs .obsidian-sidebar-tab').forEach(btn => {
+  document.querySelectorAll('#shard-left-tabs .shard-sidebar-tab').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.tab === tab);
   });
-  document.querySelectorAll('.obsidian-sidebar-pane').forEach(pane => {
+  document.querySelectorAll('.shard-sidebar-pane').forEach(pane => {
     pane.classList.toggle('hidden', pane.dataset.pane !== tab);
   });
 
   const _disabled = (paneId) => {
-    const el = document.getElementById('obsidian-' + paneId + '-pane');
+    const el = document.getElementById('shard-' + paneId + '-pane');
     if (el) el.innerHTML = '<div style="padding:12px;text-align:center;opacity:0.5;font-size:12px;">Plugin disabled.<br>Enable it in Settings > Core Plugins.</div>';
   };
 
@@ -1242,10 +1242,10 @@ let _activeRightTab = 'backlinks';
 
 function _switchRightTab(tab) {
   _activeRightTab = tab;
-  document.querySelectorAll('#obsidian-right-tabs .obsidian-right-tab').forEach(btn => {
+  document.querySelectorAll('#shard-right-tabs .shard-right-tab').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.tab === tab);
   });
-  document.querySelectorAll('#obsidian-right-panes .obsidian-right-pane-content').forEach(pane => {
+  document.querySelectorAll('#shard-right-panes .shard-right-pane-content').forEach(pane => {
     pane.classList.toggle('hidden', pane.dataset.pane !== tab);
   });
   // Re-render current note into the newly active tab if a note is selected
@@ -1315,9 +1315,9 @@ function _sortNotes(notes, sortBy) {
 }
 
 function _renderSearchPane(query = '') {
-  const resultsEl = document.getElementById('obsidian-search-results');
-  const explainEl = document.getElementById('obsidian-search-explain-bar');
-  const clearBtn = document.getElementById('obsidian-search-clear');
+  const resultsEl = document.getElementById('shard-search-results');
+  const explainEl = document.getElementById('shard-search-explain-bar');
+  const clearBtn = document.getElementById('shard-search-clear');
   if (clearBtn) clearBtn.classList.toggle('hidden', !query.trim());
   if (!resultsEl) return;
 
@@ -1387,8 +1387,8 @@ function _renderSearchPane(query = '') {
     if (matchCount > 0) {
       matchesHtml = displayedMatches.map(m => {
         const display = _searchState.context
-          ? `<div class="obsidian-search-match raw">${_highlightText(m.text, regex)}</div>`
-          : `<div class="obsidian-search-match">${_highlightText(m.text, regex)}</div>`;
+          ? `<div class="shard-search-match raw">${_highlightText(m.text, regex)}</div>`
+          : `<div class="shard-search-match">${_highlightText(m.text, regex)}</div>`;
         return display;
       }).join('');
       if (hiddenCount > 0) {
@@ -1398,33 +1398,33 @@ function _renderSearchPane(query = '') {
       // Title-only match — show first few lines as context
       const preview = (n.content || '').split('\n').slice(0, 3).join('\n');
       matchesHtml = _searchState.context
-        ? `<div class="obsidian-search-match raw">${_esc(preview)}</div>`
-        : `<div class="obsidian-search-match">${_esc(preview.slice(0, 160))}</div>`;
+        ? `<div class="shard-search-match raw">${_esc(preview)}</div>`
+        : `<div class="shard-search-match">${_esc(preview.slice(0, 160))}</div>`;
     }
 
-    return `<div class="obsidian-search-file">
-      <div class="obsidian-search-file-header ${isCollapsed ? 'collapsed' : ''}" data-note-id="${_esc(n.id)}">
-        <span class="obsidian-search-chevron">${chevron}</span>
+    return `<div class="shard-search-file">
+      <div class="shard-search-file-header ${isCollapsed ? 'collapsed' : ''}" data-note-id="${_esc(n.id)}">
+        <span class="shard-search-chevron">${chevron}</span>
         <span>${_esc(n.title)}</span>
-        <span class="obsidian-search-file-count">${matchCount || (isTagSearch ? (n.tags || []).length : 0)}</span>
+        <span class="shard-search-file-count">${matchCount || (isTagSearch ? (n.tags || []).length : 0)}</span>
       </div>
-      <div class="obsidian-search-matches" ${isCollapsed ? 'style="display:none"' : ''}>${matchesHtml}</div>
+      <div class="shard-search-matches" ${isCollapsed ? 'style="display:none"' : ''}>${matchesHtml}</div>
     </div>`;
   }).join('');
 
   // Wire click on headers (toggle collapse + navigate on title click)
-  resultsEl.querySelectorAll('.obsidian-search-file-header').forEach(header => {
+  resultsEl.querySelectorAll('.shard-search-file-header').forEach(header => {
     header.addEventListener('click', (e) => {
       const noteId = header.dataset.noteId;
       // Click on chevron toggles collapse; click on title navigates
-      const isChevron = e.target.closest('.obsidian-search-chevron');
+      const isChevron = e.target.closest('.shard-search-chevron');
       if (isChevron) {
         const matchesDiv = header.nextElementSibling;
         const wasCollapsed = matchesDiv.style.display === 'none';
         const nowCollapsed = !wasCollapsed;
         matchesDiv.style.display = wasCollapsed ? '' : 'none';
         header.classList.toggle('collapsed', nowCollapsed);
-        const chevronEl = header.querySelector('.obsidian-search-chevron');
+        const chevronEl = header.querySelector('.shard-search-chevron');
         chevronEl.innerHTML = wasCollapsed ? '&#9660;' : '&#9654;';
         _searchState.fileStates.set(noteId, nowCollapsed);
       } else {
@@ -1438,7 +1438,7 @@ function _renderSearchPane(query = '') {
   _searchHistoryTimer = setTimeout(() => _addSearchHistory(query), 2000);
 
   // Right-click context menus on search results
-  resultsEl.querySelectorAll('.obsidian-search-file-header').forEach(header => {
+  resultsEl.querySelectorAll('.shard-search-file-header').forEach(header => {
     header.addEventListener('contextmenu', (e) => {
       _showFileContextMenu(e, header.dataset.noteId);
     });
@@ -1449,12 +1449,12 @@ function _renderSearchPane(query = '') {
 
 let _searchHistory = [];
 try {
-  const raw = localStorage.getItem('obsidian-search-history');
+  const raw = localStorage.getItem('shard-search-history');
   if (raw) _searchHistory = JSON.parse(raw);
 } catch {}
 
 function _persistSearchHistory() {
-  try { localStorage.setItem('obsidian-search-history', JSON.stringify(_searchHistory.slice(0, 20))); } catch {}
+  try { localStorage.setItem('shard-search-history', JSON.stringify(_searchHistory.slice(0, 20))); } catch {}
 }
 
 function _addSearchHistory(query) {
@@ -1466,7 +1466,7 @@ function _addSearchHistory(query) {
 }
 
 function _renderSearchHistory() {
-  const el = document.getElementById('obsidian-search-history');
+  const el = document.getElementById('shard-search-history');
   if (!el) return;
   if (!_searchHistory.length) {
     el.innerHTML = '<div style="padding:4px 6px;opacity:0.4;font-size:12px;">No recent searches</div>';
@@ -1475,24 +1475,24 @@ function _renderSearchHistory() {
   el.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2px;">
       <span></span>
-      <button class="obsidian-search-history-clear" title="Clear history" style="background:transparent;border:none;color:var(--fg);opacity:0.4;cursor:pointer;padding:2px;font-size:11px;">
+      <button class="shard-search-history-clear" title="Clear history" style="background:transparent;border:none;color:var(--fg);opacity:0.4;cursor:pointer;padding:2px;font-size:11px;">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </div>
   ` + _searchHistory.map(q =>
-    `<div class="obsidian-search-history-item" data-query="${_esc(q)}">
+    `<div class="shard-search-history-item" data-query="${_esc(q)}">
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
       <span>${_esc(q)}</span>
     </div>`
   ).join('');
-  el.querySelector('.obsidian-search-history-clear')?.addEventListener('click', () => {
+  el.querySelector('.shard-search-history-clear')?.addEventListener('click', () => {
     _searchHistory = [];
     _persistSearchHistory();
     _renderSearchHistory();
   });
-  el.querySelectorAll('.obsidian-search-history-item').forEach(item => {
+  el.querySelectorAll('.shard-search-history-item').forEach(item => {
     item.addEventListener('click', () => {
-      const input = document.getElementById('obsidian-search-input');
+      const input = document.getElementById('shard-search-input');
       if (input) {
         input.value = item.dataset.query;
         _renderSearchPane(item.dataset.query);
@@ -1502,7 +1502,7 @@ function _renderSearchHistory() {
 }
 
 function _toggleSearchEmpty(show) {
-  const emptyEl = document.getElementById('obsidian-search-empty');
+  const emptyEl = document.getElementById('shard-search-empty');
   if (emptyEl) emptyEl.classList.toggle('hidden', !show);
   if (show) _renderSearchHistory();
 }
@@ -1510,12 +1510,12 @@ function _toggleSearchEmpty(show) {
 let _bookmarks = new Set();
 
 try {
-  const raw = localStorage.getItem('obsidian-bookmarks');
+  const raw = localStorage.getItem('shard-bookmarks');
   if (raw) _bookmarks = new Set(JSON.parse(raw));
 } catch {}
 
 function _persistBookmarks() {
-  try { localStorage.setItem('obsidian-bookmarks', JSON.stringify([..._bookmarks])); } catch {}
+  try { localStorage.setItem('shard-bookmarks', JSON.stringify([..._bookmarks])); } catch {}
 }
 
 function _toggleBookmark(noteId) {
@@ -1526,24 +1526,24 @@ function _toggleBookmark(noteId) {
 }
 
 function _renderBookmarksPane() {
-  const el = document.getElementById('obsidian-bookmarks-list');
+  const el = document.getElementById('shard-bookmarks-list');
   if (!el) return;
   const items = [..._bookmarks].map(id => _notes.find(n => n.id === id)).filter(Boolean);
   if (!items.length) {
     el.innerHTML = '<div style="padding:10px;text-align:center;opacity:0.5;font-size:12px;">No bookmarks yet.<br>Right-click a note and select Bookmark.</div>';
     return;
   }
-  el.innerHTML = items.map(n => `<div class="obsidian-bookmark-item" data-note-id="${_esc(n.id)}">
+  el.innerHTML = items.map(n => `<div class="shard-bookmark-item" data-note-id="${_esc(n.id)}">
     <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
     ${_esc(n.title)}
   </div>`).join('');
-  el.querySelectorAll('.obsidian-bookmark-item').forEach(item => {
+  el.querySelectorAll('.shard-bookmark-item').forEach(item => {
     item.addEventListener('click', () => _navigateToNote(item.dataset.noteId));
   });
 }
 
 function _renderTagsPane() {
-  const el = document.getElementById('obsidian-tags-cloud');
+  const el = document.getElementById('shard-tags-cloud');
   if (!el) return;
   const counts = {};
   _notes.forEach(n => {
@@ -1555,12 +1555,12 @@ function _renderTagsPane() {
     return;
   }
   el.innerHTML = tags.map(([tag, count]) =>
-    `<span class="obsidian-tag-chip" data-tag="${_esc(tag)}">${_esc(tag)}<span class="obsidian-tag-count">${count}</span></span>`
+    `<span class="shard-tag-chip" data-tag="${_esc(tag)}">${_esc(tag)}<span class="shard-tag-count">${count}</span></span>`
   ).join('');
-  el.querySelectorAll('.obsidian-tag-chip').forEach(chip => {
+  el.querySelectorAll('.shard-tag-chip').forEach(chip => {
     chip.addEventListener('click', () => {
       _searchQuery = chip.dataset.tag;
-      document.getElementById('obsidian-search-input').value = 'tag:' + chip.dataset.tag;
+      document.getElementById('shard-search-input').value = 'tag:' + chip.dataset.tag;
       _switchLeftTab('search');
       _renderSearchPane('tag:' + chip.dataset.tag);
     });
@@ -1571,7 +1571,7 @@ function _renderTagsPane() {
 
 function _restoreCachedNotes(vaultId) {
   try {
-    const cached = localStorage.getItem(`obsidian-notes-${vaultId}`);
+    const cached = localStorage.getItem(`shard-notes-${vaultId}`);
     if (cached) {
       const { notes, ts } = JSON.parse(cached);
       if (Date.now() - ts < 10 * 60 * 1000) { // 10 min TTL
@@ -1587,13 +1587,13 @@ function _restoreCachedNotes(vaultId) {
 }
 
 async function _loadNotes() {
-  const list = document.getElementById('obsidian-note-list');
+  const list = document.getElementById('shard-note-list');
   try {
     const qs = new URLSearchParams();
     if (_selectedVaultId) qs.set('vault_id', _selectedVaultId);
     if (_searchQuery) qs.set('q', _searchQuery);
     qs.set('limit', '9999');
-    const r = await fetch(`${API_BASE}/api/obsidian/notes?${qs.toString()}`);
+    const r = await fetch(`${API_BASE}/api/shard/notes?${qs.toString()}`);
     if (!r.ok) {
       const d = await r.json().catch(() => ({}));
       if (list) list.innerHTML = `<div style="padding:20px;text-align:center;opacity:0.5;font-size:12px;">Error loading notes: ${d.detail || r.status}</div>`;
@@ -1607,10 +1607,10 @@ async function _loadNotes() {
     _populateVaultDropdown();
     // Cache
     try {
-      localStorage.setItem(`obsidian-notes-${_selectedVaultId}`, JSON.stringify({ notes: _notes, ts: Date.now() }));
+      localStorage.setItem(`shard-notes-${_selectedVaultId}`, JSON.stringify({ notes: _notes, ts: Date.now() }));
     } catch {}
   } catch (e) {
-    console.error('Obsidian load failed', e);
+    console.error('Shard load failed', e);
     if (list) list.innerHTML = '<div style="padding:20px;text-align:center;opacity:0.5;font-size:12px;">Failed to load notes. Click Refresh to resync.</div>';
     _notes = [];
   }
@@ -1619,7 +1619,7 @@ async function _loadNotes() {
 // ── List View ────────────────────────────────────────────────
 
 function _renderNoteList() {
-  const list = document.getElementById('obsidian-note-list');
+  const list = document.getElementById('shard-note-list');
   if (!list) return;
 
   let filtered = _notes;
@@ -1647,17 +1647,17 @@ function _renderNoteList() {
   }
 
   list.innerHTML = filtered.map(n => `
-    <div class="obsidian-note-card ${n.id === _selectedNoteId ? 'selected' : ''}" data-id="${n.id}">
-      <div class="obsidian-note-card-title">${_esc(n.title)}</div>
-      <div class="obsidian-note-card-preview">${_esc(n.content?.slice(0, 120) || '')}</div>
-      <div class="obsidian-note-card-meta">
-        ${(n.tags || []).map(t => `<span class="obsidian-tag">${_esc(t)}</span>`).join('')}
-        <span class="obsidian-note-date">${n.last_modified_src?.slice(0, 10) || ''}</span>
+    <div class="shard-note-card ${n.id === _selectedNoteId ? 'selected' : ''}" data-id="${n.id}">
+      <div class="shard-note-card-title">${_esc(n.title)}</div>
+      <div class="shard-note-card-preview">${_esc(n.content?.slice(0, 120) || '')}</div>
+      <div class="shard-note-card-meta">
+        ${(n.tags || []).map(t => `<span class="shard-tag">${_esc(t)}</span>`).join('')}
+        <span class="shard-note-date">${n.last_modified_src?.slice(0, 10) || ''}</span>
       </div>
     </div>
   `).join('');
 
-  list.querySelectorAll('.obsidian-note-card').forEach(card => {
+  list.querySelectorAll('.shard-note-card').forEach(card => {
     card.addEventListener('click', (e) => _navigateToNote(card.dataset.id, true, e.ctrlKey || e.metaKey));
   });
 }
@@ -1732,7 +1732,7 @@ async function _saveNoteContent(note, isRetry = false) {
   const serialized = _serializeFrontmatter(note.frontmatter || {});
   const fullContent = note.content ? serialized + '\n' + note.content : serialized;
   try {
-    const r = await fetch(`${API_BASE}/api/obsidian/notes/${encodeURIComponent(note.id)}/edit`, {
+    const r = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(note.id)}/edit`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
@@ -1751,13 +1751,13 @@ async function _saveNoteContent(note, isRetry = false) {
     } else {
       let errText = '';
       try { const d = await r.json(); errText = d.detail || JSON.stringify(d); } catch {}
-      console.error('[obsidian] save property failed', r.status, errText);
+      console.error('[shard] save property failed', r.status, errText);
       if (!isRetry) {
         setTimeout(() => _saveNoteContent(note, true), 2000);
       }
     }
   } catch (e) {
-    console.error('[obsidian] save property error', e);
+    console.error('[shard] save property error', e);
     if (!isRetry) {
       setTimeout(() => _saveNoteContent(note, true), 2000);
     }
@@ -1802,9 +1802,9 @@ function _propIconSvg(key, value, propType) {
 
 function _buildTagChip(text, key) {
   const isTag = key.toLowerCase() === 'tags';
-  return `<span class="obsidian-prop-chip${isTag ? ' is-tag' : ''}" data-chip="${_esc(text)}" data-prop-key="${_esc(key)}" spellcheck="false">
-    <span class="obsidian-prop-chip-text">${_esc(text)}</span>
-    <span class="obsidian-prop-chip-x" data-action="remove-chip" title="Remove">&times;</span>
+  return `<span class="shard-prop-chip${isTag ? ' is-tag' : ''}" data-chip="${_esc(text)}" data-prop-key="${_esc(key)}" spellcheck="false">
+    <span class="shard-prop-chip-text">${_esc(text)}</span>
+    <span class="shard-prop-chip-x" data-action="remove-chip" title="Remove">&times;</span>
   </span>`;
 }
 
@@ -1830,26 +1830,26 @@ function _buildPropertiesHtml(frontmatter, note) {
     let valHtml;
     if (Array.isArray(v)) {
       const chips = v.map(item => _buildTagChip(String(item), k)).join('');
-      valHtml = `<span class="obsidian-prop-val" data-prop-key="${_esc(k)}" data-type="array" data-prop-type="${propType}" spellcheck="false">${chips}<span class="obsidian-prop-chip-input" contenteditable="plaintext-only" spellcheck="false"></span></span>`;
+      valHtml = `<span class="shard-prop-val" data-prop-key="${_esc(k)}" data-type="array" data-prop-type="${propType}" spellcheck="false">${chips}<span class="shard-prop-chip-input" contenteditable="plaintext-only" spellcheck="false"></span></span>`;
     } else if (v && typeof v === 'object') {
-      valHtml = `<span class="obsidian-prop-val" contenteditable="plaintext-only" spellcheck="false" data-prop-key="${_esc(k)}" data-prop-type="${propType}">${_esc(JSON.stringify(v))}</span>`;
+      valHtml = `<span class="shard-prop-val" contenteditable="plaintext-only" spellcheck="false" data-prop-key="${_esc(k)}" data-prop-type="${propType}">${_esc(JSON.stringify(v))}</span>`;
     } else {
-      valHtml = `<span class="obsidian-prop-val" contenteditable="plaintext-only" spellcheck="false" data-prop-key="${_esc(k)}" data-prop-type="${propType}">${_esc(String(v ?? ''))}</span>`;
+      valHtml = `<span class="shard-prop-val" contenteditable="plaintext-only" spellcheck="false" data-prop-key="${_esc(k)}" data-prop-type="${propType}">${_esc(String(v ?? ''))}</span>`;
     }
-    return `<div class="obsidian-prop-row" data-prop-key="${_esc(k)}">
-      <span class="obsidian-prop-icon" data-prop-key="${_esc(k)}" title="Property options">${icon}</span>
-      <span class="obsidian-prop-key" spellcheck="false">${_esc(k)}</span>
+    return `<div class="shard-prop-row" data-prop-key="${_esc(k)}">
+      <span class="shard-prop-icon" data-prop-key="${_esc(k)}" title="Property options">${icon}</span>
+      <span class="shard-prop-key" spellcheck="false">${_esc(k)}</span>
       ${valHtml}
     </div>`;
   }).join('');
-  const addBtn = note ? `<button class="obsidian-prop-add-main" data-add-prop spellcheck="false"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add property</button>` : '';
-  return `<div class="obsidian-properties-inline"><h4>Properties</h4><div class="obsidian-prop-grid">${rows || ''}</div>${addBtn}</div>`;
+  const addBtn = note ? `<button class="shard-prop-add-main" data-add-prop spellcheck="false"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add property</button>` : '';
+  return `<div class="shard-properties-inline"><h4>Properties</h4><div class="shard-prop-grid">${rows || ''}</div>${addBtn}</div>`;
 }
 
 async function _selectNote(id) {
   _selectedNoteId = id;
 
-  const preview = document.getElementById('obsidian-preview');
+  const preview = document.getElementById('shard-preview');
   if (!preview) return;
 
   try {
@@ -1863,7 +1863,7 @@ async function _selectNote(id) {
       }
     }
     if (!note) {
-      const r = await fetch(`${API_BASE}/api/obsidian/notes/${encodeURIComponent(id)}`);
+      const r = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(id)}`);
       if (!r.ok) { preview.style.display = 'none'; return; }
       note = await r.json();
       _noteContentCache.set(id, note);
@@ -1871,21 +1871,21 @@ async function _selectNote(id) {
     preview.style.display = 'block';
     const isAutoRename = _autoRenameNoteId === note.id;
     const titleHtml = isAutoRename
-      ? `<span class="obsidian-title-edit" contenteditable="plaintext-only" spellcheck="false">${_esc(note.title)}</span>`
+      ? `<span class="shard-title-edit" contenteditable="plaintext-only" spellcheck="false">${_esc(note.title)}</span>`
       : `<h1>${_esc(note.title)}</h1>`;
     // In source mode, show raw YAML instead of property chips
     const showProps = _previewMode !== 'edit';
     preview.innerHTML = `
-      <div class="obsidian-preview-header">
+      <div class="shard-preview-header">
         ${titleHtml}
       </div>
       ${showProps ? _buildPropertiesHtml(note.frontmatter, note) : ''}
-      <div class="obsidian-preview-body"></div>
+      <div class="shard-preview-body"></div>
     `;
 
     // Wire inline title editing for newly-created notes
     if (isAutoRename) {
-      const titleEdit = preview.querySelector('.obsidian-title-edit');
+      const titleEdit = preview.querySelector('.shard-title-edit');
       if (titleEdit) {
         titleEdit.focus();
         const range = document.createRange();
@@ -1917,13 +1917,13 @@ async function _selectNote(id) {
       }
     }
 
-    const bodyEl = preview.querySelector('.obsidian-preview-body');
+    const bodyEl = preview.querySelector('.shard-preview-body');
 
     const _saveLivePreview = async () => {
-      const blocks = bodyEl.querySelectorAll('.obsidian-live-block');
+      const blocks = bodyEl.querySelectorAll('.shard-live-block');
       const texts = [];
       blocks.forEach(b => {
-        const ta = b.querySelector('.obsidian-live-block-edit');
+        const ta = b.querySelector('.shard-live-block-edit');
         texts.push(ta ? ta.value : (b.dataset.blockRaw || ''));
       });
       note.content = texts.join('\n\n');
@@ -2139,8 +2139,8 @@ async function _selectNote(id) {
       if (_previewMode === 'edit') {
         // Source mode: styled text div, contentEditable, clickable wikilinks
         const raw = _getNoteFullRaw(note);
-        bodyEl.innerHTML = `<div class="obsidian-body-wrap"><div class="obsidian-source-view" contenteditable="true" spellcheck="false">${_renderSourceView(raw)}</div></div>`;
-        const sourceDiv = bodyEl.querySelector('.obsidian-source-view');
+        bodyEl.innerHTML = `<div class="shard-body-wrap"><div class="shard-source-view" contenteditable="true" spellcheck="false">${_renderSourceView(raw)}</div></div>`;
+        const sourceDiv = bodyEl.querySelector('.shard-source-view');
         _wireSourceWikilinks(sourceDiv);
         sourceDiv.focus();
         const finishEdit = async () => {
@@ -2165,8 +2165,8 @@ async function _selectNote(id) {
         // Live Preview: token-level inline editing — syntax hidden by default,
         // revealed only for the token(s) containing the cursor.
         const content = note.content || '';
-        bodyEl.innerHTML = `<div class="obsidian-body-wrap"><div class="obsidian-live-view">${_renderLiveView(content)}</div></div>`;
-        const liveDiv = bodyEl.querySelector('.obsidian-live-view');
+        bodyEl.innerHTML = `<div class="shard-body-wrap"><div class="shard-live-view">${_renderLiveView(content)}</div></div>`;
+        const liveDiv = bodyEl.querySelector('.shard-live-view');
         _wireWikilinks(liveDiv);
 
         let activeLine = null;
@@ -2455,9 +2455,9 @@ async function _selectNote(id) {
             .slice(0, 12);
           if (!matches.length) return;
           const el = document.createElement('div');
-          el.className = 'obsidian-wiki-suggest';
+          el.className = 'shard-wiki-suggest';
           el.innerHTML = matches.map((t, i) =>
-            `<div class="obsidian-wiki-suggest-item${i === 0 ? ' selected' : ''}" data-title="${_esc(t)}">${_esc(t)}</div>`
+            `<div class="shard-wiki-suggest-item${i === 0 ? ' selected' : ''}" data-title="${_esc(t)}">${_esc(t)}</div>`
           ).join('');
           el.style.position = 'fixed';
           el.style.zIndex = '99999';
@@ -2467,7 +2467,7 @@ async function _selectNote(id) {
           document.body.appendChild(el);
           _wikiSuggestEl = el;
           _wikiSuggestIndex = 0;
-          el.querySelectorAll('.obsidian-wiki-suggest-item').forEach(item => {
+          el.querySelectorAll('.shard-wiki-suggest-item').forEach(item => {
             item.addEventListener('click', () => {
               _insertWikiLink(source, item.dataset.title);
               _hideWikiSuggest();
@@ -2550,7 +2550,7 @@ async function _selectNote(id) {
 
           // Wikilink suggestion navigation
           if (_wikiSuggestEl) {
-            const items = _wikiSuggestEl.querySelectorAll('.obsidian-wiki-suggest-item');
+            const items = _wikiSuggestEl.querySelectorAll('.shard-wiki-suggest-item');
             if (e.key === 'ArrowDown') {
               e.preventDefault();
               items[_wikiSuggestIndex]?.classList.remove('selected');
@@ -2588,7 +2588,7 @@ async function _selectNote(id) {
 
         // Hide suggest on outside click
         const _hideSuggestOnClick = (e) => {
-          if (_wikiSuggestEl && !e.target.closest('.obsidian-wiki-suggest')) {
+          if (_wikiSuggestEl && !e.target.closest('.shard-wiki-suggest')) {
             _hideWikiSuggest();
           }
         };
@@ -2604,8 +2604,8 @@ async function _selectNote(id) {
       } else {
         // Reading mode: use live preview HTML without editing interactions
         const content = note.content || '';
-        bodyEl.innerHTML = `<div class="obsidian-body-wrap"><div class="obsidian-reading-view">${_renderLiveView(content)}</div></div>`;
-        const wrap = bodyEl.querySelector('.obsidian-reading-view');
+        bodyEl.innerHTML = `<div class="shard-body-wrap"><div class="shard-reading-view">${_renderLiveView(content)}</div></div>`;
+        const wrap = bodyEl.querySelector('.shard-reading-view');
         _wireWikilinks(wrap);
         wrap.addEventListener('dblclick', () => {
           _previewMode = _editModePref;
@@ -2616,13 +2616,13 @@ async function _selectNote(id) {
     };
     updateBody();
     _updateModeIcon();
-    const modeIcon = document.getElementById('obsidian-mode-icon');
+    const modeIcon = document.getElementById('shard-mode-icon');
     if (modeIcon) {
       modeIcon.style.display = 'flex';
       modeIcon.onclick = () => {
         // Explicitly blur source view to trigger save before switching away
         if (_previewMode === 'edit') {
-          const sourceDiv = bodyEl.querySelector('.obsidian-source-view');
+          const sourceDiv = bodyEl.querySelector('.shard-source-view');
           if (sourceDiv) sourceDiv.blur();
         }
         // Cycle: Reading <-> preferred edit mode
@@ -2631,7 +2631,7 @@ async function _selectNote(id) {
         _selectNote(note.id);
       };
     }
-    const noteMenuBtn = document.getElementById('obsidian-note-menu-btn');
+    const noteMenuBtn = document.getElementById('shard-note-menu-btn');
     if (noteMenuBtn) {
       noteMenuBtn.style.display = 'flex';
       noteMenuBtn.onclick = (e) => _showNoteMenu(e, note);
@@ -2644,7 +2644,7 @@ async function _selectNote(id) {
 
     // Background: fetch full note with backlinks if we only had the cached stub
     if (!note.backlinks_resolved) {
-      fetch(`${API_BASE}/api/obsidian/notes/${encodeURIComponent(id)}`)
+      fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(id)}`)
         .then(r => r.ok ? r.json() : null)
         .then(full => {
           if (full) {
@@ -2660,38 +2660,38 @@ async function _selectNote(id) {
 }
 
 function _closeAllPropMenus() {
-  document.querySelectorAll('.obsidian-prop-menu').forEach(m => m.remove());
-  document.querySelectorAll('.obsidian-prop-submenu').forEach(m => m.remove());
-  document.querySelectorAll('.obsidian-prop-add-dropdown').forEach(m => m.remove());
+  document.querySelectorAll('.shard-prop-menu').forEach(m => m.remove());
+  document.querySelectorAll('.shard-prop-submenu').forEach(m => m.remove());
+  document.querySelectorAll('.shard-prop-add-dropdown').forEach(m => m.remove());
 }
 
 function _openPropIconMenu(icon, key, preview, note) {
   _closeAllPropMenus();
   const menu = document.createElement('div');
-  menu.className = 'obsidian-prop-menu';
+  menu.className = 'shard-prop-menu';
   menu.style.position = 'fixed';
   menu.style.zIndex = '99999';
   menu.innerHTML = `
-    <div class="obsidian-prop-menu-item" data-action="type">
+    <div class="shard-prop-menu-item" data-action="type">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
       Property type
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-left:auto;opacity:0.5"><polyline points="9 18 15 12 9 6"/></svg>
     </div>
-    <div class="obsidian-prop-menu-divider"></div>
-    <div class="obsidian-prop-menu-item" data-action="cut">
+    <div class="shard-prop-menu-divider"></div>
+    <div class="shard-prop-menu-item" data-action="cut">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>
       Cut
     </div>
-    <div class="obsidian-prop-menu-item" data-action="copy">
+    <div class="shard-prop-menu-item" data-action="copy">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
       Copy
     </div>
-    <div class="obsidian-prop-menu-item" data-action="paste">
+    <div class="shard-prop-menu-item" data-action="paste">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
       Paste
     </div>
-    <div class="obsidian-prop-menu-divider"></div>
-    <div class="obsidian-prop-menu-item danger" data-action="remove">
+    <div class="shard-prop-menu-divider"></div>
+    <div class="shard-prop-menu-item danger" data-action="remove">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
       Remove
     </div>
@@ -2700,16 +2700,16 @@ function _openPropIconMenu(icon, key, preview, note) {
   menu.style.left = rect.left + 'px';
   menu.style.top = (rect.bottom + 4) + 'px';
   document.body.appendChild(menu);
-  console.log('[obsidian] prop menu created at', rect.left, rect.bottom, 'menu:', menu);
+  console.log('[shard] prop menu created at', rect.left, rect.bottom, 'menu:', menu);
 
   // Type submenu
   const typeItem = menu.querySelector('[data-action="type"]');
   if (typeItem) {
     typeItem.addEventListener('click', (e) => {
       e.stopPropagation();
-      document.querySelectorAll('.obsidian-prop-submenu').forEach(m => m.remove());
+      document.querySelectorAll('.shard-prop-submenu').forEach(m => m.remove());
       const sub = document.createElement('div');
-      sub.className = 'obsidian-prop-submenu';
+      sub.className = 'shard-prop-submenu';
       sub.style.position = 'fixed';
       sub.style.zIndex = '99999';
       const currentType = _inferPropType(key, note.frontmatter?.[key]);
@@ -2718,13 +2718,13 @@ function _openPropIconMenu(icon, key, preview, note) {
         const typeKey = t.toLowerCase().replace(/ & /g, '');
         const icon = _propTypeIconSvg(typeKey);
         const isActive = typeKey === currentType;
-        return `<div class="obsidian-prop-submenu-item${isActive ? ' active' : ''}" data-type="${_esc(typeKey)}">${icon}<span>${_esc(t)}</span></div>`;
+        return `<div class="shard-prop-submenu-item${isActive ? ' active' : ''}" data-type="${_esc(typeKey)}">${icon}<span>${_esc(t)}</span></div>`;
       }).join('');
       const tRect = typeItem.getBoundingClientRect();
       sub.style.left = (tRect.right + 4) + 'px';
       sub.style.top = tRect.top + 'px';
       document.body.appendChild(sub);
-      sub.querySelectorAll('.obsidian-prop-submenu-item').forEach(it => {
+      sub.querySelectorAll('.shard-prop-submenu-item').forEach(it => {
         it.addEventListener('click', async () => {
           const newType = it.dataset.type;
           const current = note.frontmatter?.[key];
@@ -2737,7 +2737,7 @@ function _openPropIconMenu(icon, key, preview, note) {
           note.frontmatter[key] = converted;
           await _saveNoteContent(note);
           _closeAllPropMenus();
-          const propsEl = preview.querySelector('.obsidian-properties-inline');
+          const propsEl = preview.querySelector('.shard-properties-inline');
           if (propsEl) { propsEl.outerHTML = _buildPropertiesHtml(note.frontmatter, note); _wirePropertyEditors(preview, note); }
         });
       });
@@ -2751,7 +2751,7 @@ function _openPropIconMenu(icon, key, preview, note) {
     if (note.frontmatter) delete note.frontmatter[key];
     await _saveNoteContent(note);
     _closeAllPropMenus();
-    const propsEl = preview.querySelector('.obsidian-properties-inline');
+    const propsEl = preview.querySelector('.shard-properties-inline');
     if (propsEl) { propsEl.outerHTML = _buildPropertiesHtml(note.frontmatter, note); _wirePropertyEditors(preview, note); }
   });
 
@@ -2769,7 +2769,7 @@ function _openPropIconMenu(icon, key, preview, note) {
     if (note.frontmatter) delete note.frontmatter[key];
     await _saveNoteContent(note);
     _closeAllPropMenus();
-    const propsEl = preview.querySelector('.obsidian-properties-inline');
+    const propsEl = preview.querySelector('.shard-properties-inline');
     if (propsEl) { propsEl.outerHTML = _buildPropertiesHtml(note.frontmatter, note); _wirePropertyEditors(preview, note); }
   });
   menu.querySelector('[data-action="paste"]')?.addEventListener('click', async () => {
@@ -2779,7 +2779,7 @@ function _openPropIconMenu(icon, key, preview, note) {
       note.frontmatter[key] = txt;
       await _saveNoteContent(note);
       _closeAllPropMenus();
-      const propsEl = preview.querySelector('.obsidian-properties-inline');
+      const propsEl = preview.querySelector('.shard-properties-inline');
       if (propsEl) { propsEl.outerHTML = _buildPropertiesHtml(note.frontmatter, note); _wirePropertyEditors(preview, note); }
     } catch {}
   });
@@ -2789,7 +2789,7 @@ function _openPropIconMenu(icon, key, preview, note) {
 }
 
 function _rerenderProps(preview, note) {
-  const propsEl = preview.querySelector('.obsidian-properties-inline');
+  const propsEl = preview.querySelector('.shard-properties-inline');
   if (propsEl) { propsEl.outerHTML = _buildPropertiesHtml(note.frontmatter, note); _wirePropertyEditors(preview, note); }
 }
 
@@ -2822,7 +2822,7 @@ function _wireTagAutocomplete(input, key, note, preview) {
     if (!matches.length) return;
 
     dropdown = document.createElement('div');
-    dropdown.className = 'obsidian-tag-dropdown';
+    dropdown.className = 'shard-tag-dropdown';
     dropdown.style.zIndex = '99999';
     const rect = input.getBoundingClientRect();
     dropdown.style.left = rect.left + 'px';
@@ -2831,11 +2831,11 @@ function _wireTagAutocomplete(input, key, note, preview) {
     const filterLower = (filter || '').toLowerCase();
     dropdown.innerHTML = matches.map((t, i) => {
       const label = _highlightMatch(t, filterLower);
-      return `<div class="obsidian-tag-dropdown-item" data-index="${i}" data-tag="${_esc(t)}"><span>${label}</span></div>`;
+      return `<div class="shard-tag-dropdown-item" data-index="${i}" data-tag="${_esc(t)}"><span>${label}</span></div>`;
     }).join('');
     document.body.appendChild(dropdown);
 
-    dropdown.querySelectorAll('.obsidian-tag-dropdown-item').forEach(item => {
+    dropdown.querySelectorAll('.shard-tag-dropdown-item').forEach(item => {
       item.addEventListener('click', async () => {
         const tag = item.dataset.tag;
         if (!tag) return;
@@ -2861,7 +2861,7 @@ function _wireTagAutocomplete(input, key, note, preview) {
   input.addEventListener('focus', () => { _renderDropdown(''); });
   input.addEventListener('input', () => { _renderDropdown(input.textContent.trim()); });
   input.addEventListener('keydown', (e) => {
-    const items = dropdown?.querySelectorAll('.obsidian-tag-dropdown-item');
+    const items = dropdown?.querySelectorAll('.shard-tag-dropdown-item');
     if (e.key === 'Enter') {
       e.preventDefault();
       if (items && items.length && selectedIndex >= 0 && items[selectedIndex]) {
@@ -2914,7 +2914,7 @@ function _wireTagAutocomplete(input, key, note, preview) {
 
 function _wirePropertyEditors(preview, note) {
   // --- Scalar property value edits (blur saves) ---
-  preview.querySelectorAll('.obsidian-prop-val[contenteditable]:not([data-type="array"])').forEach(el => {
+  preview.querySelectorAll('.shard-prop-val[contenteditable]:not([data-type="array"])').forEach(el => {
     el.addEventListener('blur', async () => {
       const key = el.dataset.propKey;
       const propType = el.dataset.propType || 'text';
@@ -2954,15 +2954,15 @@ function _wirePropertyEditors(preview, note) {
   });
 
   // --- Array (tag) property handling ---
-  preview.querySelectorAll('.obsidian-prop-val[data-type="array"]').forEach(container => {
+  preview.querySelectorAll('.shard-prop-val[data-type="array"]').forEach(container => {
     const key = container.dataset.propKey;
     const arr = note.frontmatter?.[key] || [];
 
     // Chip X removal
-    container.querySelectorAll('.obsidian-prop-chip-x').forEach(x => {
+    container.querySelectorAll('.shard-prop-chip-x').forEach(x => {
       x.addEventListener('click', async (e) => {
         e.stopPropagation();
-        const chipText = x.closest('.obsidian-prop-chip')?.dataset?.chip;
+        const chipText = x.closest('.shard-prop-chip')?.dataset?.chip;
         if (!chipText) return;
         note.frontmatter = note.frontmatter || {};
         note.frontmatter[key] = arr.filter(item => String(item) !== chipText);
@@ -2972,14 +2972,14 @@ function _wirePropertyEditors(preview, note) {
     });
 
     // Double-click chip text to edit
-    container.querySelectorAll('.obsidian-prop-chip-text').forEach(txt => {
+    container.querySelectorAll('.shard-prop-chip-text').forEach(txt => {
       txt.addEventListener('dblclick', (e) => {
         e.stopPropagation();
-        const chip = txt.closest('.obsidian-prop-chip');
+        const chip = txt.closest('.shard-prop-chip');
         if (!chip) return;
         const oldText = chip.dataset.chip;
         const input = document.createElement('span');
-        input.className = 'obsidian-prop-chip-input';
+        input.className = 'shard-prop-chip-input';
         input.contentEditable = 'plaintext-only';
         input.spellcheck = false;
         input.textContent = oldText;
@@ -3000,17 +3000,17 @@ function _wirePropertyEditors(preview, note) {
     });
 
     // Inline input for adding new tags (with autocomplete)
-    const inlineInput = container.querySelector('.obsidian-prop-chip-input');
+    const inlineInput = container.querySelector('.shard-prop-chip-input');
     if (inlineInput) {
       _wireTagAutocomplete(inlineInput, key, note, preview);
     }
   });
 
   // --- Property icon menus ---
-  preview.querySelectorAll('.obsidian-prop-icon').forEach(icon => {
+  preview.querySelectorAll('.shard-prop-icon').forEach(icon => {
     icon.addEventListener('click', (e) => {
       e.stopPropagation();
-      console.log('[obsidian] prop icon clicked:', icon.dataset.propKey);
+      console.log('[shard] prop icon clicked:', icon.dataset.propKey);
       _openPropIconMenu(icon, icon.dataset.propKey, preview, note);
     });
   });
@@ -3020,20 +3020,20 @@ function _wirePropertyEditors(preview, note) {
   if (addBtn) {
     addBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      console.log('[obsidian] Add property clicked');
+      console.log('[shard] Add property clicked');
       _closeAllPropMenus();
       const dropdown = document.createElement('div');
-      dropdown.className = 'obsidian-prop-add-dropdown';
+      dropdown.className = 'shard-prop-add-dropdown';
       dropdown.style.position = 'fixed';
       const existingKeys = new Set(Object.keys(note.frontmatter || {}));
       const available = _COMMON_PROPERTIES.filter(p => !existingKeys.has(p));
-      const options = available.map(p => `<div class="obsidian-prop-add-option" data-prop="${_esc(p)}">${_propIconSvg(p, '')}<span>${_esc(p)}</span></div>`).join('');
-      dropdown.innerHTML = `${options}<div class="obsidian-prop-add-option" data-prop="__custom"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span>New property</span></div>`;
+      const options = available.map(p => `<div class="shard-prop-add-option" data-prop="${_esc(p)}">${_propIconSvg(p, '')}<span>${_esc(p)}</span></div>`).join('');
+      dropdown.innerHTML = `${options}<div class="shard-prop-add-option" data-prop="__custom"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span>New property</span></div>`;
       const rect = addBtn.getBoundingClientRect();
       dropdown.style.left = rect.left + 'px';
       dropdown.style.top = (rect.bottom + 4) + 'px';
       document.body.appendChild(dropdown);
-      dropdown.querySelectorAll('.obsidian-prop-add-option').forEach(opt => {
+      dropdown.querySelectorAll('.shard-prop-add-option').forEach(opt => {
         opt.addEventListener('click', async () => {
           const propName = opt.dataset.prop;
           if (propName === '__custom') {
@@ -3064,16 +3064,16 @@ function _wirePropertyEditors(preview, note) {
 }
 
 function _renderRightSidebar(note) {
-  const pane = document.getElementById('obsidian-right-pane');
+  const pane = document.getElementById('shard-right-pane');
   if (!pane) return;
-  const placeholder = document.getElementById('obsidian-right-placeholder');
+  const placeholder = document.getElementById('shard-right-placeholder');
   if (placeholder) placeholder.classList.add('hidden');
-  document.getElementById('obsidian-right-tabs')?.classList.remove('hidden');
-  document.getElementById('obsidian-right-panes')?.classList.remove('hidden');
+  document.getElementById('shard-right-tabs')?.classList.remove('hidden');
+  document.getElementById('shard-right-panes')?.classList.remove('hidden');
 
   // Helper: render disabled state when a plugin is turned off
   const _disabled = (panelId) => {
-    const el = document.getElementById('obsidian-' + panelId + '-panel');
+    const el = document.getElementById('shard-' + panelId + '-panel');
     if (el) el.innerHTML = '<div style="padding:12px;text-align:center;opacity:0.5;font-size:12px;">Plugin disabled.<br>Enable it in Settings > Core Plugins.</div>';
   };
 
@@ -3106,7 +3106,7 @@ function _renderRightSidebar(note) {
 }
 
 function _renderBacklinksPane(note) {
-  const bl = document.getElementById('obsidian-backlinks-panel');
+  const bl = document.getElementById('shard-backlinks-panel');
   if (!bl) return;
   // Primary: client-side compute backlinks from all notes' outbound_links
   // (more robust than backend backlinks which can get stale/corrupted)
@@ -3147,7 +3147,7 @@ function _renderBacklinksPane(note) {
   const headerHtml = `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
       <h4 style="font-size:11px;opacity:0.6;text-transform:uppercase;letter-spacing:0.05em;margin:0;">Backlinks (${links.length})</h4>
-      ${links.length ? `<button class="obsidian-backlinks-toggle" title="Toggle all" style="background:transparent;border:none;color:var(--fg);opacity:0.5;cursor:pointer;padding:2px 4px;font-size:11px;display:flex;align-items:center;">
+      ${links.length ? `<button class="shard-backlinks-toggle" title="Toggle all" style="background:transparent;border:none;color:var(--fg);opacity:0.5;cursor:pointer;padding:2px 4px;font-size:11px;display:flex;align-items:center;">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
       </button>` : ''}
     </div>
@@ -3155,39 +3155,39 @@ function _renderBacklinksPane(note) {
   const listHtml = links.length ? links.map((b, idx) => {
     const snippetCount = (b.snippets || []).length;
     const isExpanded = allExpanded || bl.dataset['item' + idx] === 'open';
-    return `<div class="obsidian-backlink-item" data-idx="${idx}">
-      <div class="obsidian-backlink-header" data-id="${_esc(b.rel_path || b.id)}" style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:3px 0;font-size:12px;">
-        <span class="obsidian-backlink-chevron" style="display:inline-flex;transition:transform 0.15s;transform:rotate(${isExpanded ? '90deg' : '0deg'});">
+    return `<div class="shard-backlink-item" data-idx="${idx}">
+      <div class="shard-backlink-header" data-id="${_esc(b.rel_path || b.id)}" style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:3px 0;font-size:12px;">
+        <span class="shard-backlink-chevron" style="display:inline-flex;transition:transform 0.15s;transform:rotate(${isExpanded ? '90deg' : '0deg'});">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
         </span>
         <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(b.title)}</span>
         <span style="opacity:0.5;font-size:11px;flex-shrink:0;">${snippetCount}</span>
       </div>
-      <div class="obsidian-backlink-body" style="display:${isExpanded ? 'block' : 'none'};padding:4px 0 8px 18px;font-size:12px;opacity:0.8;line-height:1.5;">
-        ${(b.snippets || []).map(s => `<div class="obsidian-backlink-snippet" style="margin-bottom:6px;padding:6px 8px;background:color-mix(in srgb, var(--fg) 4%, transparent);border-radius:6px;cursor:pointer;">${_esc(s)}</div>`).join('')}
+      <div class="shard-backlink-body" style="display:${isExpanded ? 'block' : 'none'};padding:4px 0 8px 18px;font-size:12px;opacity:0.8;line-height:1.5;">
+        ${(b.snippets || []).map(s => `<div class="shard-backlink-snippet" style="margin-bottom:6px;padding:6px 8px;background:color-mix(in srgb, var(--fg) 4%, transparent);border-radius:6px;cursor:pointer;">${_esc(s)}</div>`).join('')}
       </div>
     </div>`;
   }).join('') : '<div style="opacity:0.5;font-size:11px;">No backlinks</div>';
   bl.innerHTML = headerHtml + listHtml;
-  bl.querySelector('.obsidian-backlinks-toggle')?.addEventListener('click', function () {
+  bl.querySelector('.shard-backlinks-toggle')?.addEventListener('click', function () {
     const willExpand = bl.dataset.expanded !== 'all';
     bl.dataset.expanded = willExpand ? 'all' : '';
     this.classList.toggle('active', willExpand);
-    bl.querySelectorAll('.obsidian-backlink-item').forEach(item => {
+    bl.querySelectorAll('.shard-backlink-item').forEach(item => {
       const idx = item.dataset.idx;
-      const body = item.querySelector('.obsidian-backlink-body');
-      const chevron = item.querySelector('.obsidian-backlink-chevron');
+      const body = item.querySelector('.shard-backlink-body');
+      const chevron = item.querySelector('.shard-backlink-chevron');
       if (body) body.style.display = willExpand ? 'block' : 'none';
       if (chevron) chevron.style.transform = willExpand ? 'rotate(90deg)' : 'rotate(0deg)';
       if (idx !== undefined) bl.dataset['item' + idx] = willExpand ? 'open' : '';
     });
   });
-  bl.querySelectorAll('.obsidian-backlink-header').forEach(hdr => {
+  bl.querySelectorAll('.shard-backlink-header').forEach(hdr => {
     hdr.addEventListener('click', (e) => {
-      if (e.target.closest('.obsidian-backlink-snippet')) return;
-      const item = hdr.closest('.obsidian-backlink-item');
-      const body = item?.querySelector('.obsidian-backlink-body');
-      const chevron = hdr.querySelector('.obsidian-backlink-chevron');
+      if (e.target.closest('.shard-backlink-snippet')) return;
+      const item = hdr.closest('.shard-backlink-item');
+      const body = item?.querySelector('.shard-backlink-body');
+      const chevron = hdr.querySelector('.shard-backlink-chevron');
       const idx = item?.dataset.idx;
       if (!body) return;
       const isOpen = body.style.display === 'block';
@@ -3196,24 +3196,24 @@ function _renderBacklinksPane(note) {
       if (idx !== undefined) bl.dataset['item' + idx] = isOpen ? '' : 'open';
     });
   });
-  bl.querySelectorAll('.obsidian-backlink-snippet').forEach(snip => {
+  bl.querySelectorAll('.shard-backlink-snippet').forEach(snip => {
     snip.addEventListener('click', (e) => {
-      const hdr = snip.closest('.obsidian-backlink-item')?.querySelector('.obsidian-backlink-header');
+      const hdr = snip.closest('.shard-backlink-item')?.querySelector('.shard-backlink-header');
       if (hdr) _navigateToNote(hdr.dataset.id, true, e.ctrlKey || e.metaKey);
     });
   });
 }
 
 function _renderOutgoingPane(note) {
-  const out = document.getElementById('obsidian-outgoing-panel');
+  const out = document.getElementById('shard-outgoing-panel');
   if (!out) return;
   const links = note.outbound_links || [];
   out.innerHTML = `<h4 style="font-size:11px;opacity:0.6;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em;">Outgoing (${links.length})</h4>` +
     (links.length ? links.map(t => {
       const target = _notes.find(n => n.title === t);
-      return `<div class="obsidian-sidebar-link ${target ? '' : 'ghost'}" data-title="${_esc(t)}">${_esc(t)}</div>`;
+      return `<div class="shard-sidebar-link ${target ? '' : 'ghost'}" data-title="${_esc(t)}">${_esc(t)}</div>`;
     }).join('') : '<div style="opacity:0.5;font-size:11px;">No outgoing links</div>');
-  out.querySelectorAll('.obsidian-sidebar-link').forEach(el => {
+  out.querySelectorAll('.shard-sidebar-link').forEach(el => {
     el.addEventListener('click', async (e) => {
       const target = _notes.find(n => n.title === el.dataset.title);
       if (target) {
@@ -3227,15 +3227,15 @@ function _renderOutgoingPane(note) {
 }
 
 function _renderNoteTagsPane(note) {
-  const tags = document.getElementById('obsidian-tags-panel');
+  const tags = document.getElementById('shard-tags-panel');
   if (!tags) return;
   const t = note.tags || [];
   tags.innerHTML = `<h4 style="font-size:11px;opacity:0.6;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em;">Tags</h4>` +
-    (t.length ? t.map(tag => `<span class="obsidian-tag" style="cursor:pointer;">${_esc(tag)}</span>`).join(' ') : '<div style="opacity:0.5;font-size:11px;">No tags</div>');
+    (t.length ? t.map(tag => `<span class="shard-tag" style="cursor:pointer;">${_esc(tag)}</span>`).join(' ') : '<div style="opacity:0.5;font-size:11px;">No tags</div>');
 }
 
 function _renderUnlinkedPane(note) {
-  const el = document.getElementById('obsidian-unlinked-panel');
+  const el = document.getElementById('shard-unlinked-panel');
   if (!el) return;
   // Find note titles mentioned in content but not wrapped in [[...]]
   const content = note.content || '';
@@ -3270,7 +3270,7 @@ function _renderUnlinkedPane(note) {
 
   el.innerHTML = `<h4 style="font-size:11px;opacity:0.6;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em;">Unlinked mentions (${unique.length})</h4>` +
     (unique.length ? unique.map(m =>
-      `<div class="obsidian-sidebar-link" data-note-id="${_esc(m.note.id)}" style="font-size:12px;padding:3px 0;cursor:pointer;">
+      `<div class="shard-sidebar-link" data-note-id="${_esc(m.note.id)}" style="font-size:12px;padding:3px 0;cursor:pointer;">
         <div style="font-weight:500;">${_esc(m.note.title)}</div>
         <div style="opacity:0.6;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(m.snippet)}</div>
       </div>`
@@ -3281,7 +3281,7 @@ function _renderUnlinkedPane(note) {
 }
 
 function _renderOutlinePane(note) {
-  const el = document.getElementById('obsidian-outline-panel');
+  const el = document.getElementById('shard-outline-panel');
   if (!el) return;
   const content = note.content || '';
   const headings = [];
@@ -3292,14 +3292,14 @@ function _renderOutlinePane(note) {
   }
   el.innerHTML = `<h4 style="font-size:11px;opacity:0.6;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em;">Outline</h4>` +
     (headings.length ? headings.map((h, i) =>
-      `<div class="obsidian-outline-item" data-idx="${i}" style="font-size:12px;padding:3px 0 3px ${(h.level - 1) * 12}px;cursor:pointer;border-radius:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+      `<div class="shard-outline-item" data-idx="${i}" style="font-size:12px;padding:3px 0 3px ${(h.level - 1) * 12}px;cursor:pointer;border-radius:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
         ${_esc(h.text)}
       </div>`
     ).join('') : '<div style="opacity:0.5;font-size:11px;">No headings</div>');
-  el.querySelectorAll('.obsidian-outline-item').forEach(item => {
+  el.querySelectorAll('.shard-outline-item').forEach(item => {
     item.addEventListener('click', () => {
       // Scroll to heading in preview
-      const preview = document.getElementById('obsidian-preview');
+      const preview = document.getElementById('shard-preview');
       if (!preview) return;
       const hTags = ['H1','H2','H3','H4','H5','H6'];
       const headingEls = preview.querySelectorAll(hTags.join(','));
@@ -3310,7 +3310,7 @@ function _renderOutlinePane(note) {
 }
 
 function _renderOrphansPane(note) {
-  const el = document.getElementById('obsidian-orphans-panel');
+  const el = document.getElementById('shard-orphans-panel');
   if (!el) return;
   // File-specific orphans: wikilinks in this note that point to non-existent notes
   const orphanedLinks = new Set();
@@ -3338,12 +3338,12 @@ function _renderOrphansPane(note) {
   const orphans = Array.from(orphanedLinks).map(s => JSON.parse(s));
   el.innerHTML = `<h4 style="font-size:11px;opacity:0.6;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em;">Orphans (${orphans.length})</h4>` +
     (orphans.length ? orphans.map(o =>
-      `<div class="obsidian-sidebar-link" data-orphan-target="${_esc(o.target)}" style="font-size:12px;padding:3px 0;cursor:pointer;">${_esc(o.display)}</div>`
+      `<div class="shard-sidebar-link" data-orphan-target="${_esc(o.target)}" style="font-size:12px;padding:3px 0;cursor:pointer;">${_esc(o.display)}</div>`
     ).join('') : '<div style="opacity:0.5;font-size:11px;">No orphan links in this file</div>');
   el.querySelectorAll('[data-orphan-target]').forEach(item => {
     item.addEventListener('click', () => {
       // Search for this link in the note body and scroll to it
-      const preview = document.getElementById('obsidian-preview');
+      const preview = document.getElementById('shard-preview');
       if (preview) {
         const target = item.dataset.orphanTarget;
         const linkEl = preview.querySelector(`a.wikilink[data-note="${CSS.escape(target)}"]`) ||
@@ -3355,8 +3355,8 @@ function _renderOrphansPane(note) {
 }
 
 function _injectAsContext(note) {
-  window.dispatchEvent(new CustomEvent('odysseus-obsidian-context', {
-    detail: { label: `Obsidian: ${note.title}`, content: note.content }
+  window.dispatchEvent(new CustomEvent('odysseus-shard-context', {
+    detail: { label: `Shard: ${note.title}`, content: note.content }
   }));
   if (navigator.clipboard?.writeText) {
     navigator.clipboard.writeText(`[[${note.title}]]\n\n${note.content.slice(0, 2000)}`);
@@ -3366,22 +3366,22 @@ function _injectAsContext(note) {
 // ── Graph / Timeline ───────────────────────────────────────
 
 function _renderGraph() {
-  const container = document.getElementById('obsidian-graph-canvas');
+  const container = document.getElementById('shard-graph-canvas');
   if (!container || !window.vis) return;
-  import('./obsidianGraphCanvas.js').then(mod => {
-    mod.renderObsidianGraph(container, _selectedVaultId);
+  import('./shardGraphCanvas.js').then(mod => {
+    mod.renderShardGraph(container, _selectedVaultId);
   }).catch(err => {
-    container.innerHTML = `<div class="obsidian-error">Graph error: ${err.message}</div>`;
+    container.innerHTML = `<div class="shard-error">Graph error: ${err.message}</div>`;
   });
 }
 
 function _renderTimeline() {
-  const wrap = document.getElementById('obsidian-timeline-wrap');
+  const wrap = document.getElementById('shard-timeline-wrap');
   if (!wrap) return;
-  import('./obsidianTimeline.js').then(mod => {
-    mod.renderObsidianTimeline(wrap, _selectedVaultId);
+  import('./shardTimeline.js').then(mod => {
+    mod.renderShardTimeline(wrap, _selectedVaultId);
   }).catch(err => {
-    wrap.innerHTML = `<div class="obsidian-error">Timeline error: ${err.message}</div>`;
+    wrap.innerHTML = `<div class="shard-error">Timeline error: ${err.message}</div>`;
   });
 }
 
@@ -3390,50 +3390,50 @@ function _renderTimeline() {
 async function _loadPermissions() {
   if (!_selectedVaultId) return;
   try {
-    const r = await fetch(`${API_BASE}/api/obsidian/vaults/${_selectedVaultId}/permissions`, { credentials: 'same-origin' });
+    const r = await fetch(`${API_BASE}/api/shard/vaults/${_selectedVaultId}/permissions`, { credentials: 'same-origin' });
     if (!r.ok) return;
     const data = await r.json();
     _permissions = data.permissions || [];
     _renderPermissions();
   } catch (e) {
-    console.error('[obsidian] load permissions failed', e);
+    console.error('[shard] load permissions failed', e);
   }
 }
 
 function _renderPermissions() {
-  const table = document.getElementById('obsidian-permissions-table');
+  const table = document.getElementById('shard-permissions-table');
   if (!table) return;
   if (!_permissions.length) {
     table.innerHTML = '<div style="padding:12px;text-align:center;opacity:0.5;font-size:12px;">No permission rules yet</div>';
     return;
   }
   table.innerHTML = `
-    <div class="obsidian-perm-header">
+    <div class="shard-perm-header">
       <span>Type</span><span>Pattern</span><span>Perm</span><span>Prio</span><span></span>
     </div>
     ${_permissions.map(p => `
-      <div class="obsidian-perm-row" data-id="${p.id}">
-        <span class="obsidian-perm-type">${_esc(p.pattern_type)}</span>
-        <span class="obsidian-perm-pattern" title="${_esc(p.path_pattern)}">${_esc(p.path_pattern)}</span>
-        <span class="obsidian-perm-level ${_esc(p.permission)}">${_esc(p.permission)}</span>
-        <span class="obsidian-perm-priority">${p.priority}</span>
-        <button class="obsidian-perm-del" data-id="${p.id}">&times;</button>
+      <div class="shard-perm-row" data-id="${p.id}">
+        <span class="shard-perm-type">${_esc(p.pattern_type)}</span>
+        <span class="shard-perm-pattern" title="${_esc(p.path_pattern)}">${_esc(p.path_pattern)}</span>
+        <span class="shard-perm-level ${_esc(p.permission)}">${_esc(p.permission)}</span>
+        <span class="shard-perm-priority">${p.priority}</span>
+        <button class="shard-perm-del" data-id="${p.id}">&times;</button>
       </div>
     `).join('')}
   `;
-  table.querySelectorAll('.obsidian-perm-del').forEach(btn => {
+  table.querySelectorAll('.shard-perm-del').forEach(btn => {
     btn.addEventListener('click', () => _removePermission(btn.dataset.id));
   });
 }
 
 async function _updateVaultToggles() {
   if (!_selectedVaultId) return;
-  const readCb = document.getElementById('obsidian-vault-read-all');
-  const writeCb = document.getElementById('obsidian-vault-write-all');
+  const readCb = document.getElementById('shard-vault-read-all');
+  const writeCb = document.getElementById('shard-vault-write-all');
   const read_enabled = readCb?.checked ?? true;
   const write_enabled = writeCb?.checked ?? false;
   try {
-    await fetch(`${API_BASE}/api/obsidian/vaults/${_selectedVaultId}`, {
+    await fetch(`${API_BASE}/api/shard/vaults/${_selectedVaultId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
@@ -3448,20 +3448,20 @@ async function _updateVaultToggles() {
     _populateVaultDropdown();
     _selectVault(_selectedVaultId);
   } catch (e) {
-    console.error('[obsidian] update vault toggles failed', e);
+    console.error('[shard] update vault toggles failed', e);
   }
 }
 
 async function _refreshVault() {
   if (!_selectedVaultId) return;
-  const btn = document.getElementById('obsidian-refresh-btn');
+  const btn = document.getElementById('shard-refresh-btn');
   if (btn) btn.style.opacity = '0.5';
   try {
     // Direct filesystem read — no backend sync needed
     await _loadNotes();
     await _loadFolders();
   } catch (e) {
-    console.error('[obsidian] refresh failed', e);
+    console.error('[shard] refresh failed', e);
   } finally {
     if (btn) btn.style.opacity = '';
   }
@@ -3469,16 +3469,16 @@ async function _refreshVault() {
 
 async function _addPermission() {
   if (!_selectedVaultId) return;
-  const typeSel = document.getElementById('obsidian-new-perm-type');
-  const patternInput = document.getElementById('obsidian-new-perm-pattern');
-  const levelSel = document.getElementById('obsidian-new-perm-level');
-  const priorityInput = document.getElementById('obsidian-new-perm-priority');
+  const typeSel = document.getElementById('shard-new-perm-type');
+  const patternInput = document.getElementById('shard-new-perm-pattern');
+  const levelSel = document.getElementById('shard-new-perm-level');
+  const priorityInput = document.getElementById('shard-new-perm-priority');
 
   const pattern = patternInput?.value.trim();
   if (!pattern) return;
 
   try {
-    const r = await fetch(`${API_BASE}/api/obsidian/vaults/${_selectedVaultId}/permissions`, {
+    const r = await fetch(`${API_BASE}/api/shard/vaults/${_selectedVaultId}/permissions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
@@ -3494,20 +3494,20 @@ async function _addPermission() {
       await _loadPermissions();
     }
   } catch (e) {
-    console.error('[obsidian] add permission failed', e);
+    console.error('[shard] add permission failed', e);
   }
 }
 
 async function _removePermission(permId) {
   if (!_selectedVaultId || !permId) return;
   try {
-    await fetch(`${API_BASE}/api/obsidian/vaults/${_selectedVaultId}/permissions/${permId}`, {
+    await fetch(`${API_BASE}/api/shard/vaults/${_selectedVaultId}/permissions/${permId}`, {
       method: 'DELETE',
       credentials: 'same-origin',
     });
     await _loadPermissions();
   } catch (e) {
-    console.error('[obsidian] remove permission failed', e);
+    console.error('[shard] remove permission failed', e);
   }
 }
 
@@ -3518,14 +3518,14 @@ function _wireResizeHandles() {
 
   // Restore saved widths
   try {
-    const saved = JSON.parse(localStorage.getItem('obsidian-pane-widths') || '{}');
-    if (saved.left) document.documentElement.style.setProperty('--obsidian-left-w', saved.left + 'px');
-    if (saved.right) document.documentElement.style.setProperty('--obsidian-right-w', saved.right + 'px');
+    const saved = JSON.parse(localStorage.getItem('shard-pane-widths') || '{}');
+    if (saved.left) document.documentElement.style.setProperty('--shard-left-w', saved.left + 'px');
+    if (saved.right) document.documentElement.style.setProperty('--shard-right-w', saved.right + 'px');
   } catch {}
 
-  const leftHandle = document.getElementById('obsidian-resize-left');
-  const rightHandle = document.getElementById('obsidian-resize-right');
-  const pane3 = document.querySelector('.obsidian-3pane');
+  const leftHandle = document.getElementById('shard-resize-left');
+  const rightHandle = document.getElementById('shard-resize-right');
+  const pane3 = document.querySelector('.shard-3pane');
   if (!pane3) return;
 
   function setup(handle, side) {
@@ -3538,7 +3538,7 @@ function _wireResizeHandles() {
       isDragging = true;
       startX = e.clientX;
       const computed = getComputedStyle(document.documentElement);
-      const prop = side === 'left' ? '--obsidian-left-w' : '--obsidian-right-w';
+      const prop = side === 'left' ? '--shard-left-w' : '--shard-right-w';
       startSize = parseInt(computed.getPropertyValue(prop)) || 200;
       handle.classList.add('dragging');
       e.preventDefault();
@@ -3548,7 +3548,7 @@ function _wireResizeHandles() {
       if (!isDragging) return;
       const delta = side === 'left' ? e.clientX - startX : startX - e.clientX;
       const newSize = Math.max(120, Math.min(400, startSize + delta));
-      const prop = side === 'left' ? '--obsidian-left-w' : '--obsidian-right-w';
+      const prop = side === 'left' ? '--shard-left-w' : '--shard-right-w';
       document.documentElement.style.setProperty(prop, newSize + 'px');
     });
 
@@ -3556,9 +3556,9 @@ function _wireResizeHandles() {
       if (!isDragging) return;
       isDragging = false;
       handle.classList.remove('dragging');
-      const left = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--obsidian-left-w')) || 200;
-      const right = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--obsidian-right-w')) || 200;
-      try { localStorage.setItem('obsidian-pane-widths', JSON.stringify({ left, right })); } catch {}
+      const left = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--shard-left-w')) || 200;
+      const right = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--shard-right-w')) || 200;
+      try { localStorage.setItem('shard-pane-widths', JSON.stringify({ left, right })); } catch {}
     });
   }
 
@@ -3598,21 +3598,21 @@ function _contextMenuKeyHandler(e) {
 
 function _showContextMenu(x, y, items) {
   _hideContextMenu();
-  console.log('[obsidian] _showContextMenu', x, y, items.length);
+  console.log('[shard] _showContextMenu', x, y, items.length);
   const menu = document.createElement('div');
-  menu.className = 'obsidian-context-menu';
+  menu.className = 'shard-context-menu';
   menu.style.left = x + 'px';
   menu.style.top = y + 'px';
 
   items.forEach(item => {
     if (item.separator) {
       const sep = document.createElement('div');
-      sep.className = 'obsidian-context-menu-separator';
+      sep.className = 'shard-context-menu-separator';
       menu.appendChild(sep);
       return;
     }
     const row = document.createElement('div');
-    row.className = 'obsidian-context-menu-item' + (item.disabled ? ' disabled' : '') + (item.danger ? ' danger' : '');
+    row.className = 'shard-context-menu-item' + (item.disabled ? ' disabled' : '') + (item.danger ? ' danger' : '');
     const check = item.checked ? '<span style="margin-right:4px;opacity:0.8;">&#10003;</span>' : '<span style="margin-right:4px;opacity:0;">&#10003;</span>';
     row.innerHTML = `<span>${check}${_esc(item.label)}</span>${item.shortcut ? `<span style="opacity:0.5;font-size:11px;">${_esc(item.shortcut)}</span>` : ''}`;
     if (!item.disabled) {
@@ -3625,18 +3625,18 @@ function _showContextMenu(x, y, items) {
           if (_activeContextSubmenu) _activeContextSubmenu.remove();
           const rect = row.getBoundingClientRect();
           const sub = document.createElement('div');
-          sub.className = 'obsidian-context-menu-submenu';
+          sub.className = 'shard-context-menu-submenu';
           sub.style.left = (rect.right + 2) + 'px';
           sub.style.top = rect.top + 'px';
           item.submenu.forEach(si => {
             if (si.separator) {
               const ssep = document.createElement('div');
-              ssep.className = 'obsidian-context-menu-separator';
+              ssep.className = 'shard-context-menu-separator';
               sub.appendChild(ssep);
               return;
             }
             const srow = document.createElement('div');
-            srow.className = 'obsidian-context-menu-item' + (si.disabled ? ' disabled' : '');
+            srow.className = 'shard-context-menu-item' + (si.disabled ? ' disabled' : '');
             srow.innerHTML = `<span>${_esc(si.label)}</span>`;
             if (!si.disabled) {
               srow.addEventListener('click', () => { _hideContextMenu(); si.action(); });
@@ -3680,7 +3680,7 @@ function _buildFolderSubmenu(noteId, currentFolder) {
       if (note) note.folder = f;
       _renderFolderTree();
       try {
-        const r = await fetch(`${API_BASE}/api/obsidian/notes/${encodeURIComponent(noteId)}/move`, {
+        const r = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(noteId)}/move`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
           body: JSON.stringify({ folder: f }),
         });
@@ -3714,16 +3714,16 @@ function _showNoteMenu(e, note) {
       _renderFolderTree();
     }},
     { label: 'Add file property', action: () => {
-      const btn = document.querySelector('.obsidian-prop-add-main');
+      const btn = document.querySelector('.shard-prop-add-main');
       if (btn) btn.click();
     }},
     { separator: true },
-    { label: 'Copy Obsidian URL', action: () => _copyObsidianUrl(note.id) },
+    { label: 'Copy Shard URL', action: () => _copyShardUrl(note.id) },
     { label: 'Copy path', action: () => navigator.clipboard?.writeText(note.rel_path || note.id) },
     { separator: true },
     { label: 'Reveal file in navigation', action: () => {
-      const tree = document.getElementById('obsidian-folder-tree');
-      const row = tree?.querySelector(`.obsidian-tree-row[data-note-id="${CSS.escape(note.id)}"]`);
+      const tree = document.getElementById('shard-folder-tree');
+      const row = tree?.querySelector(`.shard-tree-row[data-note-id="${CSS.escape(note.id)}"]`);
       if (row) {
         row.scrollIntoView({ behavior: 'smooth', block: 'center' });
         row.style.background = 'color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 20%, transparent)';
@@ -3762,7 +3762,7 @@ function _showFileContextMenu(e, noteId) {
     }},
     { label: 'Merge entire file with...', disabled: true, action: () => {} },
     { separator: true },
-    { label: 'Copy Obsidian URL', action: () => _copyObsidianUrl(noteId) },
+    { label: 'Copy Shard URL', action: () => _copyShardUrl(noteId) },
     { label: 'Copy formatted Advanced URI', disabled: true, action: () => {} },
     { label: 'Copy path', action: () => {
       const n = _notes.find(n => n.id === noteId);
@@ -3822,7 +3822,7 @@ async function _doRenameNote(noteId, newName) {
   let fileName = newName;
   if (!fileName.endsWith('.md')) fileName += '.md';
   try {
-    const r = await fetch(`${API_BASE}/api/obsidian/notes/${encodeURIComponent(noteId)}/rename`, {
+    const r = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(noteId)}/rename`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
       body: JSON.stringify({ folder: fileName }),
     });
@@ -3832,7 +3832,7 @@ async function _doRenameNote(noteId, newName) {
     _renderFolderTree();
     if (_selectedNoteId === noteId) _navigateToNote(fileName, true);
   } catch (e) {
-    console.error('[obsidian] rename failed', e);
+    console.error('[shard] rename failed', e);
   }
 }
 async function _promptRenameNote(noteId) {
@@ -3844,7 +3844,7 @@ async function _promptRenameNote(noteId) {
 }
 async function _duplicateNote(noteId) {
   try {
-    const r = await fetch(`${API_BASE}/api/obsidian/notes/${encodeURIComponent(noteId)}/duplicate`, {
+    const r = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(noteId)}/duplicate`, {
       method: 'POST', credentials: 'same-origin',
     });
     if (!r.ok) throw new Error();
@@ -3854,7 +3854,7 @@ async function _duplicateNote(noteId) {
     _renderFolderTree();
     if (data.note_id) _navigateToNote(data.note_id, true, true);
   } catch (e) {
-    console.error('[obsidian] duplicate failed', e);
+    console.error('[shard] duplicate failed', e);
   }
 }
 async function _deleteNote(noteId) {
@@ -3863,7 +3863,7 @@ async function _deleteNote(noteId) {
   const confirmed = await styledConfirm(`Delete "${_esc(note.title)}"?`, { confirmText: 'Delete', cancelText: 'Cancel', danger: true });
   if (!confirmed) return;
   try {
-    const r = await fetch(`${API_BASE}/api/obsidian/notes/${encodeURIComponent(noteId)}`, {
+    const r = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(noteId)}`, {
       method: 'DELETE', credentials: 'same-origin',
     });
     if (!r.ok) throw new Error();
@@ -3872,19 +3872,19 @@ async function _deleteNote(noteId) {
     _renderFolderTree();
     if (_selectedNoteId === noteId) {
       _selectedNoteId = null;
-      const preview = document.getElementById('obsidian-preview');
+      const preview = document.getElementById('shard-preview');
       if (preview) preview.innerHTML = '<div style="padding:20px;text-align:center;opacity:0.5;">Select a note to view</div>';
       _renderRightSidebar(null);
     }
     _renderNoteTabs();
   } catch (e) {
-    console.error('[obsidian] delete failed', e);
+    console.error('[shard] delete failed', e);
   }
 }
-function _copyObsidianUrl(noteId) {
+function _copyShardUrl(noteId) {
   const note = _notes.find(n => n.id === noteId);
   if (!note) return;
-  const url = `obsidian://open?vault=${encodeURIComponent(_selectedVaultId || '')}&file=${encodeURIComponent(note.title)}`;
+  const url = `shard://open?vault=${encodeURIComponent(_selectedVaultId || '')}&file=${encodeURIComponent(note.title)}`;
   if (navigator.clipboard?.writeText) navigator.clipboard.writeText(url);
 }
 async function _getOrCreateNoteByTitle(title) {
@@ -3892,7 +3892,7 @@ async function _getOrCreateNoteByTitle(title) {
   if (note) return note;
   const fileName = title.endsWith('.md') ? title : `${title}.md`;
   try {
-    const r = await fetch(`${API_BASE}/api/obsidian/notes/${encodeURIComponent(fileName)}/edit`, {
+    const r = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(fileName)}/edit`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
@@ -3906,7 +3906,7 @@ async function _getOrCreateNoteByTitle(title) {
       return note;
     }
   } catch (e) {
-    console.error('[obsidian] create ghost note failed', e);
+    console.error('[shard] create ghost note failed', e);
   }
   return null;
 }
@@ -3914,7 +3914,7 @@ async function _getOrCreateNoteByTitle(title) {
 async function _createNoteInFolder(folder) {
   const fileName = _findUniqueUntitled('Untitled', _notes, '.md');
   try {
-    const r = await fetch(`${API_BASE}/api/obsidian/notes/${encodeURIComponent(fileName)}/edit`, {
+    const r = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(fileName)}/edit`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
       body: JSON.stringify({ content: '' }),
     });
@@ -3926,7 +3926,7 @@ async function _createNoteInFolder(folder) {
       note.folder = folder;
       _renderFolderTree();
       try {
-        await fetch(`${API_BASE}/api/obsidian/notes/${encodeURIComponent(note.id)}/move`, {
+        await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(note.id)}/move`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
           body: JSON.stringify({ folder }),
         });
@@ -3939,7 +3939,7 @@ async function _createNoteInFolder(folder) {
       _renderFolderTree();
     }
   } catch (e) {
-    console.error('[obsidian] create note failed', e);
+    console.error('[shard] create note failed', e);
   }
 }
 async function _promptNewFolder(parent) {
@@ -3948,7 +3948,7 @@ async function _promptNewFolder(parent) {
   const base = _findUniqueUntitled('Untitled Folder', Array.from(allFolders).map(f => ({ id: f, rel_path: f })));
   const path = parent ? `${parent}/${base}` : base;
   try {
-    const r = await fetch(`${API_BASE}/api/obsidian/folders`, {
+    const r = await fetch(`${API_BASE}/api/shard/folders`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
       body: JSON.stringify({ path }),
     });
@@ -3959,14 +3959,14 @@ async function _promptNewFolder(parent) {
     // Trigger inline rename
     setTimeout(() => _startInlineFolderRename(path), 50);
   } catch (e) {
-    console.error('[obsidian] create folder failed', e);
+    console.error('[shard] create folder failed', e);
   }
 }
 function _startInlineFolderRename(folderPath) {
   // Find the folder row in the tree and make its label editable
-  const tree = document.getElementById('obsidian-folder-tree');
+  const tree = document.getElementById('shard-folder-tree');
   if (!tree) return;
-  const row = tree.querySelector(`.obsidian-tree-row[data-folder="${CSS.escape(folderPath)}"] .obsidian-tree-label`);
+  const row = tree.querySelector(`.shard-tree-row[data-folder="${CSS.escape(folderPath)}"] .shard-tree-label`);
   if (!row) return;
   const original = row.textContent;
   row.contentEditable = 'true';
@@ -3990,7 +3990,7 @@ function _startInlineFolderRename(folderPath) {
     parts[parts.length - 1] = newName;
     const newPath = parts.join('/');
     try {
-      const r = await fetch(`${API_BASE}/api/obsidian/folders/rename`, {
+      const r = await fetch(`${API_BASE}/api/shard/folders/rename`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
         body: JSON.stringify({ old_path: folderPath, new_path: newPath }),
       });
@@ -3999,7 +3999,7 @@ function _startInlineFolderRename(folderPath) {
       await _loadNotes();
       _renderFolderTree();
     } catch (e) {
-      console.error('[obsidian] rename folder failed', e);
+      console.error('[shard] rename folder failed', e);
       row.textContent = original;
     }
   };
@@ -4019,7 +4019,7 @@ function _expandAllFolders() {
   _renderFolderTree();
 }
 function _collectAllFolders() {
-  const tree = document.getElementById('obsidian-folder-tree');
+  const tree = document.getElementById('shard-folder-tree');
   if (!tree) return;
   tree.querySelectorAll('[data-folder]').forEach(row => {
     const folder = row.dataset.folder;
@@ -4030,7 +4030,7 @@ async function _promptRenameFolder(folder) {
   const newName = await styledPrompt('Rename folder:', { defaultValue: folder, confirmText: 'Rename' });
   if (!newName || newName === folder) return;
   try {
-    const r = await fetch(`${API_BASE}/api/obsidian/folders/${encodeURIComponent(folder)}/rename`, {
+    const r = await fetch(`${API_BASE}/api/shard/folders/${encodeURIComponent(folder)}/rename`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
       body: JSON.stringify({ name: newName }),
     });
@@ -4039,7 +4039,7 @@ async function _promptRenameFolder(folder) {
     await _loadFolders();
     _renderFolderTree();
   } catch (e) {
-    console.error('[obsidian] rename folder failed', e);
+    console.error('[shard] rename folder failed', e);
   }
 }
 
@@ -4050,11 +4050,11 @@ function _showVaultSettings() {
 function _openVaultDialog(vaultId) {
   const vault = _vaults.find(v => v.id === vaultId);
   if (!vault) return;
-  const dialog = document.getElementById('obsidian-vault-dialog');
-  const nameInput = document.getElementById('obsidian-vault-dialog-name');
-  const pathInput = document.getElementById('obsidian-vault-dialog-path');
-  const countEl = document.getElementById('obsidian-vault-dialog-count');
-  const titleEl = document.getElementById('obsidian-vault-dialog-title');
+  const dialog = document.getElementById('shard-vault-dialog');
+  const nameInput = document.getElementById('shard-vault-dialog-name');
+  const pathInput = document.getElementById('shard-vault-dialog-path');
+  const countEl = document.getElementById('shard-vault-dialog-count');
+  const titleEl = document.getElementById('shard-vault-dialog-title');
   if (!dialog) return;
 
   titleEl.textContent = _esc(vault.name);
@@ -4076,9 +4076,9 @@ function _openVaultDialog(vaultId) {
     }
   };
 
-  const closeBtn = document.getElementById('obsidian-vault-dialog-close');
-  const cancelBtn = document.getElementById('obsidian-vault-dialog-cancel');
-  const removeBtn = document.getElementById('obsidian-vault-dialog-remove');
+  const closeBtn = document.getElementById('shard-vault-dialog-close');
+  const cancelBtn = document.getElementById('shard-vault-dialog-cancel');
+  const removeBtn = document.getElementById('shard-vault-dialog-remove');
 
   // Remove old listeners by cloning
   if (closeBtn) {
@@ -4102,27 +4102,27 @@ function _openVaultDialog(vaultId) {
 
 function _init() {
   // Left sidebar tabs
-  document.getElementById('obsidian-left-tabs')?.addEventListener('click', (e) => {
-    const tab = e.target.closest('.obsidian-sidebar-tab');
+  document.getElementById('shard-left-tabs')?.addEventListener('click', (e) => {
+    const tab = e.target.closest('.shard-sidebar-tab');
     if (!tab) return;
     _switchLeftTab(tab.dataset.tab);
   });
 
   // Right sidebar tabs
-  document.getElementById('obsidian-right-tabs')?.addEventListener('click', (e) => {
-    const tab = e.target.closest('.obsidian-right-tab');
+  document.getElementById('shard-right-tabs')?.addEventListener('click', (e) => {
+    const tab = e.target.closest('.shard-right-tab');
     if (!tab) return;
     _switchRightTab(tab.dataset.tab);
   });
 
   // Search input + clear + case + sort + settings
-  const searchInput = document.getElementById('obsidian-search-input');
-  const clearBtn = document.getElementById('obsidian-search-clear');
-  const caseBtn = document.getElementById('obsidian-search-case');
-  const sortBtn = document.getElementById('obsidian-search-sort-btn');
-  const sortDropdown = document.getElementById('obsidian-search-sort-dropdown');
-  const settingsBtn = document.getElementById('obsidian-search-settings-btn');
-  const settingsPanel = document.getElementById('obsidian-search-settings');
+  const searchInput = document.getElementById('shard-search-input');
+  const clearBtn = document.getElementById('shard-search-clear');
+  const caseBtn = document.getElementById('shard-search-case');
+  const sortBtn = document.getElementById('shard-search-sort-btn');
+  const sortDropdown = document.getElementById('shard-search-sort-dropdown');
+  const settingsBtn = document.getElementById('shard-search-settings-btn');
+  const settingsPanel = document.getElementById('shard-search-settings');
 
   if (searchInput) {
     let debounceTimer;
@@ -4172,10 +4172,10 @@ function _init() {
       sortDropdown.classList.toggle('hidden');
       settingsPanel?.classList.add('hidden');
     });
-    sortDropdown.querySelectorAll('.obsidian-search-sort-item').forEach(item => {
+    sortDropdown.querySelectorAll('.shard-search-sort-item').forEach(item => {
       item.addEventListener('click', () => {
         _searchState.sortBy = item.dataset.sort;
-        sortDropdown.querySelectorAll('.obsidian-search-sort-item').forEach(i => i.classList.remove('active'));
+        sortDropdown.querySelectorAll('.shard-search-sort-item').forEach(i => i.classList.remove('active'));
         item.classList.add('active');
         sortDropdown.classList.add('hidden');
         if (searchInput) _renderSearchPane(searchInput.value);
@@ -4191,9 +4191,9 @@ function _init() {
       sortDropdown?.classList.add('hidden');
     });
     // Wire toggles inside settings
-    const collapseCb = document.getElementById('obsidian-search-collapse');
-    const contextCb = document.getElementById('obsidian-search-context');
-    const explainCb = document.getElementById('obsidian-search-explain');
+    const collapseCb = document.getElementById('shard-search-collapse');
+    const contextCb = document.getElementById('shard-search-context');
+    const explainCb = document.getElementById('shard-search-explain');
     if (collapseCb) {
       collapseCb.checked = _searchState.collapse;
       collapseCb.addEventListener('change', () => {
@@ -4224,7 +4224,7 @@ function _init() {
   });
 
   // ── Plugin System (Phase 4.1 / 4.2) ────────────────────────
-  _obsidianApp = createAppApi({
+  _shardApp = createAppApi({
     get vaultNotes() { return _notes; },
     get vaultFolders() { return _folders; },
     getActiveFileId: () => _selectedNoteId,
@@ -4233,7 +4233,7 @@ function _init() {
       if (target) _navigateToNote(target.id, true, false);
     },
   });
-  _pluginManager = new PluginManager(_obsidianApp);
+  _pluginManager = new PluginManager(_shardApp);
 
   // Register all core plugins (existing features become toggleable)
   const _manifest = (id) => CORE_PLUGINS.find(m => m.id === id);
@@ -4254,7 +4254,7 @@ function _init() {
 
   // Default: enable everything on first run, then respect persisted settings
   try {
-    let settings = JSON.parse(localStorage.getItem('obsidian-settings') || '{}');
+    let settings = JSON.parse(localStorage.getItem('shard-settings') || '{}');
     if (!settings.enabledPlugins) {
       settings.enabledPlugins = CORE_PLUGINS.map(m => m.id);
     }
@@ -4269,7 +4269,7 @@ function _init() {
 function _syncPluginTabs() {
   if (!_pluginManager) return;
   // Right sidebar tabs
-  document.querySelectorAll('#obsidian-right-tabs .obsidian-right-tab').forEach(btn => {
+  document.querySelectorAll('#shard-right-tabs .shard-right-tab').forEach(btn => {
     const tab = btn.dataset.tab;
     const map = {
       backlinks: 'backlinks',
@@ -4282,7 +4282,7 @@ function _syncPluginTabs() {
     if (pid) btn.classList.toggle('hidden', !_pluginManager.isEnabled(pid));
   });
   // Left sidebar plugin tabs
-  document.querySelectorAll('#obsidian-left-tabs .obsidian-sidebar-tab').forEach(btn => {
+  document.querySelectorAll('#shard-left-tabs .shard-sidebar-tab').forEach(btn => {
     const tab = btn.dataset.tab;
     const map = {
       bookmarks: 'bookmarks',
@@ -4315,23 +4315,23 @@ function _hideCommandPalette() {
 
 function _showQuickSwitcher() {
   _hideQuickSwitcher();
-  const modal = document.getElementById('obsidian-modal');
+  const modal = document.getElementById('shard-modal');
   if (!modal) return;
   const overlay = document.createElement('div');
-  overlay.className = 'obsidian-quick-switcher';
+  overlay.className = 'shard-quick-switcher';
   overlay.innerHTML = `
-    <div class="obsidian-qs-backdrop" style="position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:10000;display:flex;align-items:flex-start;justify-content:center;padding-top:15vh;">
-      <div class="obsidian-qs-box" style="width:520px;max-width:90vw;background:var(--bg-raised,var(--bg,#1a1a1a));border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.5);display:flex;flex-direction:column;overflow:hidden;">
-        <input type="text" class="obsidian-qs-input" placeholder="Quick switcher..." style="width:100%;background:transparent;color:var(--fg);border:none;border-bottom:1px solid var(--border);padding:12px 14px;font-size:15px;outline:none;box-sizing:border-box;" autocomplete="off" spellcheck="false">
-        <div class="obsidian-qs-results" style="max-height:320px;overflow-y:auto;padding:4px 0;"></div>
-        <div class="obsidian-qs-hint" style="padding:6px 14px;font-size:11px;opacity:0.5;border-top:1px solid var(--border);">↑↓ to navigate · Enter to open · Shift+Enter in new tab · Esc to close</div>
+    <div class="shard-qs-backdrop" style="position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:10000;display:flex;align-items:flex-start;justify-content:center;padding-top:15vh;">
+      <div class="shard-qs-box" style="width:520px;max-width:90vw;background:var(--bg-raised,var(--bg,#1a1a1a));border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.5);display:flex;flex-direction:column;overflow:hidden;">
+        <input type="text" class="shard-qs-input" placeholder="Quick switcher..." style="width:100%;background:transparent;color:var(--fg);border:none;border-bottom:1px solid var(--border);padding:12px 14px;font-size:15px;outline:none;box-sizing:border-box;" autocomplete="off" spellcheck="false">
+        <div class="shard-qs-results" style="max-height:320px;overflow-y:auto;padding:4px 0;"></div>
+        <div class="shard-qs-hint" style="padding:6px 14px;font-size:11px;opacity:0.5;border-top:1px solid var(--border);">↑↓ to navigate · Enter to open · Shift+Enter in new tab · Esc to close</div>
       </div>
     </div>
   `;
   modal.appendChild(overlay);
   _quickSwitcherEl = overlay;
-  const input = overlay.querySelector('.obsidian-qs-input');
-  const results = overlay.querySelector('.obsidian-qs-results');
+  const input = overlay.querySelector('.shard-qs-input');
+  const results = overlay.querySelector('.shard-qs-results');
 
   const renderResults = (query) => {
     const q = query.trim().toLowerCase();
@@ -4358,7 +4358,7 @@ function _showQuickSwitcher() {
       return;
     }
     results.innerHTML = items.slice(0, 20).map((n, i) => `
-      <div class="obsidian-qs-item" data-note-id="${_esc(n.id)}" data-index="${i}" style="padding:7px 14px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;border-radius:4px;margin:0 4px;">
+      <div class="shard-qs-item" data-note-id="${_esc(n.id)}" data-index="${i}" style="padding:7px 14px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;border-radius:4px;margin:0 4px;">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
         <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(n.title || n.id)}</span>
         <span style="opacity:0.4;font-size:11px;">${_esc(n.folder || '')}</span>
@@ -4369,16 +4369,16 @@ function _showQuickSwitcher() {
   };
 
   const _updateQsSelection = (container) => {
-    container.querySelectorAll('.obsidian-qs-item').forEach((el, i) => {
+    container.querySelectorAll('.shard-qs-item').forEach((el, i) => {
       el.style.background = i === _quickSwitcherIndex ? 'color-mix(in srgb, var(--accent, var(--red)) 15%, transparent)' : 'transparent';
     });
-    const selected = container.querySelector(`.obsidian-qs-item[data-index="${_quickSwitcherIndex}"]`);
+    const selected = container.querySelector(`.shard-qs-item[data-index="${_quickSwitcherIndex}"]`);
     if (selected) selected.scrollIntoView({ block: 'nearest' });
   };
 
   input.addEventListener('input', () => renderResults(input.value));
   input.addEventListener('keydown', (e) => {
-    const items = results.querySelectorAll('.obsidian-qs-item');
+    const items = results.querySelectorAll('.shard-qs-item');
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       _quickSwitcherIndex = Math.min(_quickSwitcherIndex + 1, items.length - 1);
@@ -4393,7 +4393,7 @@ function _showQuickSwitcher() {
     }
     if (e.key === 'Enter') {
       e.preventDefault();
-      const selected = results.querySelector(`.obsidian-qs-item[data-index="${_quickSwitcherIndex}"]`);
+      const selected = results.querySelector(`.shard-qs-item[data-index="${_quickSwitcherIndex}"]`);
       if (selected) {
         const newTab = e.shiftKey;
         _navigateToNote(selected.dataset.noteId, true, newTab);
@@ -4410,7 +4410,7 @@ function _showQuickSwitcher() {
   });
 
   results.addEventListener('click', (e) => {
-    const item = e.target.closest('.obsidian-qs-item');
+    const item = e.target.closest('.shard-qs-item');
     if (item) {
       _navigateToNote(item.dataset.noteId, true, e.shiftKey);
       _hideQuickSwitcher();
@@ -4418,7 +4418,7 @@ function _showQuickSwitcher() {
   });
 
   // Click backdrop to close
-  overlay.querySelector('.obsidian-qs-backdrop').addEventListener('click', (e) => {
+  overlay.querySelector('.shard-qs-backdrop').addEventListener('click', (e) => {
     if (e.target === e.currentTarget) _hideQuickSwitcher();
   });
 
@@ -4437,13 +4437,13 @@ function _showQuickSwitcher() {
   document.addEventListener('keydown', _qsEscHandler, true);
 }
 
-function _obsidianKeyHandler(e) {
-  // Only handle when obsidian panel is open and no input is focused (unless it's inside obsidian)
-  const modal = document.getElementById('obsidian-modal');
+function _shardKeyHandler(e) {
+  // Only handle when shard panel is open and no input is focused (unless it's inside shard)
+  const modal = document.getElementById('shard-modal');
   if (!modal || modal.classList.contains('hidden')) return;
-  // Don't steal from inputs outside obsidian
+  // Don't steal from inputs outside shard
   const active = document.activeElement;
-  const inObsidian = active && modal.contains(active);
+  const inShard = active && modal.contains(active);
   const isInput = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable);
 
   // Ctrl+O — Quick Switcher
@@ -4490,34 +4490,34 @@ function _obsidianKeyHandler(e) {
 
 function _showCommandPalette() {
   _hideCommandPalette();
-  const modal = document.getElementById('obsidian-modal');
+  const modal = document.getElementById('shard-modal');
   if (!modal) return;
   const overlay = document.createElement('div');
-  overlay.className = 'obsidian-command-palette';
+  overlay.className = 'shard-command-palette';
   overlay.innerHTML = `
-    <div class="obsidian-cp-backdrop" style="position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:10000;display:flex;align-items:flex-start;justify-content:center;padding-top:15vh;">
-      <div class="obsidian-cp-box" style="width:520px;max-width:90vw;background:var(--bg-raised,var(--bg,#1a1a1a));border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.5);display:flex;flex-direction:column;overflow:hidden;">
-        <input type="text" class="obsidian-cp-input" placeholder="Type a command..." style="width:100%;background:transparent;color:var(--fg);border:none;border-bottom:1px solid var(--border);padding:12px 14px;font-size:15px;outline:none;box-sizing:border-box;" autocomplete="off" spellcheck="false">
-        <div class="obsidian-cp-results" style="max-height:320px;overflow-y:auto;padding:4px 0;"></div>
-        <div class="obsidian-cp-hint" style="padding:6px 14px;font-size:11px;opacity:0.5;border-top:1px solid var(--border);">↑↓ to navigate · Enter to run · Esc to close</div>
+    <div class="shard-cp-backdrop" style="position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:10000;display:flex;align-items:flex-start;justify-content:center;padding-top:15vh;">
+      <div class="shard-cp-box" style="width:520px;max-width:90vw;background:var(--bg-raised,var(--bg,#1a1a1a));border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.5);display:flex;flex-direction:column;overflow:hidden;">
+        <input type="text" class="shard-cp-input" placeholder="Type a command..." style="width:100%;background:transparent;color:var(--fg);border:none;border-bottom:1px solid var(--border);padding:12px 14px;font-size:15px;outline:none;box-sizing:border-box;" autocomplete="off" spellcheck="false">
+        <div class="shard-cp-results" style="max-height:320px;overflow-y:auto;padding:4px 0;"></div>
+        <div class="shard-cp-hint" style="padding:6px 14px;font-size:11px;opacity:0.5;border-top:1px solid var(--border);">↑↓ to navigate · Enter to run · Esc to close</div>
       </div>
     </div>
   `;
   modal.appendChild(overlay);
   _commandPaletteEl = overlay;
-  const input = overlay.querySelector('.obsidian-cp-input');
-  const results = overlay.querySelector('.obsidian-cp-results');
+  const input = overlay.querySelector('.shard-cp-input');
+  const results = overlay.querySelector('.shard-cp-results');
 
   const BASE_COMMANDS = [
-    { id: 'new-note', label: 'Obsidian: New note', action: () => _promptNewNote() },
-    { id: 'toggle-reading', label: 'Obsidian: Toggle reading view', action: () => { _previewMode = 'preview'; _updateModeIcon(); if (_selectedNoteId) _selectNote(_selectedNoteId); } },
-    { id: 'toggle-live', label: 'Obsidian: Toggle live preview', action: () => { _editModePref = 'live'; _previewMode = 'live'; _updateModeIcon(); if (_selectedNoteId) _selectNote(_selectedNoteId); } },
-    { id: 'toggle-source', label: 'Obsidian: Toggle source view', action: () => { _editModePref = 'edit'; _previewMode = 'edit'; _updateModeIcon(); if (_selectedNoteId) _selectNote(_selectedNoteId); } },
-    { id: 'quick-switcher', label: 'Obsidian: Open quick switcher', action: () => { _hideCommandPalette(); setTimeout(_showQuickSwitcher, 50); } },
-    { id: 'fold-all', label: 'Obsidian: Fold all headings', action: () => { /* TODO */ } },
-    { id: 'unfold-all', label: 'Obsidian: Unfold all headings', action: () => { /* TODO */ } },
-    { id: 'graph-view', label: 'Obsidian: Toggle graph view', action: () => { /* TODO */ } },
-    { id: 'daily-note', label: 'Obsidian: Open daily note', action: () => { /* TODO */ } },
+    { id: 'new-note', label: 'Shard: New note', action: () => _promptNewNote() },
+    { id: 'toggle-reading', label: 'Shard: Toggle reading view', action: () => { _previewMode = 'preview'; _updateModeIcon(); if (_selectedNoteId) _selectNote(_selectedNoteId); } },
+    { id: 'toggle-live', label: 'Shard: Toggle live preview', action: () => { _editModePref = 'live'; _previewMode = 'live'; _updateModeIcon(); if (_selectedNoteId) _selectNote(_selectedNoteId); } },
+    { id: 'toggle-source', label: 'Shard: Toggle source view', action: () => { _editModePref = 'edit'; _previewMode = 'edit'; _updateModeIcon(); if (_selectedNoteId) _selectNote(_selectedNoteId); } },
+    { id: 'quick-switcher', label: 'Shard: Open quick switcher', action: () => { _hideCommandPalette(); setTimeout(_showQuickSwitcher, 50); } },
+    { id: 'fold-all', label: 'Shard: Fold all headings', action: () => { /* TODO */ } },
+    { id: 'unfold-all', label: 'Shard: Unfold all headings', action: () => { /* TODO */ } },
+    { id: 'graph-view', label: 'Shard: Toggle graph view', action: () => { /* TODO */ } },
+    { id: 'daily-note', label: 'Shard: Open daily note', action: () => { /* TODO */ } },
   ];
   // Add plugin commands
   const pluginCmds = _pluginManager ? _pluginManager.getEnabled().flatMap(p =>
@@ -4535,7 +4535,7 @@ function _showCommandPalette() {
       return;
     }
     results.innerHTML = items.map((c, i) => `
-      <div class="obsidian-cp-item" data-cmd-id="${_esc(c.id)}" data-index="${i}" style="padding:7px 14px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;border-radius:4px;margin:0 4px;">
+      <div class="shard-cp-item" data-cmd-id="${_esc(c.id)}" data-index="${i}" style="padding:7px 14px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;border-radius:4px;margin:0 4px;">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
         <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(c.label)}</span>
       </div>
@@ -4545,16 +4545,16 @@ function _showCommandPalette() {
   };
 
   const _updateCpSelection = (container) => {
-    container.querySelectorAll('.obsidian-cp-item').forEach((el, i) => {
+    container.querySelectorAll('.shard-cp-item').forEach((el, i) => {
       el.style.background = i === _commandPaletteIndex ? 'color-mix(in srgb, var(--accent, var(--red)) 15%, transparent)' : 'transparent';
     });
-    const selected = container.querySelector(`.obsidian-cp-item[data-index="${_commandPaletteIndex}"]`);
+    const selected = container.querySelector(`.shard-cp-item[data-index="${_commandPaletteIndex}"]`);
     if (selected) selected.scrollIntoView({ block: 'nearest' });
   };
 
   input.addEventListener('input', () => renderCommands(input.value));
   input.addEventListener('keydown', (e) => {
-    const items = results.querySelectorAll('.obsidian-cp-item');
+    const items = results.querySelectorAll('.shard-cp-item');
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       _commandPaletteIndex = Math.min(_commandPaletteIndex + 1, items.length - 1);
@@ -4569,7 +4569,7 @@ function _showCommandPalette() {
     }
     if (e.key === 'Enter') {
       e.preventDefault();
-      const selected = results.querySelector(`.obsidian-cp-item[data-index="${_commandPaletteIndex}"]`);
+      const selected = results.querySelector(`.shard-cp-item[data-index="${_commandPaletteIndex}"]`);
       if (selected) {
         const cmd = COMMANDS.find(c => c.id === selected.dataset.cmdId);
         if (cmd) cmd.action();
@@ -4586,7 +4586,7 @@ function _showCommandPalette() {
   });
 
   results.addEventListener('click', (e) => {
-    const item = e.target.closest('.obsidian-cp-item');
+    const item = e.target.closest('.shard-cp-item');
     if (item) {
       const cmd = COMMANDS.find(c => c.id === item.dataset.cmdId);
       if (cmd) cmd.action();
@@ -4594,7 +4594,7 @@ function _showCommandPalette() {
     }
   });
 
-  overlay.querySelector('.obsidian-cp-backdrop').addEventListener('click', (e) => {
+  overlay.querySelector('.shard-cp-backdrop').addEventListener('click', (e) => {
     if (e.target === e.currentTarget) _hideCommandPalette();
   });
 
@@ -4618,6 +4618,6 @@ if (document.readyState === 'loading') {
   _init();
 }
 
-const obsidianModule = { openPanel, closePanel, togglePanel, isOpen, toggleBookmark: _toggleBookmark };
-export default obsidianModule;
-window.obsidianModule = obsidianModule;
+const shardModule = { openPanel, closePanel, togglePanel, isOpen, toggleBookmark: _toggleBookmark };
+export default shardModule;
+window.shardModule = shardModule;

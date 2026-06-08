@@ -37702,9 +37702,9 @@ body.theme-frosted .modal {
   color: var(--fg, #9cdef2);
 }
 
-/* ===== OBSIDIAN MODAL ===== */
-#obsidian-modal { z-index: 260; }
-.obsidian-modal-content {
+/* ===== SHARD MODAL ===== */
+#shard-modal { z-index: 260; }
+.shard-modal-content {
   width: min(720px, 90vw);
   max-height: 78vh;
   font-size: 12px;
@@ -37712,7 +37712,7 @@ body.theme-frosted .modal {
   flex-direction: column;
   overflow: hidden;
 }
-.obsidian-modal-body {
+.shard-modal-body {
   padding: 0;
   flex: 1 1 auto;
   min-height: 0;
@@ -37720,14 +37720,14 @@ body.theme-frosted .modal {
   display: flex;
   flex-direction: column;
 }
-.obsidian-3pane {
+.shard-3pane {
   display: grid;
-  grid-template-columns: var(--obsidian-left-w, 200px) 1fr var(--obsidian-right-w, 200px);
+  grid-template-columns: var(--shard-left-w, 200px) 1fr var(--shard-right-w, 200px);
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
 }
-.obsidian-left-pane {
+.shard-left-pane {
   border-right: 1px solid var(--border);
   padding: 10px 8px;
   overflow-y: auto;
@@ -37735,20 +37735,20 @@ body.theme-frosted .modal {
   flex-direction: column;
   min-height: 0;
 }
-.obsidian-left-header {
+.shard-left-header {
   display: flex;
   gap: 6px;
   align-items: center;
   margin-bottom: 8px;
 }
-.obsidian-center-pane {
+.shard-center-pane {
   padding: 10px 12px;
   overflow: hidden;
   display: flex;
   flex-direction: column;
   min-height: 0;
 }
-.obsidian-right-pane {
+.shard-right-pane {
   border-left: 1px solid var(--border);
   padding: 10px 8px;
   overflow-y: auto;
@@ -37756,24 +37756,24 @@ body.theme-frosted .modal {
   flex-direction: column;
   min-height: 0;
 }
-.obsidian-folder-tree {
+.shard-folder-tree {
   flex: 1 1 auto;
   overflow-y: auto;
   min-height: 0;
   user-select: none;
 }
-.obsidian-folder-tree ul {
+.shard-folder-tree ul {
   list-style: none;
   margin: 0;
   padding: 0;
 }
-.obsidian-folder-tree li {
+.shard-folder-tree li {
   position: relative;
   margin: 0;
   padding: 0;
 }
 /* vertical tree guide line */
-.obsidian-folder-tree li::before {
+.shard-folder-tree li::before {
   content: '';
   position: absolute;
   left: 12px;
@@ -37783,7 +37783,7 @@ body.theme-frosted .modal {
   background: color-mix(in srgb, var(--border) 60%, transparent);
 }
 /* horizontal connector */
-.obsidian-folder-tree li > .obsidian-tree-row::before {
+.shard-folder-tree li > .shard-tree-row::before {
   content: '';
   position: absolute;
   left: -9px;
@@ -37792,7 +37792,7 @@ body.theme-frosted .modal {
   height: 1px;
   background: color-mix(in srgb, var(--border) 60%, transparent);
 }
-.obsidian-tree-row {
+.shard-tree-row {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -37804,14 +37804,14 @@ body.theme-frosted .modal {
   position: relative;
   margin-left: 22px;
 }
-.obsidian-tree-row:hover {
+.shard-tree-row:hover {
   background: color-mix(in srgb, var(--fg) 4%, transparent);
 }
-.obsidian-tree-row.selected {
+.shard-tree-row.selected {
   background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 10%, transparent);
 }
 /* CSS arrow chevron */
-.obsidian-tree-arrow {
+.shard-tree-arrow {
   width: 0;
   height: 0;
   border-top: 4px solid transparent;
@@ -37822,44 +37822,44 @@ body.theme-frosted .modal {
   flex-shrink: 0;
   cursor: pointer;
 }
-.obsidian-tree-arrow.expanded {
+.shard-tree-arrow.expanded {
   transform: rotate(90deg);
 }
-.obsidian-tree-arrow.leaf {
+.shard-tree-arrow.leaf {
   border: none;
   width: 5px;
 }
-.obsidian-tree-icon {
+.shard-tree-icon {
   font-size: 11px;
   opacity: 0.7;
   flex-shrink: 0;
 }
-.obsidian-tree-name {
+.shard-tree-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 /* Resize handles */
-.obsidian-resize-handle-h {
+.shard-resize-handle-h {
   width: 4px;
   cursor: col-resize;
   background: transparent;
   transition: background 0.2s;
   flex-shrink: 0;
 }
-.obsidian-resize-handle-h:hover,
-.obsidian-resize-handle-h.dragging {
+.shard-resize-handle-h:hover,
+.shard-resize-handle-h.dragging {
   background: var(--accent, var(--red, #4a9eff));
 }
-.obsidian-tabs {
+.shard-tabs {
   display: flex;
   gap: 4px;
   margin-bottom: 8px;
   border-bottom: 1px solid var(--border);
   padding-bottom: 6px;
 }
-.obsidian-tab {
+.shard-tab {
   background: transparent;
   border: none;
   color: var(--fg);
@@ -37869,14 +37869,14 @@ body.theme-frosted .modal {
   font-size: 12px;
   opacity: 0.6;
 }
-.obsidian-tab.active {
+.shard-tab.active {
   background: color-mix(in srgb, var(--fg) 8%, transparent);
   opacity: 1;
 }
-.obsidian-search-row {
+.shard-search-row {
   margin-bottom: 8px;
 }
-.obsidian-search-row input {
+.shard-search-row input {
   width: 100%;
   padding: 6px 10px;
   border-radius: 6px;
@@ -37885,17 +37885,17 @@ body.theme-frosted .modal {
   color: var(--fg);
   font-size: 12px;
 }
-.obsidian-panel-wrap {
+.shard-panel-wrap {
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
   display: flex;
   gap: 8px;
 }
-.obsidian-panel-wrap.hidden {
+.shard-panel-wrap.hidden {
   display: none;
 }
-.obsidian-note-list {
+.shard-note-list {
   width: 240px;
   min-width: 180px;
   border: 1px solid var(--border);
@@ -37903,7 +37903,7 @@ body.theme-frosted .modal {
   overflow-y: auto;
   padding: 6px;
 }
-.obsidian-note-item {
+.shard-note-item {
   padding: 6px 8px;
   border-radius: 6px;
   cursor: pointer;
@@ -37912,13 +37912,13 @@ body.theme-frosted .modal {
   align-items: center;
   gap: 6px;
 }
-.obsidian-note-item:hover {
+.shard-note-item:hover {
   background: color-mix(in srgb, var(--fg) 5%, transparent);
 }
-.obsidian-note-item.active {
+.shard-note-item.active {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
-.obsidian-preview {
+.shard-preview {
   flex: 1 1 auto;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -37927,7 +37927,7 @@ body.theme-frosted .modal {
   font-size: 12px;
   line-height: 1.5;
 }
-.obsidian-status-bar {
+.shard-status-bar {
   margin-top: 8px;
   padding-top: 6px;
   border-top: 1px solid var(--border);
@@ -37938,11 +37938,11 @@ body.theme-frosted .modal {
 }
 
 /* Custom vault dropdown */
-.obsidian-vault-dropdown-wrap {
+.shard-vault-dropdown-wrap {
   position: relative;
   width: 100%;
 }
-.obsidian-vault-dropdown-trigger {
+.shard-vault-dropdown-trigger {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -37956,25 +37956,25 @@ body.theme-frosted .modal {
   transition: border-color 0.15s, background 0.15s;
   user-select: none;
 }
-.obsidian-vault-dropdown-trigger:hover {
+.shard-vault-dropdown-trigger:hover {
   border-color: var(--accent, var(--red, #4a9eff));
 }
-.obsidian-vault-dropdown-label {
+.shard-vault-dropdown-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 500;
 }
-.obsidian-vault-dropdown-arrow {
+.shard-vault-dropdown-arrow {
   font-size: 10px;
   opacity: 0.6;
   flex-shrink: 0;
   transition: transform 0.15s;
 }
-.obsidian-vault-dropdown-wrap.open .obsidian-vault-dropdown-arrow {
+.shard-vault-dropdown-wrap.open .shard-vault-dropdown-arrow {
   transform: rotate(180deg);
 }
-.obsidian-vault-dropdown-menu {
+.shard-vault-dropdown-menu {
   position: absolute;
   top: calc(100% + 4px);
   left: 0;
@@ -37988,7 +37988,7 @@ body.theme-frosted .modal {
   max-height: 260px;
   overflow-y: auto;
 }
-.obsidian-vault-dropdown-item {
+.shard-vault-dropdown-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -37999,18 +37999,18 @@ body.theme-frosted .modal {
   font-size: 13px;
   transition: background 0.15s;
 }
-.obsidian-vault-dropdown-item:hover {
+.shard-vault-dropdown-item:hover {
   background: color-mix(in srgb, var(--fg) 6%, transparent);
 }
-.obsidian-vault-dropdown-item.selected {
+.shard-vault-dropdown-item.selected {
   background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 12%, transparent);
 }
-.obsidian-vault-dropdown-item .vault-name {
+.shard-vault-dropdown-item .vault-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.obsidian-vault-dropdown-item .vault-remove {
+.shard-vault-dropdown-item .vault-remove {
   background: none;
   border: none;
   color: var(--fg);
@@ -38022,27 +38022,27 @@ body.theme-frosted .modal {
   border-radius: 3px;
   transition: opacity 0.15s, color 0.15s, background 0.15s;
 }
-.obsidian-vault-dropdown-item:hover .vault-remove {
+.shard-vault-dropdown-item:hover .vault-remove {
   opacity: 0.5;
 }
-.obsidian-vault-dropdown-item .vault-remove:hover {
+.shard-vault-dropdown-item .vault-remove:hover {
   opacity: 1;
   color: var(--red, #ff6b6b);
   background: color-mix(in srgb, var(--red, #ff6b6b) 12%, transparent);
 }
-.obsidian-vault-dropdown-add {
+.shard-vault-dropdown-add {
   border-top: 1px solid var(--border);
   margin-top: 2px;
   padding-top: 7px;
   color: var(--accent, var(--red, #4a9eff));
   font-weight: 500;
 }
-.obsidian-vault-dropdown-add:hover {
+.shard-vault-dropdown-add:hover {
   background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 8%, transparent);
 }
 
 /* Fullscreen snap state */
-#obsidian-modal.obsidian-fullscreen .obsidian-modal-content {
+#shard-modal.shard-fullscreen .shard-modal-content {
   width: 100vw;
   max-width: 100vw;
   height: 100vh;
@@ -38051,7 +38051,7 @@ body.theme-frosted .modal {
 }
 
 /* Badges */
-.obsidian-badge {
+.shard-badge {
   display: inline-block;
   padding: 2px 6px;
   border-radius: 4px;
@@ -38060,44 +38060,44 @@ body.theme-frosted .modal {
   text-transform: uppercase;
   letter-spacing: 0.02em;
 }
-.obsidian-badge.read {
+.shard-badge.read {
   background: color-mix(in srgb, var(--green, #69db7c) 18%, transparent);
   color: var(--green, #69db7c);
 }
-.obsidian-badge.write {
+.shard-badge.write {
   background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 18%, transparent);
   color: var(--accent, var(--red, #4a9eff));
 }
-.obsidian-badge.none {
+.shard-badge.none {
   background: color-mix(in srgb, var(--fg) 8%, transparent);
   color: var(--fg);
   opacity: 0.5;
 }
 
 /* Tab content panes */
-.obsidian-tab-content {
+.shard-tab-content {
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
 }
-.obsidian-tab-content.hidden {
+.shard-tab-content.hidden {
   display: none;
 }
 
 /* Permissions */
-.obsidian-permissions-wrap {
+.shard-permissions-wrap {
   flex: 1 1 auto;
   overflow-y: auto;
   padding-right: 4px;
 }
-.obsidian-permissions-table {
+.shard-permissions-table {
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
-.obsidian-perm-header {
+.shard-perm-header {
   display: grid;
   grid-template-columns: 70px 1fr 60px 50px 30px;
   gap: 6px;
@@ -38107,7 +38107,7 @@ body.theme-frosted .modal {
   opacity: 0.6;
   border-bottom: 1px solid var(--border);
 }
-.obsidian-perm-row {
+.shard-perm-row {
   display: grid;
   grid-template-columns: 70px 1fr 60px 50px 30px;
   gap: 6px;
@@ -38116,24 +38116,24 @@ body.theme-frosted .modal {
   border-radius: 6px;
   font-size: 11px;
 }
-.obsidian-perm-row:hover {
+.shard-perm-row:hover {
   background: color-mix(in srgb, var(--fg) 4%, transparent);
 }
-.obsidian-perm-pattern {
+.shard-perm-pattern {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.obsidian-perm-level.read {
+.shard-perm-level.read {
   color: var(--green, #69db7c);
 }
-.obsidian-perm-level.write {
+.shard-perm-level.write {
   color: var(--accent, var(--red, #4a9eff));
 }
-.obsidian-perm-level.none {
+.shard-perm-level.none {
   color: var(--red, #ff6b6b);
 }
-.obsidian-perm-del {
+.shard-perm-del {
   background: none;
   border: none;
   color: var(--fg);
@@ -38143,19 +38143,19 @@ body.theme-frosted .modal {
   padding: 0;
   line-height: 1;
 }
-.obsidian-perm-del:hover {
+.shard-perm-del:hover {
   opacity: 1;
   color: var(--red, #ff6b6b);
 }
 
 /* Wikilinks */
-.obsidian-preview a.wikilink {
+.shard-preview a.wikilink {
   color: var(--accent, var(--red, #4a9eff));
   text-decoration: underline;
   text-decoration-style: dotted;
   cursor: pointer;
 }
-.obsidian-preview a.wikilink.ghost {
+.shard-preview a.wikilink.ghost {
   color: var(--fg);
   opacity: 0.5;
   text-decoration: underline;
@@ -38163,7 +38163,7 @@ body.theme-frosted .modal {
 }
 
 /* Embeds */
-.obsidian-embed {
+.shard-embed {
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 10px 12px;
@@ -38171,7 +38171,7 @@ body.theme-frosted .modal {
   background: color-mix(in srgb, var(--fg) 2%, transparent);
   font-size: 12px;
 }
-.obsidian-embed-error {
+.shard-embed-error {
   color: var(--red, #ff6b6b);
   font-size: 11px;
   opacity: 0.7;
@@ -38179,35 +38179,35 @@ body.theme-frosted .modal {
 }
 
 /* Callouts */
-.obsidian-callout {
+.shard-callout {
   border-radius: 8px;
   padding: 10px 12px;
   margin: 8px 0;
   border-left: 3px solid var(--border);
   background: color-mix(in srgb, var(--fg) 3%, transparent);
 }
-.obsidian-callout-title {
+.shard-callout-title {
   font-weight: 600;
   font-size: 12px;
   margin-bottom: 4px;
 }
-.obsidian-callout-icon {
+.shard-callout-icon {
   margin-right: 4px;
 }
-.obsidian-callout-body {
+.shard-callout-body {
   font-size: 12px;
   line-height: 1.5;
 }
-.obsidian-callout.callout-info    { border-left-color: #3b82f6; background: color-mix(in srgb, #3b82f6 6%, transparent); }
-.obsidian-callout.callout-warning { border-left-color: #f59e0b; background: color-mix(in srgb, #f59e0b 6%, transparent); }
-.obsidian-callout.callout-danger  { border-left-color: #ef4444; background: color-mix(in srgb, #ef4444 6%, transparent); }
-.obsidian-callout.callout-tip     { border-left-color: #22c55e; background: color-mix(in srgb, #22c55e 6%, transparent); }
-.obsidian-callout.callout-note    { border-left-color: #8b5cf6; background: color-mix(in srgb, #8b5cf6 6%, transparent); }
-.obsidian-callout.callout-quote   { border-left-color: #6b7280; background: color-mix(in srgb, #6b7280 6%, transparent); }
-.obsidian-callout.callout-example { border-left-color: #06b6d4; background: color-mix(in srgb, #06b6d4 6%, transparent); }
+.shard-callout.callout-info    { border-left-color: #3b82f6; background: color-mix(in srgb, #3b82f6 6%, transparent); }
+.shard-callout.callout-warning { border-left-color: #f59e0b; background: color-mix(in srgb, #f59e0b 6%, transparent); }
+.shard-callout.callout-danger  { border-left-color: #ef4444; background: color-mix(in srgb, #ef4444 6%, transparent); }
+.shard-callout.callout-tip     { border-left-color: #22c55e; background: color-mix(in srgb, #22c55e 6%, transparent); }
+.shard-callout.callout-note    { border-left-color: #8b5cf6; background: color-mix(in srgb, #8b5cf6 6%, transparent); }
+.shard-callout.callout-quote   { border-left-color: #6b7280; background: color-mix(in srgb, #6b7280 6%, transparent); }
+.shard-callout.callout-example { border-left-color: #06b6d4; background: color-mix(in srgb, #06b6d4 6%, transparent); }
 
 /* Preview mode toggle */
-.obsidian-mode-toggle {
+.shard-mode-toggle {
   background: transparent;
   border: 1px solid var(--border);
   color: var(--fg);
@@ -38217,12 +38217,12 @@ body.theme-frosted .modal {
   cursor: pointer;
   opacity: 0.6;
 }
-.obsidian-mode-toggle.active {
+.shard-mode-toggle.active {
   background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 12%, transparent);
   border-color: var(--accent, var(--red, #4a9eff));
   opacity: 1;
 }
-.obsidian-edit-textarea {
+.shard-edit-textarea {
   width: 100%;
   min-height: 300px;
   background: var(--input-bg, var(--panel));
@@ -38237,15 +38237,15 @@ body.theme-frosted .modal {
 }
 
 /* Outline */
-.obsidian-outline-item {
+.shard-outline-item {
   transition: background 0.15s;
 }
-.obsidian-outline-item:hover {
+.shard-outline-item:hover {
   background: color-mix(in srgb, var(--fg) 4%, transparent);
 }
 
 /* Right sidebar */
-.obsidian-sidebar-link {
+.shard-sidebar-link {
   padding: 4px 6px;
   border-radius: 4px;
   font-size: 12px;
@@ -38255,13 +38255,13 @@ body.theme-frosted .modal {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.obsidian-sidebar-link:hover {
+.shard-sidebar-link:hover {
   background: color-mix(in srgb, var(--fg) 4%, transparent);
 }
-.obsidian-sidebar-link.ghost {
+.shard-sidebar-link.ghost {
   opacity: 0.5;
 }
-.obsidian-prop-row {
+.shard-prop-row {
   display: flex;
   justify-content: space-between;
   gap: 8px;
@@ -38269,11 +38269,11 @@ body.theme-frosted .modal {
   font-size: 11px;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
 }
-.obsidian-prop-key {
+.shard-prop-key {
   opacity: 0.6;
   flex-shrink: 0;
 }
-.obsidian-prop-val {
+.shard-prop-val {
   text-align: right;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -38281,26 +38281,26 @@ body.theme-frosted .modal {
 }
 
 /* Note cards */
-.obsidian-note-card {
+.shard-note-card {
   padding: 8px;
   border-radius: 6px;
   cursor: pointer;
   margin-bottom: 4px;
   border: 1px solid transparent;
 }
-.obsidian-note-card:hover {
+.shard-note-card:hover {
   background: color-mix(in srgb, var(--fg) 4%, transparent);
 }
-.obsidian-note-card.selected {
+.shard-note-card.selected {
   border-color: var(--accent, var(--red, #4a9eff));
   background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 8%, transparent);
 }
-.obsidian-note-card-title {
+.shard-note-card-title {
   font-weight: 600;
   font-size: 12px;
   margin-bottom: 2px;
 }
-.obsidian-note-card-preview {
+.shard-note-card-preview {
   font-size: 11px;
   opacity: 0.6;
   line-height: 1.4;
@@ -38309,13 +38309,13 @@ body.theme-frosted .modal {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
 }
-.obsidian-note-card-meta {
+.shard-note-card-meta {
   display: flex;
   gap: 4px;
   margin-top: 4px;
   flex-wrap: wrap;
 }
-.obsidian-tag {
+.shard-tag {
   display: inline-block;
   padding: 1px 5px;
   border-radius: 4px;
@@ -38325,27 +38325,27 @@ body.theme-frosted .modal {
 }
 
 @media (max-width: 640px) {
-  .obsidian-modal-content {
+  .shard-modal-content {
     width: 100vw;
     max-height: 100dvh;
     border-radius: 0;
   }
-  .obsidian-3pane {
+  .shard-3pane {
     grid-template-columns: 1fr;
     grid-template-rows: auto 1fr;
   }
-  .obsidian-left-pane {
+  .shard-left-pane {
     border-right: none;
     border-bottom: 1px solid var(--border);
     max-height: 200px;
   }
-  .obsidian-right-pane {
+  .shard-right-pane {
     display: none;
   }
-  .obsidian-panel-wrap {
+  .shard-panel-wrap {
     flex-direction: column;
   }
-  .obsidian-note-list {
+  .shard-note-list {
     width: 100%;
     max-height: 180px;
   }

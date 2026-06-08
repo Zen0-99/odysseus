@@ -1,5 +1,5 @@
 /**
- * Obsidian Timeline Player — chronological vault growth animation.
+ * Shard Timeline Player — chronological vault growth animation.
  */
 
 const API_BASE = window.location.origin;
@@ -14,13 +14,13 @@ let _timer = null;
 let _nodeSet = null;
 let _edgeSet = null;
 
-export async function renderObsidianTimeline(container) {
+export async function renderShardTimeline(container) {
   _container = container;
-  container.innerHTML = '<div class="obsidian-timeline-loading">Loading timeline...</div>';
+  container.innerHTML = '<div class="shard-timeline-loading">Loading timeline...</div>';
 
   try {
-    const r = await fetch(`${API_BASE}/api/obsidian/timeline`);
-    if (!r.ok) { container.innerHTML = '<div class="obsidian-timeline-error">Failed to load timeline</div>'; return; }
+    const r = await fetch(`${API_BASE}/api/shard/timeline`);
+    if (!r.ok) { container.innerHTML = '<div class="shard-timeline-error">Failed to load timeline</div>'; return; }
     const data = await r.json();
     _frames = data.frames || [];
     _currentFrame = 0;
@@ -28,7 +28,7 @@ export async function renderObsidianTimeline(container) {
     _initCanvas();
     _renderFrame(0);
   } catch (e) {
-    container.innerHTML = `<div class="obsidian-timeline-error">${e.message}</div>`;
+    container.innerHTML = `<div class="shard-timeline-error">${e.message}</div>`;
   }
 }
 
@@ -38,31 +38,31 @@ function _buildUI() {
 
   // Controls bar
   const controls = document.createElement('div');
-  controls.className = 'obsidian-timeline-controls';
+  controls.className = 'shard-timeline-controls';
   controls.innerHTML = `
-    <button class="obsidian-timeline-btn" id="otl-play">▶</button>
-    <button class="obsidian-timeline-btn" id="otl-pause" style="display:none">⏸</button>
-    <input type="range" class="obsidian-timeline-seek" id="otl-seek" min="0" max="${_frames.length - 1}" value="0" />
-    <select class="obsidian-timeline-speed" id="otl-speed">
+    <button class="shard-timeline-btn" id="otl-play">▶</button>
+    <button class="shard-timeline-btn" id="otl-pause" style="display:none">⏸</button>
+    <input type="range" class="shard-timeline-seek" id="otl-seek" min="0" max="${_frames.length - 1}" value="0" />
+    <select class="shard-timeline-speed" id="otl-speed">
       <option value="0.5">0.5×</option>
       <option value="1" selected>1×</option>
       <option value="2">2×</option>
       <option value="5">5×</option>
     </select>
-    <span class="obsidian-timeline-info" id="otl-info">0 notes, 0 links</span>
+    <span class="shard-timeline-info" id="otl-info">0 notes, 0 links</span>
   `;
   _container.appendChild(controls);
 
   // Canvas container
   const canvasWrap = document.createElement('div');
-  canvasWrap.className = 'obsidian-timeline-canvas';
-  canvasWrap.id = 'obsidian-timeline-canvas';
+  canvasWrap.className = 'shard-timeline-canvas';
+  canvasWrap.id = 'shard-timeline-canvas';
   _container.appendChild(canvasWrap);
 
   // Info bar
   const infoBar = document.createElement('div');
-  infoBar.className = 'obsidian-timeline-infobar';
-  infoBar.id = 'obsidian-timeline-infobar';
+  infoBar.className = 'shard-timeline-infobar';
+  infoBar.id = 'shard-timeline-infobar';
   infoBar.textContent = 'Paused';
   _container.appendChild(infoBar);
 
@@ -82,7 +82,7 @@ function _buildUI() {
 }
 
 function _initCanvas() {
-  const canvasWrap = document.getElementById('obsidian-timeline-canvas');
+  const canvasWrap = document.getElementById('shard-timeline-canvas');
   if (!canvasWrap || !window.vis) return;
 
   const style = getComputedStyle(document.documentElement);
@@ -169,7 +169,7 @@ function _renderFrame(idx) {
     info.textContent = `${f.note_count} notes, ${f.link_count} links`;
   }
 
-  const infobar = document.getElementById('obsidian-timeline-infobar');
+  const infobar = document.getElementById('shard-timeline-infobar');
   if (infobar) {
     const ts = _frames[idx].timestamp;
     infobar.textContent = ts ? ts.slice(0, 10) : `Frame ${idx + 1}/${_frames.length}`;

@@ -1,4 +1,4 @@
-"""Graph and timeline pre-computation for Obsidian vault notes."""
+"""Graph and timeline pre-computation for Shard vault notes."""
 
 from __future__ import annotations
 

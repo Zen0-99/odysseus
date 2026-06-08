@@ -1,4 +1,4 @@
-"""Obsidian vault file watcher — read-only sync into Obsidian rows."""
+"""Shard vault file watcher — read-only sync into Shard rows."""
 
 from __future__ import annotations
 
@@ -59,8 +59,8 @@ def _extract_links(body: str, vault_root: Path, note_rel_path: str) -> List[str]
     # [[WikiLink]] or [[WikiLink|alias]]
     for m in _WIKI_LINK_RE.finditer(body):
         target = m.group(1).strip()
-        # Obsidian: [[Note]] resolves to Note.md in same folder or vault root
-        target_path = _resolve_obsidian_link(target, note_dir, vault_root)
+        # Shard: [[Note]] resolves to Note.md in same folder or vault root
+        target_path = _resolve_shard_link(target, note_dir, vault_root)
         if target_path:
             targets.add(target_path)
 
@@ -77,9 +77,9 @@ def _extract_links(body: str, vault_root: Path, note_rel_path: str) -> List[str]
     return sorted(targets)
 
 
-def _resolve_obsidian_link(target: str, note_dir: Path, vault_root: Path) -> Optional[str]:
+def _resolve_shard_link(target: str, note_dir: Path, vault_root: Path) -> Optional[str]:
     """Resolve [[Target]] to a relative path inside the vault."""
-    # Obsidian: [[Folder/Note]] is a subfolder reference
+    # Shard: [[Folder/Note]] is a subfolder reference
     target_path = Path(target.replace("\\", "/"))
     if target_path.suffix != ".md":
         target_path = target_path.with_suffix(".md")
@@ -134,7 +134,7 @@ def _find_file_case_insensitive(path: Path) -> Optional[str]:
 
 # Watcher -----------------------------------------------------------------------
 
-class ObsidianVaultWatcher:
+class ShardVaultWatcher:
     """Per-vault file watcher. Manages one Observer keyed by (owner, vault_path)."""
 
     def __init__(self) -> None:
@@ -156,7 +156,7 @@ class ObsidianVaultWatcher:
             obs = _VaultObserver(owner, str(vault))
             obs.start()
             self._watchers[key] = obs
-            logger.info(f"Obsidian watcher started for {owner} at {vault}")
+            logger.info(f"Shard watcher started for {owner} at {vault}")
             return True, "Connected"
         except Exception as e:
             logger.exception(f"Failed to start watcher for {owner} at {vault}")
@@ -168,13 +168,13 @@ class ObsidianVaultWatcher:
         obs = self._watchers.pop(key, None)
         if obs:
             obs.stop()
-            logger.info(f"Obsidian watcher stopped for {owner} at {vault_path}")
+            logger.info(f"Shard watcher stopped for {owner} at {vault_path}")
 
     def disconnect_all(self) -> None:
         """Stop all watchers (called on app shutdown)."""
         for key, obs in list(self._watchers.items()):
             obs.stop()
-            logger.info(f"Obsidian watcher stopped for {key}")
+            logger.info(f"Shard watcher stopped for {key}")
         self._watchers.clear()
 
     def is_connected(self, owner: str, vault_path: str) -> bool:
@@ -201,16 +201,16 @@ class _VaultObserver:
         except ImportError:
             logger.warning("watchdog not installed; falling back to one-time scan")
             import threading
-            threading.Thread(target=self._initial_scan, daemon=True, name=f"obsidian-scan-{self.owner}").start()
+            threading.Thread(target=self._initial_scan, daemon=True, name=f"shard-scan-{self.owner}").start()
             return
 
-        self._handler = _ObsidianEventHandler(self.owner, self.vault_path)
+        self._handler = _ShardEventHandler(self.owner, self.vault_path)
         self._observer = Observer()
         self._observer.schedule(self._handler, str(self.vault_path), recursive=True)
         self._observer.start()
         # Initial scan runs in background so connect() returns instantly
         import threading
-        threading.Thread(target=self._initial_scan, daemon=True, name=f"obsidian-scan-{self.owner}").start()
+        threading.Thread(target=self._initial_scan, daemon=True, name=f"shard-scan-{self.owner}").start()
 
     def stop(self) -> None:
         if self._observer:
@@ -228,7 +228,7 @@ class _VaultObserver:
                 logger.exception(f"Failed to sync {md_file}")
 
 
-class _ObsidianEventHandler:
+class _ShardEventHandler:
     """watchdog event handler for markdown file changes."""
 
     def __init__(self, owner: str, vault_path: Path) -> None:
@@ -265,7 +265,7 @@ def _sync_file(owner: str, vault_root: Path, file_path: Path) -> None:
         logger.warning(f"File outside vault: {file_path}")
         return
 
-    # Skip hidden / dot-folders (Obsidian .obsidian/, .trash/)
+    # Skip hidden / dot-folders (Shard .shard/, .trash/)
     parts = Path(rel_path).parts
     if any(p.startswith(".") for p in parts):
         return
@@ -298,14 +298,14 @@ def _extract_title(frontmatter_raw: str, file_path: Path) -> str:
 def _upsert_note(owner: str, vault_path: str, rel_path: str, folder: str,
                  title: str, body: str, frontmatter: str, tags: List[str],
                  links: List[str], mtime: datetime) -> None:
-    """Upsert an Obsidian row and recompute backlinks."""
-    from core.database import SessionLocal, Obsidian
+    """Upsert an Shard row and recompute backlinks."""
+    from core.database import SessionLocal, Shard
     import uuid
 
     db = SessionLocal()
     try:
         note_id = f"{owner}:{vault_path}:{rel_path}"
-        existing = db.query(Obsidian).filter_by(
+        existing = db.query(Shard).filter_by(
             owner=owner, vault_path=vault_path, rel_path=rel_path
         ).first()
 
@@ -319,7 +319,7 @@ def _upsert_note(owner: str, vault_path: str, rel_path: str, folder: str,
             existing.last_modified_src = mtime
             existing.sync_status = "synced"
         else:
-            db.add(Obsidian(
+            db.add(Shard(
                 id=note_id,
                 owner=owner,
                 vault_path=vault_path,
@@ -342,7 +342,7 @@ def _upsert_note(owner: str, vault_path: str, rel_path: str, folder: str,
 
 def _mark_deleted(owner: str, vault_root: Path, file_path: Path) -> None:
     """Mark a note as deleted (file removed from vault)."""
-    from core.database import SessionLocal, Obsidian
+    from core.database import SessionLocal, Shard
     try:
         rel_path = str(file_path.relative_to(vault_root)).replace("\\", "/")
     except ValueError:
@@ -350,7 +350,7 @@ def _mark_deleted(owner: str, vault_root: Path, file_path: Path) -> None:
 
     db = SessionLocal()
     try:
-        note = db.query(Obsidian).filter_by(
+        note = db.query(Shard).filter_by(
             owner=owner, vault_path=str(vault_root), rel_path=rel_path
         ).first()
         if note:
@@ -363,10 +363,10 @@ def _mark_deleted(owner: str, vault_root: Path, file_path: Path) -> None:
 
 def _mark_disconnected(owner: str, vault_path: str) -> None:
     """Set sync_status to disconnected for all notes in this vault."""
-    from core.database import SessionLocal, Obsidian
+    from core.database import SessionLocal, Shard
     db = SessionLocal()
     try:
-        db.query(Obsidian).filter_by(
+        db.query(Shard).filter_by(
             owner=owner, vault_path=vault_path
         ).update({"sync_status": "disconnected"}, synchronize_session=False)
         db.commit()
@@ -379,7 +379,7 @@ def _recompute_backlinks(db, owner: str, vault_path: str) -> None:
     from sqlalchemy import text
     notes = db.execute(
         text("""
-        SELECT id, rel_path, outbound_links FROM obsidian
+        SELECT id, rel_path, outbound_links FROM shard
         WHERE owner = :owner AND vault_path = :vault_path
           AND sync_status NOT IN ('deleted', 'disconnected')
         """),
@@ -401,7 +401,7 @@ def _recompute_backlinks(db, owner: str, vault_path: str) -> None:
     for note_id, rel_path, _ in notes:
         bl = json.dumps(backlink_map.get(rel_path, []))
         db.execute(
-            text("UPDATE obsidian SET backlinks = :bl WHERE id = :id"),
+            text("UPDATE shard SET backlinks = :bl WHERE id = :id"),
             {"bl": bl, "id": note_id}
         )
     db.commit()
@@ -409,11 +409,11 @@ def _recompute_backlinks(db, owner: str, vault_path: str) -> None:
 
 # Singleton ----------------------------------------------------------------------
 
-_vault_watcher: Optional[ObsidianVaultWatcher] = None
+_vault_watcher: Optional[ShardVaultWatcher] = None
 
 
-def get_watcher() -> ObsidianVaultWatcher:
+def get_watcher() -> ShardVaultWatcher:
     global _vault_watcher
     if _vault_watcher is None:
-        _vault_watcher = ObsidianVaultWatcher()
+        _vault_watcher = ShardVaultWatcher()
     return _vault_watcher

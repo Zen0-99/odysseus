@@ -1,4 +1,4 @@
-"""Direct filesystem access for Obsidian vaults — no watcher, no DB cache."""
+"""Direct filesystem access for Shard vaults — no watcher, no DB cache."""
 
 from __future__ import annotations
 
