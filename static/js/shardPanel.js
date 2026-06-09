@@ -2024,6 +2024,31 @@ function _propIconSvg(key, value, propType) {
   return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="14" y2="12"/><line x1="4" y1="18" x2="18" y2="18"/></svg>`;
 }
 
+function _gatherPropertyTypes() {
+  const typeMap = new Map();
+  _notes.forEach(n => {
+    const fm = n.frontmatter;
+    if (!fm || typeof fm !== 'object' || Array.isArray(fm)) return;
+    Object.entries(fm).forEach(([k, v]) => {
+      const t = _inferPropType(k, v);
+      const existing = typeMap.get(k);
+      if (!existing) {
+        typeMap.set(k, { type: t, count: 1 });
+      } else if (existing.type !== t) {
+        // If types conflict, prefer 'text' as fallback
+        existing.type = 'text';
+        existing.count += 1;
+      } else {
+        existing.count += 1;
+      }
+    });
+  });
+  // Sort by most common first, then alphabetically
+  return Array.from(typeMap.entries())
+    .sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]))
+    .map(([name, info]) => ({ name, type: info.type }));
+}
+
 function _buildTagChip(text, key) {
   const isTag = key.toLowerCase() === 'tags';
   return `<span class="shard-prop-chip${isTag ? ' is-tag' : ''}" data-chip="${_esc(text)}" data-prop-key="${_esc(key)}" spellcheck="false">
@@ -2046,7 +2071,7 @@ function _inferPropType(key, value) {
 }
 
 function _buildPropertiesHtml(frontmatter, note) {
-  const fm = frontmatter || {};
+  const fm = (frontmatter && typeof frontmatter === 'object' && !Array.isArray(frontmatter)) ? frontmatter : {};
   const entries = Object.entries(fm);
   const rows = entries.map(([k, v]) => {
     const propType = _inferPropType(k, v);
@@ -2759,8 +2784,8 @@ async function _selectNote(id) {
             const next = _getCharAfterCursor();
             if (prev === '[') {
               if (next === ']') document.execCommand('delete', false);
-              document.execCommand('insertText', false, '[]');
-              _moveCursorBack(1);
+              document.execCommand('insertText', false, '[]]');
+              _moveCursorBack(2);
             } else if (textBefore.endsWith('[/')) {
               document.execCommand('insertText', false, '[]/]');
               _moveCursorBack(4);
@@ -3303,9 +3328,30 @@ function _wirePropertyEditors(preview, note) {
       dropdown.className = 'shard-prop-add-dropdown';
       dropdown.style.position = 'fixed';
       const existingKeys = new Set(Object.keys(note.frontmatter || {}));
-      const available = _COMMON_PROPERTIES.filter(p => !existingKeys.has(p));
-      const options = available.map(p => `<div class="shard-prop-add-option" data-prop="${_esc(p)}">${_propIconSvg(p, '')}<span>${_esc(p)}</span></div>`).join('');
-      dropdown.innerHTML = `${options}<div class="shard-prop-add-option" data-prop="__custom"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span>New property</span></div>`;
+      const knownProps = _gatherPropertyTypes();
+      const commonAvailable = _COMMON_PROPERTIES.filter(p => !existingKeys.has(p));
+      // Merge known props with common props, deduplicated, excluding existing
+      const seen = new Set(existingKeys);
+      const allOptions = [];
+      knownProps.forEach(p => {
+        if (!seen.has(p.name)) {
+          seen.add(p.name);
+          allOptions.push(p);
+        }
+      });
+      commonAvailable.forEach(name => {
+        if (!seen.has(name)) {
+          seen.add(name);
+          const inferred = _inferPropType(name, '');
+          allOptions.push({ name, type: inferred });
+        }
+      });
+      const options = allOptions.map(p => {
+        const icon = _propIconSvg(p.name, '', p.type);
+        const label = p.type.charAt(0).toUpperCase() + p.type.slice(1);
+        return `<div class="shard-prop-add-option" data-prop="${_esc(p.name)}" data-type="${_esc(p.type)}">${icon}<span class="shard-prop-add-name">${_esc(p.name)}</span><span class="shard-prop-add-type">${label}</span></div>`;
+      }).join('');
+      dropdown.innerHTML = `${options}<div class="shard-prop-add-option" data-prop="__custom"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span class="shard-prop-add-name">New property</span></div>`;
       const rect = addBtn.getBoundingClientRect();
       dropdown.style.left = rect.left + 'px';
       dropdown.style.top = (rect.bottom + 4) + 'px';
@@ -3326,7 +3372,13 @@ function _wirePropertyEditors(preview, note) {
           } else {
             note.frontmatter = note.frontmatter || {};
             if (note.frontmatter[propName] === undefined) {
-              note.frontmatter[propName] = '';
+              const propType = opt.dataset.type || _inferPropType(propName, '');
+              if (propType === 'tags' || propType === 'list') note.frontmatter[propName] = [];
+              else if (propType === 'checkbox') note.frontmatter[propName] = false;
+              else if (propType === 'number') note.frontmatter[propName] = 0;
+              else if (propType === 'date') note.frontmatter[propName] = new Date().toISOString().slice(0, 10);
+              else if (propType === 'datetime') note.frontmatter[propName] = new Date().toISOString().slice(0, 16);
+              else note.frontmatter[propName] = '';
               await _saveNoteContent(note);
             }
           }
@@ -3976,6 +4028,13 @@ function _showNoteMenu(e, note) {
   const rect = e.currentTarget.getBoundingClientRect();
   const isBookmarked = _bookmarks.has(note.id);
   _showContextMenu(rect.left, rect.bottom + 4, [
+    { label: _sourceModeEnabled ? 'Switch to Live Preview' : 'Switch to Source Mode', action: () => {
+      _sourceModeEnabled = !_sourceModeEnabled;
+      _editModePref = _sourceModeEnabled ? 'edit' : 'live';
+      _previewMode = _sourceModeEnabled ? 'edit' : 'live';
+      _updateModeButtons();
+      _selectNote(note.id);
+    }},
     { separator: true },
     { label: 'Rename...', action: () => _promptRenameNote(note.id) },
     { label: 'Move file to…', submenu: _buildFolderSubmenu(note.id, note.folder) },
