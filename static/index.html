@@ -588,17 +588,35 @@
                       <button class="shard-nav-btn shard-forward-btn" title="Forward">&#8594;</button>
                     </div>
                     <div class="shard-breadcrumb"></div>
-                    <button class="shard-mode-icon" style="display:none;">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                    </button>
-                    <button class="shard-note-menu-btn" title="More options" style="display:none;" aria-label="More options">
+                    <div class="shard-view-modes" id="shard-view-modes">
+                      <button class="shard-mode-btn" data-view-mode="preview" title="Reading view" id="shard-mode-read">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                      </button>
+                      <button class="shard-mode-btn" data-view-mode="live" title="Live preview" id="shard-mode-edit">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                      </button>
+                    </div>
+                    <button class="shard-note-menu-btn" title="More options" id="shard-note-menu-btn" aria-label="More options">
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
                     </button>
+                    <div class="shard-note-menu-dropdown hidden" id="shard-note-menu-dropdown">
+                      <div class="shard-note-menu-item" data-action="preview"><span>Reading view</span></div>
+                      <div class="shard-note-menu-item" data-action="live"><span>Live preview</span></div>
+                      <div class="shard-note-menu-item shard-note-menu-check" data-action="source"><span>Source mode</span><span class="shard-note-menu-checkmark"></span></div>
+                      <div class="shard-note-menu-sep"></div>
+                      <div class="shard-note-menu-item" data-action="rename"><span>Rename...</span></div>
+                      <div class="shard-note-menu-item shard-note-menu-disabled" data-action="move"><span>Move file to...</span></div>
+                      <div class="shard-note-menu-item shard-note-menu-disabled" data-action="bookmark"><span>Bookmark</span></div>
+                      <div class="shard-note-menu-sep"></div>
+                      <div class="shard-note-menu-item shard-note-menu-disabled" data-action="copy-path"><span>Copy path</span></div>
+                      <div class="shard-note-menu-item shard-note-menu-disabled" data-action="export-pdf"><span>Export to PDF...</span></div>
+                      <div class="shard-note-menu-sep"></div>
+                      <div class="shard-note-menu-item shard-note-menu-danger" data-action="delete"><span>Delete file</span></div>
+                    </div>
                   </div>
                   <div class="shard-panel-wrap">
-                    <div class="shard-preview"></div>
+                    <div class="shard-preview" id="shard-preview"></div>
                   </div>
-                  <div class="shard-word-count"></div>
                 </div>
                 <div class="shard-drop-zones">
                   <div class="shard-drop-zone" data-zone="top" style="grid-column:1 / -1; grid-row:1">Top</div>
@@ -751,13 +769,14 @@
               <button class="admin-btn-delete" id="shard-cancel-vault-btn" style="padding:4px 12px;font-size:12px;">Cancel</button>
               <span id="shard-add-vault-status" style="font-size:11px;opacity:0.7;"></span>
             </div>
+            <div class="shard-settings-resize-handle" id="shard-settings-resize-handle"></div>
           </div>
         </div>
 
         <!-- Shard Settings Dialog (in-panel) -->
         <div id="shard-settings-dialog" class="shard-settings-dialog hidden">
           <div class="shard-settings-dialog-card">
-            <div class="shard-settings-header">
+            <div class="shard-settings-header" id="shard-settings-header">
               <h5 style="margin:0;font-size:14px;">Settings</h5>
               <button type="button" class="close-btn" id="shard-settings-close" aria-label="Close settings">&#x2716;</button>
             </div>
@@ -965,7 +984,7 @@
                         <span>Monospace font mode</span>
                         <span class="shard-settings-desc">Use monospace font throughout the vault interface.</span>
                       </div>
-                      <label class="admin-switch"><input type="checkbox" id="shard-set-monotone-font"><span class="admin-slider"></span></label>
+                      <label class="admin-switch"><input type="checkbox" id="shard-set-monospace-font"><span class="admin-slider"></span></label>
                     </div>
                     <div class="shard-settings-row shard-settings-disabled" title="Coming soon">
                       <div class="shard-settings-info">

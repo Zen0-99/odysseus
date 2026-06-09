@@ -38,6 +38,7 @@ export function makeWindowResizable(content, options = {}) {
   const isLocked = options.isLocked || (() => false);
   const onResizeEnd = options.onResizeEnd || null;
   const storageKey = options.storageKey || null;
+  const cursorTargets = options.cursorTargets || [content];
 
   const _skip = () => (mobileSkip > 0 && window.innerWidth <= mobileSkip) || isLocked();
 
@@ -69,14 +70,14 @@ export function makeWindowResizable(content, options = {}) {
 
   let hoverCursor = false;
   function clearHoverCursor() {
-    if (hoverCursor) { content.style.cursor = ''; hoverCursor = false; }
+    if (hoverCursor) { cursorTargets.forEach(t => t.style.cursor = ''); hoverCursor = false; }
   }
   function onHover(ev) {
     if (resizing) return;
     if (_skip()) { clearHoverCursor(); return; }
     if (ev.target && ev.target.closest && ev.target.closest(INTERACTIVE)) { clearHoverCursor(); return; }
     const c = cursorFor(edgesAt(ev.clientX, ev.clientY));
-    if (c) { content.style.cursor = c; hoverCursor = true; }
+    if (c) { cursorTargets.forEach(t => t.style.cursor = c); hoverCursor = true; }
     else clearHoverCursor();
   }
 

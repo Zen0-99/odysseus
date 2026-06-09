@@ -97,16 +97,52 @@ html, body { overflow-x: hidden; height: 100%; margin: 0; overscroll-behavior: n
 body {
   background-color: var(--bg);
   color: var(--fg);
-  /* Keep the base padding transition for older layout paths that still adjust
-     the body directly. Edge docks reserve workspace room on the flex panes
-     below so left + right docks can coexist without skewing the whole body. */
+  /* Animate the dock push BOTH ways. Keeping the transition on the base body
+     (not on .right/left-dock-active) means removing the class on undock also
+     animates padding back to 0 — otherwise the chat snapped back instantly. */
   transition: padding-left 160ms cubic-bezier(0.22, 0.61, 0.36, 1),
               padding-right 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
-  font-family: var(--font-family, 'Fira Code', monospace);
+  font-family: var(--font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
   display: flex;
   height: 100%;
   height: 100dvh; /* dynamic viewport height — adapts when mobile keyboard opens */
   overflow: hidden;
+}
+
+/* Electron custom title bar — injected dynamically by electron/preload.js */
+body.electron { padding-top: 32px; }
+body.electron .icon-rail { padding-top: 48px; }
+body.electron .hamburger-btn { top: 44px; }
+
+/* Shift all fixed-position overlays down by title-bar height so nothing clips */
+body.electron .modal {
+  top: 32px;
+  height: calc(100dvh - 32px);
+}
+body.electron #app-loader {
+  top: 32px;
+  height: calc(100dvh - 32px);
+}
+body.electron .shard-modal-content {
+  max-height: calc(100dvh - 32px);
+}
+body.electron #shard-modal.shard-fullscreen .shard-modal-content {
+  height: calc(100dvh - 32px);
+}
+/* Docked modals / panes get inline fixed positioning — override with !important */
+body.electron .modal.modal-right-docked .modal-content,
+body.electron .modal.modal-left-docked .modal-content,
+body.electron .notes-pane.modal-right-docked,
+body.electron .notes-pane.modal-left-docked,
+body.electron .notes-pane.notes-window-fullscreen,
+body.electron .notes-pane[style*="position: fixed"] {
+  top: 32px !important;
+  height: calc(100dvh - 32px) !important;
+  max-height: calc(100dvh - 32px) !important;
+}
+body.electron .notes-pane-backdrop {
+  top: 32px;
+  height: calc(100dvh - 32px);
 }
 
 /* Self-hosted Fira Code font */
@@ -842,7 +878,7 @@ body.bg-pattern-sparkles {
       display: flex; gap: 6px; flex-wrap: wrap;
       max-width: calc(100vw - 24px);
       padding: 4px;
-      z-index: 100;
+      z-index: 10020;
       pointer-events: none;
     }
     .minimized-dock-chip {
@@ -1803,8 +1839,6 @@ body.bg-pattern-sparkles {
       min-width:0;
       margin-top:8px;
       margin-bottom: 0;
-      transition: margin-left 160ms cubic-bezier(0.22, 0.61, 0.36, 1),
-                  margin-right 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
     }
     .chat-meta { font-size:12px; color:color-mix(in srgb, var(--fg) 60%, transparent); margin-bottom:6px; }
     .chat-history {
@@ -5033,7 +5067,8 @@ body.bg-pattern-sparkles {
       #research-overlay,
       #theme-modal,
       #settings-modal,
-      #email-lib-modal {
+      #email-lib-modal,
+      #shard-modal {
         left: calc(var(--icon-rail-w, 48px) + var(--sidebar-w, 0px));
         width: calc(100% - (var(--icon-rail-w, 48px) + var(--sidebar-w, 0px)));
         box-sizing: border-box;
@@ -5056,15 +5091,6 @@ body.bg-pattern-sparkles {
       box-shadow:0 8px 32px rgba(0,0,0,0.45);
       pointer-events:auto;
       animation: modal-enter 0.25s ease-out both;
-    }
-    .memory-modal-content,
-    .tasks-modal-content,
-    .preset-modal-content,
-    #cookbook-modal .modal-content,
-    #theme-popup,
-    .doclib-modal-content,
-    .gallery-modal-content {
-      container-type: inline-size;
     }
     .modal-header {
       display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;
@@ -7838,13 +7864,7 @@ button.hamburger {
   border-collapse: collapse;
   margin: 0.5em 0;
   font-size: 0.9em;
-  display: block;
-  width: max-content;
-  min-width: 100%;
-  max-width: 100%;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  table-layout: auto;
+  width: auto;
 }
 .msg th {
   background: color-mix(in srgb, var(--fg) 7%, transparent);
@@ -7853,16 +7873,10 @@ button.hamburger {
   padding: 6px 12px;
   border: 1px solid var(--border);
   text-align: left;
-  min-width: 9ch;
-  word-break: normal;
-  overflow-wrap: break-word;
 }
 .msg td {
   padding: 5px 12px;
   border: 1px solid var(--border);
-  min-width: 9ch;
-  word-break: normal;
-  overflow-wrap: break-word;
 }
 
 /* Agent UI Styling */
@@ -10279,15 +10293,6 @@ details a:hover {
   height: 32px;
 }
 
-/* Skill Import beside URL field — match input height; cancel modal-body button margin. */
-.memory-add-row .theme-io-btn {
-  flex: none;
-  height: 28px;
-  box-sizing: border-box;
-  margin-top: 0;
-  padding: 5px 10px;
-}
-
 .memory-add-input {
   flex: 1;
   height: 28px;
@@ -10391,9 +10396,8 @@ textarea.memory-add-input {
 }
 
 .memory-toolbar-btn:disabled {
-  opacity: 0.35;
+  opacity: 1;
   cursor: default;
-  outline: none;
 }
 .memory-toolbar-btn.spinning {
   border-color: transparent;
@@ -15363,7 +15367,7 @@ span[id$="-logo"] svg:not([width]) {
   body.email-doc-split-active.doc-view .doc-editor-pane {
     position: fixed !important;
     left: var(--email-doc-split-right-x, 420px) !important;
-    right: var(--right-dock-w, 0px) !important;
+    right: 0 !important;
     top: 0 !important;
     bottom: 0 !important;
     width: auto !important;
@@ -15384,21 +15388,15 @@ body [data-act="from-sender"] {
   display: none !important;
 }
 
-/* Edge docking. Docked panels are fixed to the viewport edge; the workspace
-   panes reserve room with margins so left + right docks can be active at the
-   same time without skewing the entire body box. */
+/* Snap-to-right docking. A modal dragged to the right edge becomes a
+   docked side panel (mirrors Notes/Doc panels). Body reserves space via
+   padding-right so the chat / notes / doc panel underneath shrinks to
+   fit instead of being hidden behind the panel. */
 body.right-dock-active {
-  padding-right: 0;
+  padding-right: var(--right-dock-w, 0px);
 }
 body.left-dock-active {
-  padding-left: 0;
-}
-body.left-dock-active:not(.email-doc-split-active) .chat-container {
-  margin-left: var(--left-dock-w, 0px);
-}
-body.right-dock-active .chat-container,
-body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
-  margin-right: var(--right-dock-w, 0px);
+  padding-left: var(--left-dock-w, 0px);
 }
 .modal.modal-right-docked {
   align-items: stretch;
@@ -16160,7 +16158,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
      modal font, which is the app font (Fira Code) on mobile and Inter on
      desktop (.modal-content's Inter rule is inside @media min-width:769px).
      Mirror that here so all three footers match in both contexts. */
-  font-family: var(--font-family, 'Fira Code', monospace);
+  font-family: var(--font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
   transition: border-color 0.15s, color 0.15s;
 }
 @media (min-width: 769px) {
@@ -22059,6 +22057,7 @@ body.gallery-selecting .gallery-dl-btn,
 .settings-nav-item {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 8px;
   padding: 8px 10px;
   border: none;
@@ -22072,6 +22071,8 @@ body.gallery-selecting .gallery-dl-btn,
   transition: all 0.1s;
   text-align: left;
   white-space: nowrap;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .settings-nav-item:hover {
@@ -22086,6 +22087,8 @@ body.gallery-selecting .gallery-dl-btn,
 
 .settings-nav-item svg {
   flex-shrink: 0;
+  width: 14px;
+  height: 14px;
   opacity: 0.7;
 }
 
@@ -24016,89 +24019,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 .gallery-tab.active {
   opacity: 1;
   border-bottom-color: var(--red);
-}
-
-/* Narrow modal tab strips should stay on one row. Resized docked windows can
-   be much narrower than the viewport, so this cannot live only in mobile media
-   queries. */
-.cookbook-tabs,
-.memory-tabs,
-.admin-tabs,
-.lib-tabs,
-.gallery-tabs,
-.preset-tabs {
-  flex-wrap: nowrap !important;
-  overflow-x: auto !important;
-  overflow-y: hidden;
-  -webkit-overflow-scrolling: touch;
-  overscroll-behavior-x: contain;
-  scrollbar-width: none;
-}
-.cookbook-tabs::-webkit-scrollbar,
-.memory-tabs::-webkit-scrollbar,
-.admin-tabs::-webkit-scrollbar,
-.lib-tabs::-webkit-scrollbar,
-.gallery-tabs::-webkit-scrollbar,
-.preset-tabs::-webkit-scrollbar {
-  display: none;
-}
-.cookbook-tabs > *,
-.memory-tabs > *,
-.admin-tabs > *,
-.lib-tabs > *,
-.gallery-tabs > *,
-.preset-tabs > * {
-  flex: 0 0 auto;
-}
-.cookbook-tab,
-.memory-tab,
-.admin-tab,
-.lib-tab,
-.gallery-tab,
-.preset-tab {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  white-space: nowrap;
-  line-height: 1;
-}
-.gallery-tab {
-  gap: 6px;
-}
-
-@container (max-width: 360px) {
-  .cookbook-tab:has(svg),
-  .memory-tab:has(svg),
-  .admin-tab:has(svg),
-  .lib-tab:has(svg),
-  .gallery-tab:has(svg),
-  .preset-tab:has(svg) {
-    width: 34px;
-    min-width: 34px;
-    padding-left: 0;
-    padding-right: 0;
-    font-size: 0;
-  }
-
-  .cookbook-tab:has(svg) svg,
-  .memory-tab:has(svg) svg,
-  .admin-tab:has(svg) svg,
-  .lib-tab:has(svg) svg,
-  .gallery-tab:has(svg) svg,
-  .preset-tab:has(svg) svg {
-    width: 14px;
-    height: 14px;
-    margin-right: 0 !important;
-    vertical-align: middle !important;
-  }
-
-  .memory-tab:has(svg) .memory-count,
-  .gallery-tab:has(svg) .gallery-tab-label,
-  .gallery-tab:has(svg) .gallery-tab-close,
-  .cookbook-tab:has(svg) .cookbook-tab-count,
-  .preset-tab:has(svg) .preset-count {
-    display: none !important;
-  }
 }
 /* Icon + label layout inside each tab. */
 .gallery-tab {
@@ -37705,9 +37625,13 @@ body.theme-frosted .modal {
 /* ===== SHARD MODAL ===== */
 #shard-modal { z-index: 260; }
 .shard-modal-content {
-  width: min(720px, 90vw);
-  max-height: 78vh;
+  width: min(920px, 95vw);
+  height: min(680px, 88vh);
+  min-height: 480px;
+  max-height: 92vh;
   font-size: 12px;
+  font-family: var(--font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
+  animation: none;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -37719,42 +37643,166 @@ body.theme-frosted .modal {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  position: relative;
 }
 .shard-3pane {
   display: grid;
-  grid-template-columns: var(--shard-left-w, 200px) 1fr var(--shard-right-w, 200px);
+  grid-template-columns: var(--shard-left-w, 200px) 4px 1fr 4px var(--shard-right-w, 200px);
+  grid-template-rows: 1fr;
+  grid-template-areas: "left resize-l center resize-r right";
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
 }
+.shard-3pane > .shard-left-pane { grid-area: left; }
+.shard-3pane > .shard-center-pane { grid-area: center; }
+.shard-3pane > .shard-right-pane { grid-area: right; }
+#shard-resize-left { grid-area: resize-l; }
+#shard-resize-right { grid-area: resize-r; }
 .shard-left-pane {
-  border-right: 1px solid var(--border);
-  padding: 10px 8px;
-  overflow-y: auto;
+  border: 1px solid var(--border);
+  background: var(--panel, var(--bg));
+  border-radius: 8px;
+  padding: 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow: hidden;
+  position: relative;
 }
-.shard-left-header {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  margin-bottom: 8px;
-}
+.shard-left-header { display: none; }
 .shard-center-pane {
   padding: 10px 12px;
   overflow: hidden;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
 }
 .shard-right-pane {
-  border-left: 1px solid var(--border);
-  padding: 10px 8px;
-  overflow-y: auto;
+  border: 1px solid var(--border);
+  background: var(--panel, var(--bg));
+  border-radius: 8px;
+  padding: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  position: relative;
+}
+.shard-right-placeholder {
+  padding: 20px;
+  text-align: center;
+  opacity: 0.5;
+  font-size: 12px;
+  flex: 1;
+}
+.shard-right-placeholder.hidden { display: none; }
+/* Right sidebar tabs */
+.shard-right-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  padding: 0;
+  gap: 2px;
+  flex-shrink: 0;
+  order: -1;
+}
+.shard-right-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 6px 2px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0.5;
+  transition: opacity 0.15s, background 0.15s;
+  white-space: nowrap;
+  min-width: 0;
+  user-select: none;
+  -webkit-user-select: none;
+  outline: none;
+}
+.shard-right-tab:hover { opacity: 0.8; background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.shard-right-tab.active {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.shard-right-tab svg { flex-shrink: 0; }
+.shard-right-tab span { display: none; }
+/* Context menu */
+.shard-context-menu {
+  position: fixed;
+  z-index: 9999;
+  background: var(--bg-raised, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  min-width: 180px;
+  padding: 4px 0;
+  font-size: 12px;
+  user-select: none;
+}
+.shard-context-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: background 0.1s;
+  gap: 12px;
+}
+.shard-context-menu-item:hover { background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 15%, transparent); }
+.shard-context-menu-item.disabled {
+  opacity: 0.4;
+  cursor: default;
+  pointer-events: none;
+}
+.shard-context-menu-item.danger {
+  color: #ff6b6b;
+}
+.shard-context-menu-item.danger:hover {
+  background: color-mix(in srgb, #ff6b6b 15%, transparent);
+}
+.shard-context-menu-separator {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 8px;
+}
+.shard-context-menu-submenu {
+  position: fixed;
+  z-index: 10000;
+  background: var(--bg-raised, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  min-width: 160px;
+  padding: 4px 0;
+  font-size: 12px;
+}
+/* Icon-only right tabs always */
+.shard-right-tab { min-height: 32px; }
+.shard-right-tab svg { margin: 0 auto; }
+/* Right sidebar panes */
+.shard-right-panes {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+}
+.shard-right-pane-content { display: flex; flex-direction: column; flex: 1; }
+.shard-right-pane-content.hidden { display: none; }
+#shard-right-panes .shard-sidebar-pane {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 .shard-folder-tree {
   flex: 1 1 auto;
@@ -37767,13 +37815,25 @@ body.theme-frosted .modal {
   margin: 0;
   padding: 0;
 }
+/* Progressive indent for nested folders/notes */
+.shard-folder-tree li > ul {
+  padding-left: 10px;
+}
 .shard-folder-tree li {
   position: relative;
   margin: 0;
   padding: 0;
 }
-/* vertical tree guide line */
-.shard-folder-tree li::before {
+/* Root items: no tree lines, minimal indent */
+.shard-folder-tree li.shard-tree-root > .shard-tree-row.root {
+  margin-left: 4px;
+}
+/* Sub items: tree lines and indent */
+.shard-folder-tree li.shard-tree-sub > .shard-tree-row.sub {
+  margin-left: 22px;
+}
+/* vertical tree guide line — only for sub items */
+.shard-folder-tree li.shard-tree-sub::before {
   content: '';
   position: absolute;
   left: 12px;
@@ -37781,9 +37841,10 @@ body.theme-frosted .modal {
   bottom: 0;
   width: 1px;
   background: color-mix(in srgb, var(--border) 60%, transparent);
+  pointer-events: none;
 }
-/* horizontal connector */
-.shard-folder-tree li > .shard-tree-row::before {
+/* horizontal connector — only for sub items */
+.shard-folder-tree li.shard-tree-sub > .shard-tree-row.sub::before {
   content: '';
   position: absolute;
   left: -9px;
@@ -37791,6 +37852,7 @@ body.theme-frosted .modal {
   width: 9px;
   height: 1px;
   background: color-mix(in srgb, var(--border) 60%, transparent);
+  pointer-events: none;
 }
 .shard-tree-row {
   display: flex;
@@ -37802,13 +37864,26 @@ body.theme-frosted .modal {
   font-size: 12px;
   transition: background 0.15s;
   position: relative;
-  margin-left: 22px;
 }
 .shard-tree-row:hover {
   background: color-mix(in srgb, var(--fg) 4%, transparent);
 }
 .shard-tree-row.selected {
   background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 10%, transparent);
+}
+.shard-tree-row.drag-over {
+  background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 20%, transparent);
+  outline: 1px dashed var(--accent, var(--red, #4a9eff));
+}
+/* During active drag, file rows become transparent to pointer events so
+   folder rows behind them can receive the drop. */
+.shard-folder-tree.shard-dragging .shard-tree-row[data-note-id] {
+  pointer-events: none;
+}
+/* Visual feedback when dragging over empty tree space (root drop target) */
+.shard-folder-tree.shard-root-drag-over {
+  outline: 2px dashed var(--accent, var(--red, #4a9eff));
+  background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 8%, transparent);
 }
 /* CSS arrow chevron */
 .shard-tree-arrow {
@@ -37829,10 +37904,17 @@ body.theme-frosted .modal {
   border: none;
   width: 5px;
 }
-.shard-tree-icon {
-  font-size: 11px;
-  opacity: 0.7;
-  flex-shrink: 0;
+/* Animated expand/collapse for folder subtrees */
+.shard-folder-tree li > ul {
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: max-height 0.2s ease, opacity 0.15s ease;
+}
+.shard-folder-tree li.expanded > ul {
+  max-height: 5000px;
+  opacity: 1;
+  overflow: visible;
 }
 .shard-tree-name {
   overflow: hidden;
@@ -37854,23 +37936,170 @@ body.theme-frosted .modal {
 }
 .shard-tabs {
   display: flex;
-  gap: 4px;
-  margin-bottom: 8px;
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 6px;
+  gap: 0;
+  margin-bottom: 0;
+  overflow-x: auto;
+  min-width: 0;
+  scrollbar-width: none;
+  align-items: flex-end;
+  min-height: 32px;
+  flex-shrink: 0;
+  border-bottom: none;
+  padding-bottom: 0;
 }
+.shard-tabs::-webkit-scrollbar { display: none; }
 .shard-tab {
   background: transparent;
   border: none;
   color: var(--fg);
-  padding: 4px 10px;
-  border-radius: 6px;
+  padding: 6px 10px 4px;
+  border-radius: 6px 6px 0 0;
   cursor: pointer;
   font-size: 12px;
-  opacity: 0.6;
+  line-height: 1.4;
+  opacity: 0.55;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  margin-bottom: 0;
+  width: 120px;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
 }
 .shard-tab.active {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  opacity: 1;
+}
+.shard-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+  margin: 0 -2px 0 auto;
+  opacity: 0.7;
+}
+.shard-tab-close:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.shard-tab-new {
+  background: transparent;
+  border: none;
+  color: var(--fg);
+  padding: 6px 8px 4px;
+  border-radius: 6px 6px 0 0;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  opacity: 0.4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-bottom: 0;
+}
+.shard-tab-new:hover {
+  opacity: 0.8;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+.shard-vault-perm-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 6px 8px;
+  line-height: 1;
+  transition: background 0.15s, border-color 0.15s;
+}
+.shard-vault-perm-btn:hover {
+  border-color: var(--accent, var(--red, #4a9eff));
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+.shard-note-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  padding: 4px 0;
+  min-height: 0;
+  flex-shrink: 0;
+  position: relative;
+}
+.shard-nav-btns {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+  z-index: 1;
+}
+.shard-nav-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 0;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 3px 8px;
+  line-height: 1;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.5;
+  transition: opacity 0.15s, background 0.15s;
+}
+.shard-nav-btn:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+.shard-nav-btn:disabled {
+  opacity: 0.2;
+  cursor: default;
+}
+.shard-breadcrumb {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-size: 12px;
+  opacity: 0.7;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+.shard-breadcrumb > * {
+  pointer-events: auto;
+}
+.shard-breadcrumb-part {
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+.shard-breadcrumb-part:hover {
   background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.shard-breadcrumb-sep {
+  opacity: 0.4;
+}
+.shard-breadcrumb-current {
+  font-weight: 500;
   opacity: 1;
 }
 .shard-search-row {
@@ -37890,7 +38119,6 @@ body.theme-frosted .modal {
   min-height: 0;
   overflow: hidden;
   display: flex;
-  gap: 8px;
 }
 .shard-panel-wrap.hidden {
   display: none;
@@ -37918,74 +38146,657 @@ body.theme-frosted .modal {
 .shard-note-item.active {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
+.shard-pane-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.shard-pane-content.hidden {
+  display: none;
+}
 .shard-preview {
   flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  font-size: 14px;
+  line-height: 1.6;
+  padding: 0 4px 24px;
+  color: var(--fg);
+}
+.shard-preview-header,
+.shard-preview-body {
+  color: var(--fg);
+}
+.shard-preview-body {
+  flex: 1 1 auto;
+  min-height: 80px;
+}
+.shard-preview-header {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+.shard-preview-header h1 {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.shard-preview-body h1,
+.shard-preview-body h2,
+.shard-preview-body h3,
+.shard-preview-body h4 {
+  margin: 18px 0 10px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.shard-preview-body h1 { font-size: 22px; overflow-wrap: anywhere; }
+.shard-preview-body h2 { font-size: 18px; overflow-wrap: anywhere; }
+.shard-preview-body h3 { font-size: 15px; overflow-wrap: anywhere; }
+.shard-preview-body h4 { overflow-wrap: anywhere; }
+.shard-preview-body p {
+  margin: 0 0 10px;
+  overflow-wrap: anywhere;
+}
+.shard-preview-body ul,
+.shard-preview-body ol {
+  margin: 0 0 10px;
+  padding-left: 22px;
+}
+.shard-preview-body li {
+  margin-bottom: 4px;
+  overflow-wrap: anywhere;
+}
+.shard-preview-body code {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  padding: 2px 5px;
+  border-radius: 4px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.shard-preview-body pre {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  padding: 10px;
+  border-radius: 6px;
+  overflow-x: auto;
+  font-size: 12px;
+}
+/* ── Left sidebar tabs ── */
+.shard-sidebar-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.shard-sidebar-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 6px 2px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0.5;
+  transition: opacity 0.15s, background 0.15s;
+  white-space: nowrap;
+  min-width: 0;
+  user-select: none;
+  -webkit-user-select: none;
+  outline: none;
+}
+.shard-sidebar-tab:hover { opacity: 0.8; background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.shard-sidebar-tab.active { opacity: 1; background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.shard-sidebar-tab svg { flex-shrink: 0; }
+.shard-sidebar-tab.dragging { opacity: 0.3; cursor: grabbing; }
+/* Panes */
+.shard-sidebar-panes {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+}
+.shard-sidebar-pane {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+.shard-sidebar-pane.hidden { display: none; }
+/* Left sidebar tabs: always icon-only */
+.shard-sidebar-tab span { display: none; }
+.shard-sidebar-tab { min-height: 32px; }
+.shard-sidebar-tab svg { margin: 0 auto; }
+
+/* Search toolbar */
+.shard-search-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 0 6px;
+  position: relative;
+}
+.shard-search-field {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+.shard-search-field svg { flex-shrink: 0; opacity: 0.5; }
+.shard-search-field input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+  min-width: 0;
+}
+.shard-search-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0.5;
+  padding: 0;
+  margin: 0;
+}
+.shard-search-clear:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 10%, transparent); }
+.shard-search-clear.hidden { display: none; }
+.shard-search-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+  margin: 0;
+  opacity: 0.6;
+  transition: opacity 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+.shard-search-toggle:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.shard-search-toggle.active {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 15%, transparent);
+  border-color: var(--accent, var(--red, #4a9eff));
+}
+/* Sort dropdown */
+.shard-search-sort-dropdown {
+  position: absolute;
+  top: 36px;
+  right: 36px;
+  background: var(--bg-raised, var(--bg));
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 10px;
-  overflow-y: auto;
-  font-size: 12px;
-  line-height: 1.5;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  z-index: 100;
+  min-width: 180px;
+  padding: 4px;
 }
+.shard-search-sort-item {
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.shard-search-sort-item:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.shard-search-sort-item.active { background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 12%, transparent); }
+/* Settings panel */
+.shard-search-settings {
+  position: absolute;
+  top: 36px;
+  right: 4px;
+  background: var(--bg-raised, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  z-index: 100;
+  min-width: 220px;
+  padding: 8px 10px;
+}
+.shard-search-setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+  font-size: 12px;
+  cursor: pointer;
+}
+.shard-toggle {
+  position: relative;
+  display: inline-block;
+  width: 32px;
+  height: 18px;
+}
+.shard-toggle input { opacity: 0; width: 0; height: 0; margin: 0; }
+.shard-toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background: var(--border);
+  border-radius: 18px;
+  transition: background 0.2s;
+}
+.shard-toggle-slider::before {
+  content: '';
+  position: absolute;
+  height: 14px;
+  width: 14px;
+  left: 2px;
+  bottom: 2px;
+  background: var(--fg);
+  border-radius: 50%;
+  transition: transform 0.2s;
+}
+.shard-toggle input:checked + .shard-toggle-slider { background: var(--accent, var(--red, #4a9eff)); }
+.shard-toggle input:checked + .shard-toggle-slider::before { transform: translateX(14px); }
+/* Explain bar */
+.shard-search-explain {
+  font-size: 11px;
+  opacity: 0.5;
+  padding: 0 0 4px;
+  min-height: 16px;
+}
+.shard-search-explain.hidden { display: none; }
+/* Empty search state — popover below search bar */
+.shard-search-empty {
+  position: absolute;
+  top: 36px;
+  left: 4px;
+  right: 4px;
+  z-index: 100;
+  background: var(--bg-raised, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  padding: 10px 12px;
+  max-height: 380px;
+  overflow-y: auto;
+}
+.shard-search-empty.hidden { display: none; }
+.shard-search-empty-section { margin-bottom: 10px; }
+.shard-search-empty-section:last-child { margin-bottom: 0; }
+.shard-search-empty-title {
+  font-size: 11px;
+  opacity: 0.5;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.shard-search-empty-item {
+  padding: 5px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: default;
+  transition: background 0.1s;
+}
+.shard-search-empty-item:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.shard-search-empty-item code {
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  font-size: 11px;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  padding: 1px 4px;
+  border-radius: 3px;
+  margin-right: 4px;
+}
+.shard-search-history-item {
+  padding: 5px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.1s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.shard-search-history-item:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.shard-search-history-item svg { opacity: 0.5; flex-shrink: 0; }
+/* Results */
+.shard-search-results {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+/* Collapsible file result */
+.shard-search-file {
+  margin-bottom: 2px;
+}
+.shard-search-file-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  transition: background 0.1s;
+  user-select: none;
+}
+.shard-search-file-header:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.shard-search-file-header .shard-search-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  font-size: 10px;
+  opacity: 0.5;
+  transition: transform 0.15s;
+  flex-shrink: 0;
+}
+.shard-search-file-header.collapsed .shard-search-chevron { transform: rotate(-90deg); }
+.shard-search-file-header .shard-search-file-count {
+  margin-left: auto;
+  font-size: 11px;
+  opacity: 0.5;
+  font-weight: 400;
+}
+.shard-search-matches {
+  padding-left: 24px;
+}
+.shard-search-match {
+  padding: 3px 6px 3px 0;
+  font-size: 11px;
+  line-height: 1.5;
+  opacity: 0.7;
+  border-left: 2px solid transparent;
+  padding-left: 8px;
+  margin-left: -2px;
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s;
+}
+.shard-search-match:hover {
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  border-left-color: var(--accent, var(--red, #4a9eff));
+}
+.shard-search-match mark {
+  background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 30%, transparent);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+.shard-search-match.raw {
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  white-space: pre-wrap;
+  opacity: 0.85;
+}
+/* Fallback simple result (used when not grouped) */
+.shard-search-result {
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.1s;
+  border: 1px solid color-mix(in srgb, var(--fg) 8%, transparent);
+  margin-bottom: 4px;
+}
+.shard-search-result:hover {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  border-color: color-mix(in srgb, var(--fg) 16%, transparent);
+}
+.shard-search-result-title { font-weight: 500; margin-bottom: 2px; }
+.shard-search-result-snippet { font-size: 11px; opacity: 0.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Bookmarks */
+.shard-bookmarks-list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+.shard-bookmark-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.1s;
+}
+.shard-bookmark-item:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
+/* Tags cloud */
+.shard-tags-cloud {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 6px;
+  padding: 4px 2px;
+}
+.shard-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.shard-tag-chip:hover { background: color-mix(in srgb, var(--fg) 15%, transparent); }
+.shard-tag-chip .shard-tag-count { opacity: 0.6; font-size: 10px; }
+
 .shard-status-bar {
   margin-top: 8px;
   padding-top: 6px;
   border-top: 1px solid var(--border);
   font-size: 11px;
-  opacity: 0.6;
   display: flex;
   justify-content: space-between;
+  align-items: center;
+}
+.shard-word-count {
+  text-align: right;
+  padding: 8px 12px 16px;
+  font-size: 10px;
+  opacity: 0.45;
+  pointer-events: none;
+  user-select: none;
+  font-family: inherit;
 }
 
-/* Custom vault dropdown */
-.shard-vault-dropdown-wrap {
-  position: relative;
-  width: 100%;
+/* ===== Pane Workspace ===== */
+.shard-pane-workspace {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
 }
-.shard-vault-dropdown-trigger {
+.shard-pane-workspace.split-h {
+  flex-direction: row;
+}
+.shard-pane-workspace.split-v {
+  flex-direction: column;
+}
+.shard-editor-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  position: relative;
+}
+.shard-editor-pane + .shard-editor-pane {
+  border-left: 1px solid var(--border);
+}
+.shard-pane-workspace.split-v .shard-editor-pane + .shard-editor-pane {
+  border-left: none;
+  border-top: 1px solid var(--border);
+}
+/* Drop zones */
+.shard-drop-zones {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: none;
+  pointer-events: none;
+}
+.shard-editor-pane.drag-over .shard-drop-zones {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-rows: 1fr 1fr 1fr;
+  gap: 2px;
+  padding: 2px;
+}
+.shard-drop-zone {
+  pointer-events: auto;
+  border-radius: 6px;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 6px 10px;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.shard-drop-zone.drag-active {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 12%, transparent);
+}
+.shard-drop-zone-center {
+  z-index: 1;
+}
+/* Sidebar panel drop zones */
+.shard-sidebar-drop-zones {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: none;
+  pointer-events: none;
+}
+.shard-left-pane.drag-over-sidebar .shard-sidebar-drop-zones,
+.shard-right-pane.drag-over-sidebar .shard-sidebar-drop-zones {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-rows: 1fr 1fr 1fr;
+  gap: 2px;
+  padding: 2px;
+}
+.shard-sidebar-drop-zone {
+  pointer-events: auto;
+  border-radius: 6px;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.shard-sidebar-drop-zone.drag-active {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 12%, transparent);
+}
+/* Tab drag styling */
+.shard-tab[draggable="true"] {
+  cursor: grab;
+}
+.shard-tab.dragging {
+  opacity: 0.3;
+}
+
+/* Shard-style vault selector */
+.shard-vault-selector-wrap,
+.shard-vault-dropdown-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  align-self: center;
+}
+.shard-vault-selector-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  box-sizing: border-box;
+  padding: 0 8px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 6px;
   background: var(--bg-raised, var(--bg));
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12px;
   transition: border-color 0.15s, background 0.15s;
   user-select: none;
 }
-.shard-vault-dropdown-trigger:hover {
+.shard-vault-selector-trigger:hover {
   border-color: var(--accent, var(--red, #4a9eff));
 }
-.shard-vault-dropdown-label {
+.shard-vault-selector-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 500;
+  flex: 1;
+  min-width: 0;
 }
-.shard-vault-dropdown-arrow {
+.shard-vault-selector-arrow {
   font-size: 10px;
   opacity: 0.6;
   flex-shrink: 0;
   transition: transform 0.15s;
 }
+.shard-vault-selector-wrap.open .shard-vault-selector-arrow,
 .shard-vault-dropdown-wrap.open .shard-vault-dropdown-arrow {
   transform: rotate(180deg);
 }
 .shard-vault-dropdown-menu {
   position: absolute;
-  top: calc(100% + 4px);
+  bottom: calc(100% + 4px);
   left: 0;
   right: 0;
-  z-index: 100;
+  z-index: 200;
   background: var(--bg-raised, var(--bg));
   border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: 0 4px 12px rgba(0,0,0,0.25);
   padding: 4px;
-  max-height: 260px;
+  max-height: 200px;
   overflow-y: auto;
 }
 .shard-vault-dropdown-item {
@@ -37993,10 +38804,10 @@ body.theme-frosted .modal {
   align-items: center;
   justify-content: space-between;
   gap: 6px;
-  padding: 7px 10px;
+  padding: 2px 10px;
+  font-size: 12px;
   border-radius: 6px;
   cursor: pointer;
-  font-size: 13px;
   transition: background 0.15s;
 }
 .shard-vault-dropdown-item:hover {
@@ -38010,35 +38821,184 @@ body.theme-frosted .modal {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.shard-vault-dropdown-item .vault-remove {
+.shard-vault-dropdown-item .vault-menu-btn {
   background: none;
   border: none;
   color: var(--fg);
   opacity: 0;
   cursor: pointer;
-  font-size: 13px;
-  padding: 0 4px;
-  line-height: 1;
-  border-radius: 3px;
+  padding: 2px 4px;
+  border-radius: 4px;
   transition: opacity 0.15s, color 0.15s, background 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
-.shard-vault-dropdown-item:hover .vault-remove {
+.shard-vault-dropdown-item:hover .vault-menu-btn {
   opacity: 0.5;
 }
-.shard-vault-dropdown-item .vault-remove:hover {
+.shard-vault-dropdown-item .vault-menu-btn:hover {
   opacity: 1;
-  color: var(--red, #ff6b6b);
-  background: color-mix(in srgb, var(--red, #ff6b6b) 12%, transparent);
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
 }
 .shard-vault-dropdown-add {
   border-top: 1px solid var(--border);
   margin-top: 2px;
-  padding-top: 7px;
+  padding-top: 4px;
   color: var(--accent, var(--red, #4a9eff));
   font-weight: 500;
 }
 .shard-vault-dropdown-add:hover {
   background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 8%, transparent);
+}
+.shard-vault-dialog {
+  position: absolute;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.35);
+}
+.shard-vault-dialog.hidden {
+  display: none;
+}
+.shard-vault-dialog-card {
+  background: var(--bg-raised, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  width: min(360px, 90vw);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+}
+/* Reset all buttons inside the Shard modal body — a global .modal-body button
+   { margin-top:6px } rule pushes every button down. Shard buttons should sit
+   flush with their adjacent inputs. inline-flex+align-items:center fixes the
+   ~1px baseline drift Windows Chrome adds to <button> elements in flex rows. */
+.modal-body.shard-modal-body button,
+.modal-body.shard-modal-body input[type="button"] {
+  margin-top: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.shard-vault-edit-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 0;
+  line-height: 0;
+  opacity: 0.7;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  vertical-align: middle;
+  transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+}
+.shard-vault-edit-btn:hover {
+  border-color: var(--accent, var(--red, #4a9eff));
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  opacity: 1;
+}
+
+/* Loading Overlay */
+.shard-loading-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.35);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  z-index: 60;
+  backdrop-filter: blur(2px);
+  transition: opacity 0.2s ease;
+}
+.shard-loading-overlay.hidden {
+  display: none;
+}
+.shard-loading-spinner {
+  width: 28px;
+  height: 28px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent, var(--red, #4a9eff));
+  border-radius: 50%;
+  animation: shard-spin 0.8s linear infinite;
+}
+.shard-loading-text {
+  font-size: 12px;
+  color: var(--fg);
+  opacity: 0.8;
+}
+@keyframes shard-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Add Vault Overlay */
+.shard-add-vault-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  backdrop-filter: blur(2px);
+}
+.shard-add-vault-overlay.hidden {
+  display: none;
+}
+.shard-add-vault-card {
+  background: var(--bg-raised, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  width: 90%;
+  max-width: 360px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+}
+.shard-vault-path-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 3px;
+  align-items: center;
+}
+.shard-vault-path-row input,
+.shard-vault-path-row button {
+  box-sizing: border-box;
+  height: 34px;
+  line-height: 1;
+}
+.shard-vault-path-row input {
+  padding: 6px 10px;
+  font-size: 13px;
+  border-radius: 6px;
+  max-width: 260px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+}
+.shard-vault-path-row button {
+  padding: 0 14px;
+  font-size: 12px;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* Fullscreen snap state */
@@ -38148,16 +39108,26 @@ body.theme-frosted .modal {
   color: var(--red, #ff6b6b);
 }
 
+/* Regular links in note content use the accent color, not browser blue */
+.shard-preview-body a {
+  color: var(--accent, var(--red, #ff6b6b));
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent, var(--red)) 50%, transparent);
+}
+.shard-preview-body a:hover {
+  text-decoration-color: var(--accent, var(--red));
+}
+
 /* Wikilinks */
 .shard-preview a.wikilink {
   color: var(--accent, var(--red, #4a9eff));
   text-decoration: underline;
-  text-decoration-style: dotted;
+  text-decoration-style: solid;
   cursor: pointer;
 }
 .shard-preview a.wikilink.ghost {
-  color: var(--fg);
-  opacity: 0.5;
+  color: var(--accent, var(--red, #4a9eff));
+  opacity: 0.6;
   text-decoration: underline;
   text-decoration-style: dashed;
 }
@@ -38222,18 +39192,444 @@ body.theme-frosted .modal {
   border-color: var(--accent, var(--red, #4a9eff));
   opacity: 1;
 }
+.shard-mode-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  margin-left: auto;
+  position: relative;
+  z-index: 2;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  cursor: pointer;
+  opacity: 0.7;
+  transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+  flex-shrink: 0;
+}
+.shard-mode-icon:hover {
+  border-color: var(--accent, var(--red, #4a9eff));
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  opacity: 1;
+}
+.shard-mode-tooltip {
+  position: fixed;
+  z-index: 300;
+  background: var(--panel, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+  display: none;
+  max-width: 220px;
+}
+
+/* ===== View Mode Buttons ===== */
+.shard-view-modes {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin-left: auto;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  flex-shrink: 0;
+}
+.shard-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: all 0.15s;
+  white-space: nowrap;
+  line-height: 1;
+  width: 28px;
+  height: 28px;
+}
+.shard-mode-btn:hover {
+  opacity: 0.9;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+.shard-mode-btn.active {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  color: var(--accent, var(--red, #4a9eff));
+}
+.shard-mode-btn svg {
+  flex-shrink: 0;
+}
+
+.shard-mode-tooltip .shard-tooltip-line {
+  white-space: nowrap;
+}
 .shard-edit-textarea {
   width: 100%;
   min-height: 300px;
-  background: var(--input-bg, var(--panel));
+  background: transparent;
   color: var(--fg);
+  border: none;
+  border-left: 2px solid color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 30%, transparent);
+  border-radius: 0;
+  padding: 4px 4px 4px 12px;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.6;
+  resize: vertical;
+  outline: none;
+}
+
+/* Source mode textarea styled like rendered content */
+.shard-source-textarea {
+  width: 100%;
+  min-height: 300px;
+  background: transparent;
+  color: var(--fg);
+  border: none;
+  padding: 0 4px;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.6;
+  resize: vertical;
+  outline: none;
+}
+
+/* Source mode: contentEditable styled text div */
+.shard-source-view,
+.shard-live-view {
+  width: 100%;
+  min-height: 300px;
+  color: var(--fg);
+  padding: 8px 0;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  outline: none;
+  cursor: text;
+}
+.shard-reading-view {
+  padding: 8px 0;
+  color: var(--fg);
+  width: 100%;
+  overflow-wrap: anywhere;
+  word-wrap: break-word;
+}
+.shard-source-view .md-bracket {
+  opacity: 0.5;
+}
+.shard-live-view .md-bracket {
+  opacity: 1;
+}
+.shard-source-view a.wikilink-source,
+.shard-live-view a.wikilink-source {
+  color: var(--accent, var(--red, #4a9eff));
+  text-decoration: underline;
+  text-decoration-style: solid;
+  cursor: pointer;
+}
+
+/* Rich markdown formatting in source / live preview */
+.shard-source-view .md-hash,
+.shard-source-view .md-syntax,
+.shard-source-view .md-li-marker,
+.shard-source-view .md-bq-mark,
+.shard-source-view .md-link-url {
+  opacity: 0.45;
+}
+/* Live Preview: dual-mode per-line editing */
+.shard-live-view .lp-line,
+.shard-source-view .lp-line,
+.shard-reading-view .lp-line {
+  position: relative;
+  margin-bottom: 0.35em;
+}
+.shard-live-view .lp-line {
+  cursor: text;
+}
+.shard-reading-view .lp-line {
+  cursor: default;
+}
+/* Wikilink suggestion dropdown */
+.shard-wiki-suggest {
+  background: var(--panel, var(--bg, #1a1a1a));
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 10px;
-  font-family: monospace;
-  font-size: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+  font-size: 13px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.shard-wiki-suggest-item {
+  padding: 6px 10px;
+  cursor: pointer;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.shard-wiki-suggest-item:hover,
+.shard-wiki-suggest-item.selected {
+  background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 12%, transparent);
+}
+
+/* Token-level inline editing: no dark background fill on active line */
+.shard-live-view .lp-line.active {
+  border-radius: 4px;
+}
+/* When a line is active, source is visible and clean is hidden */
+.shard-live-view .lp-line.active .lp-source {
+  display: block;
+}
+.shard-live-view .lp-line.active .lp-clean {
+  display: none;
+}
+/* Hide ALL syntax markers by default in an active source line */
+.lp-source .md-syntax,
+.lp-source .md-bracket,
+.lp-source .md-hash,
+.lp-source .md-bq-mark,
+.lp-source .md-li-marker {
+  display: none;
+}
+/* When a token is active, reveal its syntax markers */
+.lp-source .md-h1.active .md-hash,
+.lp-source .md-h2.active .md-hash,
+.lp-source .md-h3.active .md-hash,
+.lp-source .md-h4.active .md-hash,
+.lp-source .md-h5.active .md-hash,
+.lp-source .md-h6.active .md-hash,
+.lp-source .md-bq.active .md-bq-mark,
+.lp-source .md-li-marker.active,
+.lp-source .md-bold.active .md-syntax,
+.lp-source .md-italic.active .md-syntax,
+.lp-source .md-strike.active .md-syntax,
+.lp-source .md-code.active .md-syntax,
+.lp-source .md-wikilink.active .md-bracket,
+.lp-source .md-link.active .md-syntax {
+  display: inline;
+}
+/* Source token wrappers must visually match clean equivalents when syntax is hidden */
+.lp-source .md-h1 { font-size: 2em; font-weight: 700; display: block; margin: 0; line-height: inherit; }
+.lp-source .md-h2 { font-size: 1.6em; font-weight: 600; display: block; margin: 0; line-height: inherit; }
+.lp-source .md-h3 { font-size: 1.3em; font-weight: 600; display: block; margin: 0; line-height: inherit; }
+.lp-source .md-h4 { font-size: 1.15em; font-weight: 600; display: block; margin: 0; line-height: inherit; }
+.lp-source .md-h5 { font-size: 1em; font-weight: 600; display: block; margin: 0; line-height: inherit; }
+.lp-source .md-h6 { font-size: 0.9em; font-weight: 600; display: block; margin: 0; line-height: inherit; }
+.lp-source .md-bold { font-weight: bold; }
+.lp-source .md-italic { font-style: italic; }
+.lp-source .md-strike { text-decoration: line-through; opacity: 0.75; }
+.lp-source .md-code {
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.92em;
+}
+.lp-source .md-bq {
+  border-left: 3px solid color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 50%, transparent);
+  padding-left: 12px;
+  margin: 4px 0;
+  display: block;
+}
+.lp-source .md-hr {
+  display: block;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 20%, transparent);
+  margin: 8px 0;
+}
+.lp-source .md-link-text,
+.lp-source .wikilink-source {
+  color: var(--accent, var(--red, #4a9eff));
+  text-decoration: underline;
+}
+.shard-live-view .lp-line.lp-empty,
+.shard-reading-view .lp-line.lp-empty {
+  margin-bottom: 0;
+  min-height: 0.35em;
+}
+.shard-live-view .lp-clean,
+.shard-reading-view .lp-clean {
+  display: block;
+}
+.shard-live-view .lp-clean h1,
+.shard-live-view .lp-clean h2,
+.shard-live-view .lp-clean h3,
+.shard-live-view .lp-clean h4,
+.shard-live-view .lp-clean h5,
+.shard-live-view .lp-clean h6,
+.shard-reading-view .lp-clean h1,
+.shard-reading-view .lp-clean h2,
+.shard-reading-view .lp-clean h3,
+.shard-reading-view .lp-clean h4,
+.shard-reading-view .lp-clean h5,
+.shard-reading-view .lp-clean h6 { margin: 0; line-height: inherit; }
+.shard-live-view .lp-clean h1,
+.shard-reading-view .lp-clean h1 { font-size: 2em; font-weight: 700; }
+.shard-live-view .lp-clean h2,
+.shard-reading-view .lp-clean h2 { font-size: 1.6em; font-weight: 600; }
+.shard-live-view .lp-clean h3,
+.shard-reading-view .lp-clean h3 { font-size: 1.3em; font-weight: 600; }
+.shard-live-view .lp-clean h4,
+.shard-reading-view .lp-clean h4 { font-size: 1.15em; font-weight: 600; }
+.shard-live-view .lp-clean h5,
+.shard-reading-view .lp-clean h5 { font-size: 1em; font-weight: 600; }
+.shard-live-view .lp-clean h6,
+.shard-reading-view .lp-clean h6 { font-size: 0.9em; font-weight: 600; }
+.shard-live-view .lp-clean blockquote,
+.shard-reading-view .lp-clean blockquote {
+  border-left: 3px solid color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 50%, transparent);
+  padding-left: 12px;
+  margin: 4px 0;
+}
+.shard-live-view .lp-clean li,
+.shard-reading-view .lp-clean li { margin: 2px 0; }
+.shard-live-view .lp-clean code,
+.shard-reading-view .lp-clean code {
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.92em;
+}
+.shard-live-view .lp-clean a,
+.shard-reading-view .lp-clean a {
+  color: var(--accent, var(--red, #4a9eff));
+  text-decoration: underline;
+}
+.shard-live-view .lp-source,
+.shard-reading-view .lp-source {
+  display: none;
+  outline: none;
+  cursor: text;
+}
+.shard-source-view .md-h1, .shard-live-view .md-h1 { font-size: 2em; font-weight: 700; line-height: 1.2; display: block; margin: 0.6em 0 0.3em; }
+.shard-source-view .md-h2, .shard-live-view .md-h2 { font-size: 1.6em; font-weight: 600; line-height: 1.25; display: block; margin: 0.5em 0 0.25em; }
+.shard-source-view .md-h3, .shard-live-view .md-h3 { font-size: 1.3em; font-weight: 600; line-height: 1.3; display: block; margin: 0.4em 0 0.2em; }
+.shard-source-view .md-h4, .shard-live-view .md-h4 { font-size: 1.15em; font-weight: 600; line-height: 1.35; display: block; margin: 0.35em 0 0.15em; }
+.shard-source-view .md-h5, .shard-live-view .md-h5 { font-size: 1em; font-weight: 600; line-height: 1.4; display: block; margin: 0.3em 0 0.1em; }
+.shard-source-view .md-h6, .shard-live-view .md-h6 { font-size: 0.9em; font-weight: 600; line-height: 1.4; display: block; margin: 0.25em 0 0.1em; }
+.shard-source-view .md-bold, .shard-live-view .md-bold { font-weight: bold; }
+.shard-source-view .md-italic, .shard-live-view .md-italic { font-style: italic; }
+.shard-source-view .md-strike, .shard-live-view .md-strike { text-decoration: line-through; opacity: 0.75; }
+.shard-source-view .md-code, .shard-live-view .md-code {
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.92em;
+}
+.shard-source-view .md-code-block, .shard-live-view .md-code-block {
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin: 4px 0;
+  font-size: 0.92em;
   line-height: 1.5;
-  resize: vertical;
+}
+.shard-source-view .md-bq, .shard-live-view .md-bq {
+  border-left: 3px solid color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 50%, transparent);
+  padding-left: 12px;
+  margin: 4px 0;
+  display: block;
+}
+.shard-source-view .md-link-text, .shard-live-view .md-link-text {
+  color: var(--accent, var(--red, #4a9eff));
+  text-decoration: underline;
+}
+.shard-source-view .md-hr, .shard-live-view .md-hr {
+  display: block;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 20%, transparent);
+  margin: 8px 0;
+  line-height: 0;
+}
+
+/* Unified heading sizes across Reading / Source / Live Preview */
+.shard-body-wrap {
+  width: 100%;
+  overflow-wrap: anywhere;
+  word-wrap: break-word;
+}
+.shard-body-wrap h1 { font-size: 2em; font-weight: 700; line-height: 1.2; margin: 0.6em 0 0.3em; }
+.shard-body-wrap h2 { font-size: 1.6em; font-weight: 600; line-height: 1.25; margin: 0.5em 0 0.25em; }
+.shard-body-wrap h3 { font-size: 1.3em; font-weight: 600; line-height: 1.3; margin: 0.4em 0 0.2em; }
+.shard-body-wrap h4 { font-size: 1.15em; font-weight: 600; line-height: 1.35; margin: 0.35em 0 0.15em; }
+.shard-body-wrap h5 { font-size: 1em; font-weight: 600; line-height: 1.4; margin: 0.3em 0 0.1em; }
+.shard-body-wrap h6 { font-size: 0.9em; font-weight: 600; line-height: 1.4; margin: 0.25em 0 0.1em; }
+
+/* Live Preview: element-level syntax reveal */
+.lp-wl {
+  display: inline;
+}
+.lp-wl .lp-raw {
+  display: none;
+  color: var(--fg);
+  outline: none;
+  cursor: text;
+  border-bottom: 1px dashed var(--accent, var(--red, #4a9eff));
+}
+.lp-wl.active .lp-rendered {
+  display: none;
+}
+.lp-wl.active .lp-raw {
+  display: inline;
+}
+
+/* Inline title editing */
+.shard-title-edit {
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.3;
+  display: block;
+  outline: none;
+  border-bottom: 2px solid var(--accent, var(--red, #4a9eff));
+  padding-bottom: 4px;
+  min-width: 100px;
+}
+.shard-title-edit:focus {
+  border-bottom-color: var(--accent, var(--red, #4a9eff));
+}
+
+/* Note more-options button */
+.shard-note-menu-btn {
+  background: none;
+  border: 1px solid var(--border);
+  outline: 1px solid var(--border);
+  color: var(--fg);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.5;
+  transition: opacity 0.15s, background 0.15s;
+  width: 28px;
+  height: 28px;
+}
+.shard-note-menu-btn:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
 }
 
 /* Outline */
@@ -38261,23 +39657,335 @@ body.theme-frosted .modal {
 .shard-sidebar-link.ghost {
   opacity: 0.5;
 }
+.shard-backlinks-toggle {
+  transition: opacity 0.15s, color 0.15s;
+}
+.shard-backlinks-toggle:hover {
+  opacity: 1 !important;
+}
+.shard-backlinks-toggle.active {
+  opacity: 1 !important;
+  color: var(--accent, var(--red, #4a9eff)) !important;
+}
 .shard-prop-row {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: 80px 1fr;
   gap: 8px;
-  padding: 3px 0;
+  padding: 5px 0;
   font-size: 11px;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  align-items: center;
 }
 .shard-prop-key {
   opacity: 0.6;
-  flex-shrink: 0;
-}
-.shard-prop-val {
-  text-align: right;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.shard-prop-val {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: normal;
+  text-align: left;
+  word-wrap: break-word;
+}
+.shard-prop-val .shard-tag {
+  display: inline-block;
+  margin-right: 4px;
+  margin-bottom: 2px;
+}
+.shard-properties-panel h4 {
+  font-size: 11px;
+  opacity: 0.6;
+  margin: 0 0 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Inline properties block — Obsidian dock style */
+.shard-properties-inline {
+  margin: 0 0 16px;
+  padding: 0;
+  border-bottom: 1px solid var(--border);
+}
+.shard-properties-inline h4 {
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.5;
+  margin: 0 0 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.shard-prop-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.shard-properties-inline .shard-prop-row {
+  display: grid;
+  grid-template-columns: 20px 120px 1fr;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  padding: 5px 0;
+  border-top: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  min-width: 0;
+}
+.shard-properties-inline .shard-prop-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  opacity: 0.4;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.shard-properties-inline .shard-prop-icon:hover {
+  opacity: 0.8;
+}
+.shard-properties-inline .shard-prop-key {
+  opacity: 0.65;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+}
+.shard-properties-inline .shard-prop-val {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  font-size: 12px;
+  text-align: left;
+}
+.shard-properties-inline .shard-prop-val[data-type="array"] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  overflow: visible;
+}
+.shard-prop-add-area {
+  margin-top: 16px;
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  opacity: 0.5;
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  transition: opacity 0.15s, border-color 0.15s;
+  outline: none;
+  user-select: none;
+}
+.shard-prop-add-area:hover {
+  opacity: 0.85;
+  border-color: color-mix(in srgb, var(--fg) 30%, transparent);
+}
+.shard-prop-add-area:focus-visible {
+  opacity: 1;
+  border-color: var(--fg);
+}
+.shard-properties-inline[data-properties-container] {
+  border: 1px dashed transparent;
+  border-radius: 6px;
+  padding: 10px 8px 4px;
+  margin: 12px -8px 4px;
+  transition: border-color 0.15s;
+  cursor: text;
+}
+.shard-properties-inline[data-properties-container]:hover {
+  border-color: color-mix(in srgb, var(--fg) 15%, transparent);
+}
+.shard-properties-inline[data-properties-container]:focus-within {
+  border-color: color-mix(in srgb, var(--fg) 30%, transparent);
+}
+/* Tag chips */
+.shard-prop-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 12px;
+  cursor: default;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+.shard-prop-chip.is-tag {
+  background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 12%, transparent);
+  color: var(--accent, var(--red, #4a9eff));
+}
+.shard-prop-chip-text {
+  user-select: none;
+}
+.shard-prop-chip-x {
+  opacity: 0.6;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  margin-right: -2px;
+}
+.shard-prop-chip-x:hover {
+  opacity: 1 !important;
+}
+.shard-prop-chip-input {
+  display: inline-block;
+  min-width: 40px;
+  outline: none;
+  font-size: 12px;
+  opacity: 0.6;
+}
+/* Property icon menu */
+.shard-prop-menu {
+  position: absolute;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 0;
+  z-index: 300;
+  min-width: 180px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+}
+.shard-prop-menu-item {
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--fg);
+}
+.shard-prop-menu-item:hover {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+.shard-prop-menu-item.danger {
+  color: var(--color-error, #ff6b6b);
+}
+.shard-prop-menu-divider {
+  height: 1px;
+  background: color-mix(in srgb, var(--border) 50%, transparent);
+  margin: 4px 8px;
+}
+.shard-prop-submenu {
+  position: fixed;
+  z-index: 99999;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 0;
+  min-width: 140px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+}
+.shard-prop-submenu-item {
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.shard-prop-submenu-item:hover {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+.shard-prop-submenu-item.active::after {
+  content: '\2713';
+  margin-left: auto;
+  opacity: 0.7;
+}
+.shard-prop-add-dropdown {
+  position: fixed;
+  z-index: 99999;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-width: 200px;
+  max-height: 240px;
+  overflow-y: auto;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+}
+.shard-prop-add-option {
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.shard-prop-add-option:hover {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+
+/* Shard scrollbar styling — narrower than the global 8px red scrollbar */
+.shard-sidebar-pane::-webkit-scrollbar,
+.shard-right-pane-content::-webkit-scrollbar,
+.shard-folder-tree::-webkit-scrollbar,
+.shard-note-list::-webkit-scrollbar,
+.shard-preview::-webkit-scrollbar,
+.shard-settings-nav::-webkit-scrollbar,
+.shard-settings-content::-webkit-scrollbar {
+  width: 4px;
+}
+.shard-sidebar-pane::-webkit-scrollbar-track,
+.shard-right-pane-content::-webkit-scrollbar-track,
+.shard-folder-tree::-webkit-scrollbar-track,
+.shard-note-list::-webkit-scrollbar-track,
+.shard-preview::-webkit-scrollbar-track,
+.shard-settings-nav::-webkit-scrollbar-track,
+.shard-settings-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+.shard-sidebar-pane::-webkit-scrollbar-thumb,
+.shard-right-pane-content::-webkit-scrollbar-thumb,
+.shard-folder-tree::-webkit-scrollbar-thumb,
+.shard-note-list::-webkit-scrollbar-thumb,
+.shard-preview::-webkit-scrollbar-thumb,
+.shard-settings-nav::-webkit-scrollbar-thumb,
+.shard-settings-content::-webkit-scrollbar-thumb {
+  background: var(--accent, var(--red, #4a9eff));
+  border-radius: 2px;
+}
+.shard-sidebar-pane,
+.shard-right-pane-content,
+.shard-folder-tree,
+.shard-note-list,
+.shard-preview,
+.shard-settings-nav,
+.shard-settings-content {
+  scrollbar-width: thin;
+  scrollbar-color: var(--accent, var(--red, #4a9eff)) transparent;
+}
+
+/* Tag autocomplete dropdown */
+.shard-tag-dropdown {
+  position: fixed;
+  z-index: 99999;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-width: 180px;
+  max-height: 220px;
+  overflow-y: auto;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  padding: 4px 0;
+}
+.shard-tag-dropdown-item {
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.shard-tag-dropdown-item:hover,
+.shard-tag-dropdown-item.selected {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
 }
 
 /* Note cards */
@@ -38350,3 +40058,653 @@ body.theme-frosted .modal {
     max-height: 180px;
   }
 }
+.adm-copilot-connect #adm-copilotStatus { flex-basis: 100%; margin-top: 0; }
+.adm-copilot-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.adm-copilot-wait {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: color-mix(in srgb, var(--fg) 70%, transparent);
+}
+.adm-copilot-coderow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.adm-copilot-code-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
+}
+.adm-copilot-code {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  padding: 4px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  user-select: all;
+}
+.adm-copilot-copy { margin-left: auto; }
+.adm-copilot-auth {
+  text-align: center;
+  text-decoration: none;
+  padding: 7px 12px;
+  font-size: 12px;
+}
+.adm-copilot-hint {
+  font-size: 11px;
+  line-height: 1.4;
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
+}
+/* ── Workspace picker ───────────────────────────────────────────── */
+/* Layout (width/flex column/max-height) inherited from base .modal-content. */
+/* Editable path/address bar: reuses .styled-prompt-input for border/bg/radius/
+   focus ring (set in the element's class list). Overrides only the deltas:
+   mono font, and full-bleed via flex stretch with no horizontal margin (the
+   modal-content's 10px padding is the gutter) instead of the base width:100%,
+   which overflowed against the overflow:auto scrollbar. */
+.workspace-cur {
+  align-self: stretch;
+  width: auto;
+  min-width: 0;
+  margin: 4px 0 8px;
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+}
+/* flex/overflow inherited from base .modal-body; only the padding differs. */
+.workspace-body { padding: 6px 0; }
+.workspace-row {
+  padding: 7px 18px;
+  cursor: pointer;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.workspace-row > span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.workspace-row-icon { flex-shrink: 0; opacity: 0.75; }
+.workspace-row:hover {
+  background: color-mix(in srgb, var(--border) 20%, transparent);
+}
+.workspace-up { opacity: 0.7; }
+.workspace-empty { padding: 14px 18px; opacity: 0.5; font-size: 13px; }
+.workspace-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 18px;
+  border-top: 1px solid var(--border);
+}
+/* Cookbook serve panel: Launch + ^ split button pair */
+.hwfit-serve-launch-group {
+  display: inline-flex;
+  align-items: stretch;
+  vertical-align: middle;
+}
+.hwfit-serve-launch-group .hwfit-serve-launch {
+  border-top-right-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+  margin-right: 0 !important;
+}
+.hwfit-serve-launch-group .hwfit-serve-schedule-arrow {
+  border-top-left-radius: 0 !important;
+  border-bottom-left-radius: 0 !important;
+  border-left: 1px solid var(--border) !important;
+  padding: 0 8px !important;
+  min-width: 26px;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Schedule form — mounted inside the cookbook serve panel. Uses the
+   theme tokens (--bg, --panel, --border, --accent, --red) so it
+   matches the rest of the cookbook chrome instead of inline whites. */
+.hwfit-schedule-form {
+  margin: 10px 0 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.hwfit-schedule-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0.95;
+  flex-wrap: wrap;
+}
+.hwfit-schedule-title svg { opacity: 0.7; flex-shrink: 0; }
+.hwfit-schedule-title-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hwfit-schedule-title-spacer { flex: 1; min-width: 8px; }
+.hwfit-schedule-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.hwfit-schedule-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  opacity: 0.75;
+}
+.hwfit-schedule-field input[type="time"] {
+  font: inherit;
+  min-width: 90px;
+}
+.hwfit-schedule-label {
+  font-size: 11px;
+  opacity: 0.75;
+}
+.hwfit-sched-days {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.hwfit-sched-day-chip {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.hwfit-sched-day-chip:hover { border-color: var(--accent, var(--red)); }
+.hwfit-sched-day-chip.is-on {
+  background: var(--accent, var(--red));
+  color: var(--panel, #fff);
+  border-color: var(--accent, var(--red));
+}
+.hwfit-schedule-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.hwfit-schedule-actions-spacer { flex: 1; }
+
+/* Days row hosts the day-chip strip on the left and the Cancel / Save
+   action buttons on the right. The spacer between them pushes the
+   actions to the right edge. */
+.hwfit-schedule-days-row {
+  align-items: center;
+}
+/* Cancel + Save sit on the right side of the days row with matching
+   icon-plus-label chrome. */
+.hwfit-sched-cancel,
+.hwfit-sched-save {
+  display: inline-flex !important;
+  align-items: center;
+}
+.hwfit-schedule-mirror-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  opacity: 0.9;
+  cursor: pointer;
+  user-select: none;
+}
+.hwfit-schedule-mirror-label { white-space: nowrap; }
+.hwfit-schedule-mirror-switch { transform: scale(0.85); transform-origin: left center; }
+.hwfit-sched-err {
+  font-size: 12px;
+  color: var(--red, #ff6b6b);
+  display: none;
+}
+.hwfit-sched-err.is-visible { display: block; }
+@media (max-width: 600px) {
+  .hwfit-schedule-row { gap: 8px; }
+  .hwfit-sched-day-chip { width: 36px; height: 36px; font-size: 11px; }
+}
+
+/* Brief outline flash on a note card when it's the target of a
+   #note-<id> link click from chat — same pattern as the cookbook
+   task flash, just scoped to .note-card. */
+.note-card-flash {
+  animation: note-card-flash-anim 1.6s ease-out;
+}
+@keyframes note-card-flash-anim {
+  0%   { box-shadow: 0 0 0 2px var(--accent, var(--red)); }
+  100% { box-shadow: 0 0 0 2px transparent; }
+
+}
+}
+
+/* ===== Shard Settings Dialog (in-panel) ===== */
+.shard-settings-cog {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  cursor: pointer;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin-left: 6px;
+  flex-shrink: 0;
+  opacity: 0.6;
+  transition: opacity 0.15s, border-color 0.15s, background 0.15s;
+}
+.shard-settings-cog:hover {
+  opacity: 1;
+  border-color: var(--accent, var(--red, #4a9eff));
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+.shard-settings-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.35);
+}
+.shard-settings-dialog.hidden {
+  display: none;
+}
+.shard-settings-dialog-card {
+  background: var(--bg-raised, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  width: min(680px, 90vw);
+  height: min(560px, 75vh);
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+  overflow: hidden;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+}
+
+.shard-settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  cursor: grab;
+  user-select: none;
+}
+.shard-settings-layout {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.shard-settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px;
+  border-right: 1px solid var(--border);
+  flex-shrink: 0;
+  overflow-y: auto;
+  min-width: 160px;
+  max-width: 220px;
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+}
+.shard-settings-nav-item {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border: none;
+  background: none;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.1s;
+  text-align: left;
+  white-space: nowrap;
+  width: 100%;
+  box-sizing: border-box;
+  user-select: none;
+}
+.shard-settings-nav-item svg {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  opacity: 0.7;
+}
+.shard-settings-nav-item:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: var(--fg);
+}
+.shard-settings-nav-item.active {
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+  color: var(--red);
+}
+.shard-settings-nav-item.active svg {
+  opacity: 1;
+}
+.shard-settings-nav-item[data-disabled],
+.shard-settings-nav-item.shard-settings-nav-disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* Force left alignment in settings nav */
+.shard-settings-nav-item,
+.shard-settings-nav-item span {
+  text-align: left !important;
+  justify-content: flex-start !important;
+}
+.shard-settings-nav-cat {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.35;
+  padding: 4px 12px 2px;
+  white-space: nowrap;
+  text-align: left;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+/* Divider between nav sections */
+.shard-settings-nav-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 8px 12px;
+  flex-shrink: 0;
+}
+
+
+/* Monospace font mode for Shard — applies to everything except vault dropdown, sidebars, and settings dialog */
+#shard-modal.shard-monospace-font,
+#shard-modal.shard-monospace-font * {
+  font-family: 'Fira Code', 'Consolas', monospace;
+}
+#shard-modal.shard-monospace-font .shard-vault-dropdown-current,
+#shard-modal.shard-monospace-font .shard-vault-dropdown-menu,
+#shard-modal.shard-monospace-font .shard-vault-dropdown-current *,
+#shard-modal.shard-monospace-font .shard-vault-dropdown-menu *,
+#shard-modal.shard-monospace-font .shard-settings-dialog,
+#shard-modal.shard-monospace-font .shard-settings-dialog-card,
+#shard-modal.shard-monospace-font .shard-settings-dialog-card *,
+#shard-modal.shard-monospace-font .shard-settings-header,
+#shard-modal.shard-monospace-font .shard-settings-header *,
+#shard-modal.shard-monospace-font .shard-settings-nav,
+#shard-modal.shard-monospace-font .shard-settings-nav *,
+#shard-modal.shard-monospace-font .shard-settings-content,
+#shard-modal.shard-monospace-font .shard-settings-content * {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+/* Settings dialog scrollbars at full opacity */
+.shard-settings-content::-webkit-scrollbar,
+.shard-settings-nav::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.shard-settings-content::-webkit-scrollbar-track,
+.shard-settings-nav::-webkit-scrollbar-track {
+  background: transparent;
+}
+.shard-settings-content::-webkit-scrollbar-thumb,
+.shard-settings-nav::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--fg) 25%, transparent);
+  border-radius: 5px;
+}
+.shard-settings-content::-webkit-scrollbar-thumb:hover,
+.shard-settings-nav::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--fg) 40%, transparent);
+}
+
+.shard-settings-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 16px;
+}
+.shard-settings-section.hidden {
+  display: none;
+}
+.shard-settings-group {
+  margin-bottom: 16px;
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.shard-settings-group:last-child {
+  margin-bottom: 0;
+}
+.shard-settings-group-title {
+  margin: 0 0 10px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  opacity: 0.45;
+  font-weight: 600;
+}
+.shard-settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 35%, transparent);
+  font-size: 12.5px;
+}
+.shard-settings-row:first-child {
+  padding-top: 4px;
+}
+.shard-settings-row:last-child {
+  border-bottom: none;
+  padding-bottom: 4px;
+}
+.shard-settings-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+.shard-settings-info > span:first-child {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.shard-settings-desc {
+  font-size: 11px;
+  opacity: 0.5;
+  line-height: 1.3;
+}
+.shard-settings-select,
+.shard-settings-input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--fg);
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  min-width: 140px;
+  max-width: 240px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.shard-settings-input:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+/* Settings range slider — match app theme */
+.shard-settings-content input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  background: transparent;
+  border-radius: 2px;
+}
+.shard-settings-content input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+}
+.shard-settings-content input[type="range"]::-moz-range-track {
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+}
+.shard-settings-content input[type="range"]::-moz-range-progress {
+  height: 4px;
+  background: var(--red);
+  border-radius: 2px;
+}
+.shard-settings-content input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--red);
+  border: none;
+  cursor: pointer;
+  margin-top: -5px;
+}
+.shard-settings-content input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--red);
+  border: none;
+  cursor: pointer;
+}
+.shard-settings-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.shard-settings-disabled .admin-slider {
+  opacity: 0.4;
+}
+.shard-plugin-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+}
+.shard-plugin-toggle-row .shard-plugin-info {
+  flex: 1;
+  min-width: 0;
+}
+.shard-plugin-toggle-row .shard-plugin-name {
+  font-size: 13px;
+  font-weight: 500;
+}
+.shard-plugin-toggle-row .shard-plugin-desc {
+  font-size: 11px;
+  opacity: 0.6;
+}/* Note menu dropdown */
+.shard-note-menu-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 300;
+  background: var(--bg-raised, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+  min-width: 200px;
+  padding: 4px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+.shard-note-menu-dropdown.hidden { display: none; }
+.shard-note-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--fg);
+  transition: background 0.1s;
+  white-space: nowrap;
+}
+.shard-note-menu-item:hover:not(.shard-note-menu-disabled) {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.shard-note-menu-disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.shard-note-menu-danger {
+  color: var(--red, #ff6b6b);
+}
+.shard-note-menu-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+.shard-note-menu-check {
+  position: relative;
+}
+.shard-note-menu-checkmark {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.shard-note-menu-check.is-checked .shard-note-menu-checkmark::after {
+  content: '';
+  width: 6px;
+  height: 10px;
+  border-right: 2px solid var(--accent, var(--red, #4a9eff));
+  border-bottom: 2px solid var(--accent, var(--red, #4a9eff));
+  transform: rotate(45deg) translate(-1px, -1px);
+}
+

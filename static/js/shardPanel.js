@@ -3,6 +3,7 @@
  */
 
 import { makeWindowDraggable } from './windowDrag.js';
+import { makeWindowResizable } from './windowResize.js';
 import { shardMdToHtml, buildNoteCache } from './shardMarkdown.js';
 import { styledConfirm, styledPrompt } from './ui.js';
 import {
@@ -371,12 +372,7 @@ function _wireDrag() {
   // Resize panes
   _wireResizeHandles();
 
-  // Mode icon custom tooltip
-  const modeIcon = document.getElementById('shard-mode-icon');
-  if (modeIcon) {
-    modeIcon.addEventListener('mouseenter', () => _showModeTooltip(modeIcon));
-    modeIcon.addEventListener('mouseleave', _hideModeTooltip);
-  }
+  // View mode buttons are wired per-note in _selectNote
 }
 
 // ── Vault Management ───────────────────────────────────────
@@ -1045,19 +1041,18 @@ function _goForward() {
   }
 }
 
-function _updateModeIcon() {
-  const icon = document.getElementById('shard-mode-icon');
-  if (!icon) return;
-  const penSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
-  const eyeSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
-  const codeSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>';
-  if (_previewMode === 'preview') {
-    icon.innerHTML = eyeSvg;
-  } else if (_previewMode === 'live') {
-    icon.innerHTML = penSvg;
-  } else {
-    icon.innerHTML = codeSvg;
-  }
+function _updateModeButtons() {
+  const readBtn = document.getElementById('shard-mode-read');
+  const editBtn = document.getElementById('shard-mode-edit');
+  if (!readBtn || !editBtn) return;
+  const secondMode = _sourceModeEnabled ? 'edit' : 'live';
+  editBtn.dataset.viewMode = secondMode;
+  editBtn.title = _sourceModeEnabled ? 'Source mode' : 'Live preview';
+  const penSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
+  const codeSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>';
+  editBtn.innerHTML = _sourceModeEnabled ? codeSvg : penSvg;
+  readBtn.classList.toggle('active', _previewMode === 'preview');
+  editBtn.classList.toggle('active', _previewMode === secondMode);
 }
 
 let _modeTooltipEl = null;
@@ -1109,8 +1104,8 @@ function _closeCurrentTab() {
   _historyIndex = -1;
   document.getElementById('shard-preview').innerHTML = '';
   document.getElementById('shard-preview').style.display = 'none';
-  const modeIcon = document.getElementById('shard-mode-icon');
-  if (modeIcon) modeIcon.style.display = 'none';
+  const viewModes = document.getElementById('shard-view-modes');
+  if (viewModes) viewModes.style.display = 'none';
   const noteMenuBtn = document.getElementById('shard-note-menu-btn');
   if (noteMenuBtn) noteMenuBtn.style.display = 'none';
   const rightPane = document.getElementById('shard-right-pane');
@@ -1267,6 +1262,234 @@ let _searchState = {
   lastQuery: '',
 };
 let _searchHistoryTimer = null;
+
+// -- Settings ------------------------------------------------
+
+let _shardSettings = {
+  editor: {
+    defaultView: 'live',
+    readableLineLength: true,
+    strictLineBreaks: false,
+    foldHeading: true,
+    foldIndent: true,
+    showLineNumbers: false,
+    autoPairBrackets: true,
+    autoPairMarkdown: true,
+    smartLists: true,
+    indentWithTabs: false,
+    vimBindings: false,
+  },
+  filesAndLinks: {
+    newNoteLocation: 'vault-root',
+    useWikilinks: true,
+    linkFormat: 'shortest',
+    autoUpdateLinks: true,
+    confirmDelete: true,
+  },
+  appearance: {
+    fontSize: 16,
+    quickFontSizeAdjust: true,
+    showInlineTitle: true,
+    monospaceFont: false,
+  },
+};
+
+function _loadShardSettings() {
+  try {
+    const raw = localStorage.getItem('shard-settings');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      _shardSettings = { ..._shardSettings, ...parsed };
+      ['editor', 'filesAndLinks', 'appearance'].forEach(key => {
+        if (parsed[key]) _shardSettings[key] = { ..._shardSettings[key], ...parsed[key] };
+      });
+    }
+  } catch (e) { console.warn('[shard] load settings failed', e); }
+}
+
+function _saveShardSettings() {
+  try { localStorage.setItem('shard-settings', JSON.stringify(_shardSettings)); } catch {}
+}
+
+function _applyMonospaceFont() {
+  const modal = document.getElementById('shard-modal');
+  if (!modal) return;
+  modal.classList.toggle('shard-monospace-font', _shardSettings.appearance.monospaceFont);
+}
+
+function _switchSettingsPane(section) {
+  document.querySelectorAll('.shard-settings-nav-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.settingsSection === section);
+  });
+  document.querySelectorAll('.shard-settings-section').forEach(el => {
+    el.classList.toggle('hidden', el.dataset.settingsPane !== section);
+  });
+}
+
+function _openShardSettings() {
+  _loadShardSettings();
+  const dialog = document.getElementById('shard-settings-dialog');
+  if (!dialog) return;
+  dialog.classList.remove('hidden');
+  const set = _shardSettings;
+  const getEl = id => document.getElementById(id);
+  if (getEl('shard-set-default-view')) getEl('shard-set-default-view').value = set.editor.defaultView;
+  if (getEl('shard-set-readable-line')) getEl('shard-set-readable-line').checked = set.editor.readableLineLength;
+  if (getEl('shard-set-strict-breaks')) getEl('shard-set-strict-breaks').checked = set.editor.strictLineBreaks;
+  if (getEl('shard-set-fold-heading')) getEl('shard-set-fold-heading').checked = set.editor.foldHeading;
+  if (getEl('shard-set-fold-indent')) getEl('shard-set-fold-indent').checked = set.editor.foldIndent;
+  if (getEl('shard-set-line-numbers')) getEl('shard-set-line-numbers').checked = set.editor.showLineNumbers;
+  if (getEl('shard-set-auto-brackets')) getEl('shard-set-auto-brackets').checked = set.editor.autoPairBrackets;
+  if (getEl('shard-set-auto-md')) getEl('shard-set-auto-md').checked = set.editor.autoPairMarkdown;
+  if (getEl('shard-set-smart-lists')) getEl('shard-set-smart-lists').checked = set.editor.smartLists;
+  if (getEl('shard-set-indent-tabs')) getEl('shard-set-indent-tabs').checked = set.editor.indentWithTabs;
+  if (getEl('shard-set-vim')) getEl('shard-set-vim').checked = set.editor.vimBindings;
+  if (getEl('shard-set-font-size')) {
+    getEl('shard-set-font-size').value = set.appearance.fontSize;
+    if (getEl('shard-set-font-size-val')) getEl('shard-set-font-size-val').textContent = set.appearance.fontSize;
+  }
+  if (getEl('shard-set-inline-title')) getEl('shard-set-inline-title').checked = set.appearance.showInlineTitle;
+  if (getEl('shard-set-quick-font')) getEl('shard-set-quick-font').checked = set.appearance.quickFontSizeAdjust;
+  if (getEl('shard-set-monospace-font')) getEl('shard-set-monospace-font').checked = set.appearance.monospaceFont;
+  if (getEl('shard-set-wikilinks')) getEl('shard-set-wikilinks').checked = set.filesAndLinks.useWikilinks;
+  if (getEl('shard-set-link-format')) getEl('shard-set-link-format').value = set.filesAndLinks.linkFormat;
+  if (getEl('shard-set-confirm-delete')) getEl('shard-set-confirm-delete').checked = set.filesAndLinks.confirmDelete;
+  if (getEl('shard-set-auto-links')) getEl('shard-set-auto-links').checked = set.filesAndLinks.autoUpdateLinks;
+  if (getEl('shard-set-new-note-loc')) getEl('shard-set-new-note-loc').value = set.filesAndLinks.newNoteLocation;
+  _applyMonospaceFont();
+  document.documentElement.style.setProperty('--shard-font-size', set.appearance.fontSize + 'px');
+  _switchSettingsPane('editor');
+}
+
+function _closeShardSettings() {
+  document.getElementById('shard-settings-dialog')?.classList.add('hidden');
+}
+
+function _wireShardSettings() {
+  document.getElementById('shard-settings-cog')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    _openShardSettings();
+  });
+  document.getElementById('shard-settings-close')?.addEventListener('click', _closeShardSettings);
+  document.querySelectorAll('.shard-settings-nav-item').forEach(item => {
+    item.addEventListener('click', () => {
+      if (!item.disabled) _switchSettingsPane(item.dataset.settingsSection);
+    });
+  });
+  const bindToggle = (id, path) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('change', () => {
+      const keys = path.split('.');
+      let target = _shardSettings;
+      for (let i = 0; i < keys.length - 1; i++) target = target[keys[i]];
+      target[keys[keys.length - 1]] = el.checked;
+      _saveShardSettings();
+      if (path === 'appearance.fontSize') {
+        document.documentElement.style.setProperty('--shard-font-size', el.value + 'px');
+      }
+      if (path === 'appearance.monospaceFont') {
+        _applyMonospaceFont();
+      }
+    });
+  };
+  const bindSelect = (id, path) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('change', () => {
+      const keys = path.split('.');
+      let target = _shardSettings;
+      for (let i = 0; i < keys.length - 1; i++) target = target[keys[i]];
+      target[keys[keys.length - 1]] = el.value;
+      _saveShardSettings();
+      if (path === 'editor.defaultView') {
+        _previewMode = el.value === 'live' ? 'live' : el.value === 'source' ? 'edit' : 'preview';
+      }
+    });
+  };
+  const bindRange = (id, path, valId) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('input', () => {
+      const keys = path.split('.');
+      let target = _shardSettings;
+      for (let i = 0; i < keys.length - 1; i++) target = target[keys[i]];
+      target[keys[keys.length - 1]] = parseInt(el.value, 10);
+      _saveShardSettings();
+      const valEl = document.getElementById(valId);
+      if (valEl) valEl.textContent = el.value;
+      if (path === 'appearance.fontSize') {
+        document.documentElement.style.setProperty('--shard-font-size', el.value + 'px');
+      }
+    });
+  };
+  bindToggle('shard-set-readable-line', 'editor.readableLineLength');
+  bindToggle('shard-set-strict-breaks', 'editor.strictLineBreaks');
+  bindToggle('shard-set-fold-heading', 'editor.foldHeading');
+  bindToggle('shard-set-fold-indent', 'editor.foldIndent');
+  bindToggle('shard-set-line-numbers', 'editor.showLineNumbers');
+  bindToggle('shard-set-auto-brackets', 'editor.autoPairBrackets');
+  bindToggle('shard-set-auto-md', 'editor.autoPairMarkdown');
+  bindToggle('shard-set-smart-lists', 'editor.smartLists');
+  bindToggle('shard-set-indent-tabs', 'editor.indentWithTabs');
+  bindToggle('shard-set-vim', 'editor.vimBindings');
+  bindToggle('shard-set-inline-title', 'appearance.showInlineTitle');
+  bindToggle('shard-set-quick-font', 'appearance.quickFontSizeAdjust');
+  bindToggle('shard-set-monospace-font', 'appearance.monospaceFont');
+  bindToggle('shard-set-wikilinks', 'filesAndLinks.useWikilinks');
+  bindToggle('shard-set-confirm-delete', 'filesAndLinks.confirmDelete');
+  bindToggle('shard-set-auto-links', 'filesAndLinks.autoUpdateLinks');
+  bindSelect('shard-set-default-view', 'editor.defaultView');
+  bindSelect('shard-set-link-format', 'filesAndLinks.linkFormat');
+  bindSelect('shard-set-new-note-loc', 'filesAndLinks.newNoteLocation');
+  bindRange('shard-set-font-size', 'appearance.fontSize', 'shard-set-font-size-val');
+
+  // Settings dialog drag
+  const settingsHeader = document.getElementById('shard-settings-header');
+  const settingsCard = document.querySelector('.shard-settings-dialog-card');
+  if (settingsHeader && settingsCard) {
+    let isDragging = false;
+    let dragStartX = 0, dragStartY = 0;
+    let cardStartX = 0, cardStartY = 0;
+    settingsHeader.addEventListener('mousedown', (e) => {
+      if (e.target.closest('#shard-settings-close')) return;
+      isDragging = true;
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
+      const rect = settingsCard.getBoundingClientRect();
+      cardStartX = rect.left;
+      cardStartY = rect.top;
+      settingsHeader.style.cursor = 'grabbing';
+      e.preventDefault();
+    });
+    document.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      const dx = e.clientX - dragStartX;
+      const dy = e.clientY - dragStartY;
+      settingsCard.style.transform = 'none';
+      settingsCard.style.left = (cardStartX + dx) + 'px';
+      settingsCard.style.top = (cardStartY + dy) + 'px';
+    });
+    document.addEventListener('mouseup', () => {
+      if (isDragging) {
+        isDragging = false;
+        settingsHeader.style.cursor = 'grab';
+      }
+    });
+  }
+
+  // Settings dialog resize — uses same edge/corner mechanic as other Odysseus windows
+  if (settingsCard) {
+    const settingsHeader = settingsCard.querySelector('.shard-settings-header');
+    makeWindowResizable(settingsCard, {
+      minWidth: 400,
+      minHeight: 300,
+      storageKey: 'winsize-shard-settings',
+      cursorTargets: settingsHeader ? [settingsCard, settingsHeader] : [settingsCard]
+    });
+  }
+}
+
 
 function _getSearchRegex(query, caseSensitive) {
   const flags = caseSensitive ? 'g' : 'gi';
@@ -1664,6 +1887,7 @@ function _renderNoteList() {
 
 let _previewMode = 'preview'; // 'preview' | 'live' | 'edit'
 let _editModePref = 'live';   // 'live' | 'edit' — the edit mode used when toggling from preview
+let _sourceModeEnabled = false; // when true, main toggle is Read/Source instead of Read/Live
 let _autoRenameNoteId = null; // set when creating new note to auto-focus title
 
 function _serializeFrontmatter(fm) {
@@ -2535,8 +2759,8 @@ async function _selectNote(id) {
             const next = _getCharAfterCursor();
             if (prev === '[') {
               if (next === ']') document.execCommand('delete', false);
-              document.execCommand('insertText', false, ']]');
-              _moveCursorBack(2);
+              document.execCommand('insertText', false, '[]');
+              _moveCursorBack(1);
             } else if (textBefore.endsWith('[/')) {
               document.execCommand('insertText', false, '[]/]');
               _moveCursorBack(4);
@@ -2609,27 +2833,80 @@ async function _selectNote(id) {
         _wireWikilinks(wrap);
         wrap.addEventListener('dblclick', () => {
           _previewMode = _editModePref;
-          _updateModeIcon();
+          _updateModeButtons();
           _selectNote(note.id);
         });
       }
     };
     updateBody();
-    _updateModeIcon();
-    const modeIcon = document.getElementById('shard-mode-icon');
-    if (modeIcon) {
-      modeIcon.style.display = 'flex';
-      modeIcon.onclick = () => {
-        // Explicitly blur source view to trigger save before switching away
-        if (_previewMode === 'edit') {
-          const sourceDiv = bodyEl.querySelector('.shard-source-view');
-          if (sourceDiv) sourceDiv.blur();
+    let wcEl = document.getElementById('shard-word-count');
+    if (!wcEl) { wcEl = document.createElement('div'); wcEl.id = 'shard-word-count'; wcEl.className = 'shard-word-count'; }
+    if (bodyEl && wcEl.parentElement !== bodyEl) bodyEl.appendChild(wcEl);
+    _updateModeButtons();
+    const viewModes = document.getElementById('shard-view-modes');
+    if (viewModes) {
+      viewModes.style.display = 'flex';
+      viewModes.querySelectorAll('.shard-mode-btn').forEach(btn => {
+        btn.onclick = () => {
+          const mode = btn.dataset.viewMode;
+          if (_previewMode === 'edit' && mode !== 'edit') {
+            const sourceDiv = bodyEl.querySelector('.shard-source-view');
+            if (sourceDiv) sourceDiv.blur();
+          }
+          if (mode === 'live' || mode === 'edit') {
+            _editModePref = mode;
+          }
+          _previewMode = mode;
+          _updateModeButtons();
+          _selectNote(note.id);
+        };
+      });
+    }
+
+    // Wire note menu dropdown
+    const menuBtn = document.getElementById('shard-note-menu-btn');
+    const menuDropdown = document.getElementById('shard-note-menu-dropdown');
+    if (menuBtn && menuDropdown) {
+      menuBtn.style.display = 'flex';
+      menuBtn.onclick = (e) => {
+        e.stopPropagation();
+        const isHidden = menuDropdown.classList.contains('hidden');
+        document.querySelectorAll('.shard-note-menu-dropdown').forEach(d => d.classList.add('hidden'));
+        if (isHidden) {
+          menuDropdown.classList.remove('hidden');
+          const sourceItem = menuDropdown.querySelector('[data-action="source"]');
+          if (sourceItem) sourceItem.classList.toggle('is-checked', _sourceModeEnabled);
         }
-        // Cycle: Reading <-> preferred edit mode
-        _previewMode = _previewMode === 'preview' ? _editModePref : 'preview';
-        _updateModeIcon();
-        _selectNote(note.id);
       };
+      menuDropdown.querySelectorAll('.shard-note-menu-item:not(.shard-note-menu-disabled)').forEach(item => {
+        item.onclick = (e) => {
+          e.stopPropagation();
+          const action = item.dataset.action;
+          if (action === 'preview') {
+            _previewMode = 'preview';
+            _updateModeButtons();
+            _selectNote(note.id);
+          } else if (action === 'live') {
+            _editModePref = 'live';
+            _previewMode = 'live';
+            _updateModeButtons();
+            _selectNote(note.id);
+          } else if (action === 'source') {
+            _sourceModeEnabled = !_sourceModeEnabled;
+            _editModePref = _sourceModeEnabled ? 'edit' : 'live';
+            _previewMode = _sourceModeEnabled ? 'edit' : 'live';
+            _updateModeButtons();
+            _selectNote(note.id);
+          } else if (action === 'rename') {
+            _promptRenameNote(note.id);
+          } else if (action === 'delete') {
+            _deleteNote(note.id);
+          }
+          menuDropdown.classList.add('hidden');
+        };
+      });
+      // Close menu on outside click
+      document.addEventListener('click', () => menuDropdown.classList.add('hidden'));
     }
     const noteMenuBtn = document.getElementById('shard-note-menu-btn');
     if (noteMenuBtn) {
@@ -3699,9 +3976,6 @@ function _showNoteMenu(e, note) {
   const rect = e.currentTarget.getBoundingClientRect();
   const isBookmarked = _bookmarks.has(note.id);
   _showContextMenu(rect.left, rect.bottom + 4, [
-    { label: 'Reading view', checked: _previewMode === 'preview', action: () => { _previewMode = 'preview'; _updateModeIcon(); _selectNote(note.id); } },
-    { label: 'Live Preview', checked: _previewMode === 'live', action: () => { _editModePref = 'live'; _previewMode = 'live'; _updateModeIcon(); _selectNote(note.id); } },
-    { label: 'Source mode', checked: _previewMode === 'edit', action: () => { _editModePref = 'edit'; _previewMode = 'edit'; _updateModeIcon(); _selectNote(note.id); } },
     { separator: true },
     { label: 'Rename...', action: () => _promptRenameNote(note.id) },
     { label: 'Move file to…', submenu: _buildFolderSubmenu(note.id, note.folder) },
@@ -4223,6 +4497,11 @@ function _init() {
     settingsPanel?.classList.add('hidden');
   });
 
+  // Settings dialog wiring
+  _wireShardSettings();
+  _loadShardSettings();
+  _applyMonospaceFont();
+
   // ── Plugin System (Phase 4.1 / 4.2) ────────────────────────
   _shardApp = createAppApi({
     get vaultNotes() { return _notes; },
@@ -4458,7 +4737,7 @@ function _shardKeyHandler(e) {
     e.preventDefault();
     if (_previewMode === 'preview') _previewMode = _editModePref;
     else _previewMode = 'preview';
-    _updateModeIcon();
+    _updateModeButtons();
     if (_selectedNoteId) _selectNote(_selectedNoteId);
     return;
   }
@@ -4510,9 +4789,9 @@ function _showCommandPalette() {
 
   const BASE_COMMANDS = [
     { id: 'new-note', label: 'Shard: New note', action: () => _promptNewNote() },
-    { id: 'toggle-reading', label: 'Shard: Toggle reading view', action: () => { _previewMode = 'preview'; _updateModeIcon(); if (_selectedNoteId) _selectNote(_selectedNoteId); } },
-    { id: 'toggle-live', label: 'Shard: Toggle live preview', action: () => { _editModePref = 'live'; _previewMode = 'live'; _updateModeIcon(); if (_selectedNoteId) _selectNote(_selectedNoteId); } },
-    { id: 'toggle-source', label: 'Shard: Toggle source view', action: () => { _editModePref = 'edit'; _previewMode = 'edit'; _updateModeIcon(); if (_selectedNoteId) _selectNote(_selectedNoteId); } },
+    { id: 'toggle-reading', label: 'Shard: Toggle reading view', action: () => { _previewMode = 'preview'; _updateModeButtons(); if (_selectedNoteId) _selectNote(_selectedNoteId); } },
+    { id: 'toggle-live', label: 'Shard: Toggle live preview', action: () => { _editModePref = 'live'; _previewMode = 'live'; _updateModeButtons(); if (_selectedNoteId) _selectNote(_selectedNoteId); } },
+    { id: 'toggle-source', label: 'Shard: Toggle source view', action: () => { _editModePref = 'edit'; _previewMode = 'edit'; _updateModeButtons(); if (_selectedNoteId) _selectNote(_selectedNoteId); } },
     { id: 'quick-switcher', label: 'Shard: Open quick switcher', action: () => { _hideCommandPalette(); setTimeout(_showQuickSwitcher, 50); } },
     { id: 'fold-all', label: 'Shard: Fold all headings', action: () => { /* TODO */ } },
     { id: 'unfold-all', label: 'Shard: Unfold all headings', action: () => { /* TODO */ } },
