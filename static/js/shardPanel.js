@@ -5,7 +5,8 @@
 import { makeWindowDraggable } from './windowDrag.js';
 import { makeWindowResizable } from './windowResize.js';
 import { shardMdToHtml, buildNoteCache } from './shardMarkdown.js';
-import { styledConfirm, styledPrompt } from './ui.js';
+import { styledConfirm, styledPrompt, showToast } from './ui.js';
+import { IS_MAC } from './platform.js';
 import {
   PluginManager, createAppApi, CORE_PLUGINS,
   GraphPlugin, BacklinksPlugin, OutgoingLinksPlugin,
@@ -13,6 +14,8 @@ import {
   BookmarksPlugin, TagsPlugin, SearchPlugin,
   DailyNotesPlugin, TemplatesPlugin, PagePreviewPlugin,
   WordCountPlugin, RandomNotePlugin,
+  CanvasPlugin, CommandPalettePlugin, FileRecoveryPlugin,
+  NoteComposerPlugin, QuickSwitcherPlugin, UniqueNoteCreatorPlugin,
 } from './shardPluginApi.js';
 
 const API_BASE = window.location.origin;
@@ -31,11 +34,19 @@ let _expandedFolders = new Set();
 let _dragWired = false;
 let _rootDropWired = false;
 let _openTabs = [];
+let _lastClosedTab = null;
+let _filePollInterval = null;
+let _lastVaultMtime = 0;
 let _vaults = [];
 let _selectedVaultId = null;
 let _permissions = [];
 let _pluginManager = null;
 let _shardApp = null;
+let _removedTabs = new Map(); // tabName -> detached element
+let _recentDragNoteId = null; // suppress click after drag-and-drop
+let _recentDragTimer = null;
+let _isDraggingTree = false; // guard _renderFolderTree during drag
+let _propsCollapsed = false; // global collapse state for properties section
 
 function _showLoading(text = 'Loading vault...') {
   const overlay = document.getElementById('shard-loading-overlay');
@@ -45,6 +56,27 @@ function _showLoading(text = 'Loading vault...') {
 }
 function _hideLoading() {
   document.getElementById('shard-loading-overlay')?.classList.add('hidden');
+}
+
+function _startFilePolling() {
+  if (_filePollInterval) clearInterval(_filePollInterval);
+  _filePollInterval = setInterval(async () => {
+    if (!_open || !_selectedVaultId) return;
+    try {
+      const r = await fetch(`${API_BASE}/api/shard/last-modified?vault_id=${encodeURIComponent(_selectedVaultId)}`, { credentials: 'same-origin' });
+      if (!r.ok) return;
+      const data = await r.json();
+      const mtime = data.mtime || 0;
+      if (_lastVaultMtime && mtime !== _lastVaultMtime) {
+        await _refreshFileExplorer();
+      }
+      _lastVaultMtime = mtime;
+    } catch {}
+  }, 2000);
+}
+
+function _stopFilePolling() {
+  if (_filePollInterval) { clearInterval(_filePollInterval); _filePollInterval = null; }
 }
 
 export async function openPanel() {
@@ -74,8 +106,10 @@ export async function openPanel() {
   }
 
   modal.classList.remove('hidden');
+  _applyMonospaceFont();
   _bringToFront();
   _wireDrag();
+  _startFilePolling();
   // Only show loading on first open or if no vaults cached
   const hasVaults = _vaults && _vaults.length > 0;
   if (!hasVaults) {
@@ -113,6 +147,7 @@ export function closePanel() {
   if (_commandPaletteEl) { _hideCommandPalette(); return; }
   _open = false;
   _rootDropWired = false;
+  _stopFilePolling();
   modal.classList.add('hidden');
   document.getElementById('tool-shard-btn')?.classList.remove('active');
   document.removeEventListener('keydown', _shardKeyHandler);
@@ -124,6 +159,47 @@ export function togglePanel() {
   console.log('[shard] togglePanel; _open=', _open);
   if (_open) closePanel(); else openPanel();
 }
+
+// Re-clamp the shard modal so it stays fully on-screen when the browser/Electron
+// window is resized. Floating (dragged/resized) windows have fixed pixel
+// positions that can drift off-screen after a viewport shrink.
+function _reclampShardModal() {
+  const modal = document.getElementById('shard-modal');
+  if (!modal || modal.classList.contains('hidden')) return;
+  if (modal.classList.contains('shard-fullscreen')) return;
+  if (modal.classList.contains('modal-right-docked') || modal.classList.contains('modal-left-docked')) return;
+  const content = modal.querySelector('.modal-content');
+  if (!content || content.style.position !== 'fixed') return;
+
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const minW = 320;
+  const minH = 200;
+  const r = content.getBoundingClientRect();
+
+  let left = parseFloat(content.style.left) || r.left;
+  let top = parseFloat(content.style.top) || r.top;
+  let width = content.style.width ? parseFloat(content.style.width) : r.width;
+  let height = content.style.height ? parseFloat(content.style.height) : r.height;
+
+  width = Math.max(minW, Math.min(width, vw));
+  height = Math.max(minH, Math.min(height, vh));
+  left = Math.max(0, Math.min(left, vw - width));
+  top = Math.max(0, Math.min(top, vh - height));
+
+  content.style.left = left + 'px';
+  content.style.top = top + 'px';
+  if (content.style.width) content.style.width = width + 'px';
+  if (content.style.height) content.style.height = height + 'px';
+}
+
+window.addEventListener('resize', () => {
+  requestAnimationFrame(_reclampShardModal);
+  requestAnimationFrame(() => {
+    const bc = document.getElementById('shard-breadcrumb');
+    if (bc) _fitBreadcrumb(bc);
+  });
+});
 
 // Wire close button immediately at module load (module scripts are deferred,
 // so the DOM element already exists). Use capture phase so the handler
@@ -156,10 +232,11 @@ function _enterShardFullscreen(content) {
   content.style.position = 'fixed';
   content.style.left = '0';
   content.style.top = '0';
+  const isElectron = document.body.classList.contains('electron');
   content.style.width = '100vw';
   content.style.maxWidth = '100vw';
-  content.style.height = '100vh';
-  content.style.maxHeight = '100vh';
+  content.style.height = isElectron ? 'calc(100dvh - 32px)' : '100vh';
+  content.style.maxHeight = isElectron ? 'calc(100dvh - 32px)' : '100vh';
   content.style.borderRadius = '0';
   content.style.margin = '0';
   content.style.transform = 'none';
@@ -231,7 +308,9 @@ function _wireDrag() {
       _openTabs = _openTabs.filter(id => id !== noteId);
       if (_selectedNoteId === noteId) {
         if (_openTabs.length > 0) {
-          _navigateToNote(_openTabs[_openTabs.length - 1], false);
+          const nextId = _openTabs[_openTabs.length - 1];
+          if (nextId === '__graph__') _openGraphView();
+          else _navigateToNote(nextId, false);
         } else {
           _closeCurrentTab();
         }
@@ -241,12 +320,10 @@ function _wireDrag() {
       return;
     }
     if (noteId && noteId !== _selectedNoteId) {
-      _selectedNoteId = noteId;
-      _renderNoteTabs();
-      const note = _notes.find(n => n.id === noteId);
-      if (note) {
-        _renderBreadcrumb(note);
-        _selectNote(noteId);
+      if (noteId === '__graph__') {
+        _openGraphView();
+      } else {
+        _navigateToNote(noteId, false);
       }
     }
   });
@@ -319,11 +396,25 @@ function _wireDrag() {
   document.getElementById('shard-save-vault-btn')?.addEventListener('click', _saveNewVault);
   document.getElementById('shard-cancel-vault-btn')?.addEventListener('click', _hideAddVaultForm);
 
-  // Browse button — use File System Access API when available, else file input
+  // Browse button — prefer Electron IPC directory picker, then file input, then FS Access API
   const browseBtn = document.getElementById('shard-browse-vault-btn');
   const fileInput = document.getElementById('shard-vault-file-input');
   if (browseBtn && fileInput) {
     browseBtn.addEventListener('click', async () => {
+      // Electron: use IPC to get real folder path from main process
+      if (window.electronAPI?.selectDirectory) {
+        try {
+          const result = await window.electronAPI.selectDirectory();
+          if (result && !result.canceled && result.filePaths?.length) {
+            const pathInput = document.getElementById('shard-new-vault-path');
+            if (pathInput) pathInput.value = result.filePaths[0];
+          }
+        } catch (err) {
+          console.warn('[shard] electron directory picker failed:', err);
+        }
+        return;
+      }
+      // Browser fallback 1: File System Access API (virtual handle, no full path)
       if (window.showDirectoryPicker) {
         try {
           const handle = await window.showDirectoryPicker();
@@ -334,7 +425,7 @@ function _wireDrag() {
         }
         return;
       }
-      // Fallback: legacy file input (webkitdirectory)
+      // Browser fallback 2: legacy file input (webkitdirectory)
       fileInput.click();
     });
     fileInput.addEventListener('change', (e) => {
@@ -343,8 +434,19 @@ function _wireDrag() {
       const pathInput = document.getElementById('shard-new-vault-path');
       const relPath = files[0].webkitRelativePath || '';
       const folderName = relPath.split('/')[0] || '';
-      const fullPath = files[0].path || '';
-      const displayPath = fullPath || folderName;
+      const filePath = files[0].path || '';
+      let displayPath = '';
+      if (filePath && relPath) {
+        const relParts = relPath.split('/');
+        const sep = filePath.includes('\\') ? '\\' : '/';
+        const pathParts = filePath.split(sep);
+        const rootParts = pathParts.slice(0, pathParts.length - relParts.length);
+        displayPath = rootParts.join(sep);
+      } else if (filePath) {
+        displayPath = filePath;
+      } else {
+        displayPath = folderName;
+      }
       if (pathInput && displayPath) pathInput.value = displayPath;
       e.target.value = '';
     });
@@ -503,6 +605,7 @@ function _closeVaultDropdown() {
 
 async function _selectVault(vaultId) {
   _selectedVaultId = vaultId;
+  _lastVaultMtime = 0;
   _selectedFolder = null;
   _searchQuery = '';
   _historyStack = [];
@@ -551,13 +654,122 @@ async function _selectVault(vaultId) {
   // Restore from cache immediately if available, then fetch fresh data in background
   const hadCachedNotes = _restoreCachedNotes(vaultId);
   const hadCachedFolders = _restoreCachedFolders(vaultId);
-  if (!hadCachedNotes || !hadCachedFolders) _showLoading('Loading notes...');
+  if (!hadCachedNotes || !hadCachedFolders) {
+    _showLoading('Loading notes...');
+    try {
+      await _loadNotes();
+      await _loadFolders();
+      _loadPermissions();
+    } finally {
+      _hideLoading();
+    }
+  } else {
+    // Cache hit: refresh silently in background without blocking UI
+    _loadNotes().then(() => _loadFolders()).then(() => _loadPermissions()).catch(() => {});
+  }
+
+  // Open startup file based on setting
+  _openStartupFile();
+}
+
+function _openStartupFile() {
+  const mode = _shardSettings?.filesAndLinks?.defaultFileToOpen || 'last-opened';
+  if (mode === 'none') return;
+  if (mode === 'new-note') {
+    _showNewNotePrompt();
+    return;
+  }
+  if (mode === 'daily-note') {
+    _openDailyNote();
+    return;
+  }
+  if (mode === 'specific-file') {
+    const specificFile = _shardSettings?.filesAndLinks?.defaultSpecificFile;
+    if (specificFile && _notes.some(n => n.id === specificFile)) {
+      _navigateToNote(specificFile, false);
+    }
+    return;
+  }
+  // last-opened
+  if (_selectedVaultId) {
+    try {
+      const lastNote = localStorage.getItem(`shard-last-note-${_selectedVaultId}`);
+      if (lastNote && _notes.some(n => n.id === lastNote)) {
+        _navigateToNote(lastNote, false);
+      }
+    } catch {}
+  }
+}
+
+function _openDailyNote() {
+  const dateFormat = _shardSettings?.plugins?.['daily-notes']?.dateFormat || 'YYYY-MM-DD';
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const yyyy = now.getFullYear();
+  const mm = pad(now.getMonth() + 1);
+  const dd = pad(now.getDate());
+  let fileName = dateFormat
+    .replace('YYYY', String(yyyy))
+    .replace('MM', mm)
+    .replace('DD', dd)
+    .replace('mm', pad(now.getMinutes()))
+    .replace('HH', pad(now.getHours()))
+    .replace('ss', pad(now.getSeconds()));
+  fileName += '.md';
+  const folder = _shardSettings?.plugins?.['daily-notes']?.newFileLocation || '';
+  const noteId = folder ? `${folder}/${fileName}` : fileName;
+  const existing = _notes.find(n => n.id === noteId);
+  if (existing) {
+    _navigateToNote(noteId, false);
+    return;
+  }
+  // Create daily note if it doesn't exist
+  const templatePath = _shardSettings?.plugins?.['daily-notes']?.templateFileLocation || '';
+  let content = '';
+  if (templatePath) {
+    const template = _notes.find(n => n.id === templatePath || n.rel_path === templatePath);
+    if (template) content = template.content || '';
+  }
+  _createNoteWithContent(noteId, content);
+}
+
+async function _createNoteWithContent(noteId, content) {
+  const folder = noteId.includes('/') ? noteId.slice(0, noteId.lastIndexOf('/')) : '';
+  const name = noteId.includes('/') ? noteId.slice(noteId.lastIndexOf('/') + 1) : noteId;
+  // Optimistic UI
+  const optimisticNote = {
+    id: noteId,
+    rel_path: noteId,
+    title: name.replace(/\.md$/, ''),
+    folder: folder,
+    content: content,
+    outbound_links: _extractOutboundLinks(content),
+    tags: _extractTags(content),
+    modified: Date.now(),
+    created: Date.now(),
+    properties: {},
+    _optimistic: true,
+  };
+  _notes.push(optimisticNote);
+  _renderFolderTree();
+  _renderNoteList();
+  _navigateToNote(noteId, false);
   try {
-    await _loadNotes();
-    await _loadFolders();
-    _loadPermissions();
-  } finally {
-    _hideLoading();
+    const r = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(noteId)}/edit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    });
+    if (!r.ok) throw new Error();
+    delete optimisticNote._optimistic;
+  } catch (e) {
+    console.error('[shard] create note failed', e);
+    const idx = _notes.findIndex(n => n.id === noteId);
+    if (idx !== -1) _notes.splice(idx, 1);
+    _renderFolderTree();
+    _renderNoteList();
+    if (_selectedNoteId === noteId) _closeCurrentTab();
+    showToast('Failed to create note');
   }
 }
 
@@ -586,7 +798,11 @@ async function _loadFolders() {
     const r = await fetch(`${API_BASE}/api/shard/folders?vault_id=${encodeURIComponent(_selectedVaultId)}`, { credentials: 'same-origin' });
     if (!r.ok) return;
     const data = await r.json();
-    _folders = data.folders || [];
+    const backendFolders = data.folders || [];
+    // Preserve optimistic folders not yet confirmed by backend
+    const optimisticExtras = _folders.filter(f => typeof f === 'object' && f._optimistic);
+    const optimisticStrings = _folders.filter(f => typeof f === 'string' && !backendFolders.includes(f));
+    _folders = [...backendFolders, ...optimisticStrings];
     _renderFolderTree();
     try {
       localStorage.setItem(`shard-folders-${_selectedVaultId}`, JSON.stringify({ folders: _folders, ts: Date.now() }));
@@ -632,9 +848,11 @@ function _renderFolderTreeNode(node, depth = 0) {
 
   let html = '';
   if (node.name) {
+    const folderSvg = _getFolderIconSvg(node.path, 'folder', 13);
     html += `<li class="${liClass}">
-      <div class="shard-tree-row ${depthClass} ${isSelected ? 'selected' : ''}" data-folder="${_esc(node.path)}">
+      <div class="shard-tree-row ${depthClass} ${isSelected ? 'selected' : ''}" data-folder="${_esc(node.path)}" draggable="true">
         <span class="shard-tree-arrow ${arrowClass}"></span>
+        <span class="shard-tree-folder-icon">${folderSvg}</span>
         <span class="shard-tree-name">${_esc(node.name)}</span>
       </div>`;
   }
@@ -647,9 +865,11 @@ function _renderFolderTreeNode(node, depth = 0) {
       html += _renderFolderTreeNode(node.children[childName], depth + 1);
     }
     for (const f of files) {
+      const iconSvg = _getNoteIconSvg(f.id, 'file', 13);
       html += `<li class="shard-tree-sub">
         <div class="shard-tree-row sub ${f.id === _selectedNoteId ? 'selected' : ''}" data-note-id="${_esc(f.id)}" draggable="true">
           <span class="shard-tree-arrow leaf"></span>
+          <span class="shard-tree-file-icon">${iconSvg}</span>
           <span class="shard-tree-name">${_esc(f.title)}</span>
         </div>
       </li>`;
@@ -663,6 +883,7 @@ function _renderFolderTreeNode(node, depth = 0) {
 function _renderFolderTree() {
   const tree = document.getElementById('shard-folder-tree');
   if (!tree) return;
+  if (_isDraggingTree) return; // defer until dragend so dragged element survives
 
   console.log('[shard] _renderFolderTree — _folders:', _folders.length, '_notes:', _notes.length);
 
@@ -688,7 +909,16 @@ function _renderFolderTree() {
     return;
   }
 
-  let html = '<ul>';
+  // Refresh toolbar
+  let html = `
+    <div class="shard-tree-toolbar" style="display:flex;align-items:center;gap:6px;padding:4px 6px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg);z-index:5;">
+      <button id="shard-refresh-tree" title="Refresh explorer" style="background:transparent;border:none;color:var(--fg);cursor:pointer;padding:2px 4px;border-radius:4px;display:flex;align-items:center;opacity:0.7;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-.44-9.41L23 10"></path></svg>
+      </button>
+      <span style="font-size:11px;opacity:0.5;flex:1;">Files</span>
+    </div>
+    <ul style="padding-top:4px;">
+  `;
   const { childNames } = _sortTreeEntries(root);
   for (const childName of childNames) {
     html += _renderFolderTreeNode(root.children[childName]);
@@ -696,9 +926,11 @@ function _renderFolderTree() {
   // Root-level files (notes with no folder)
   const rootFiles = [...root.files].sort((a, b) => a.title.localeCompare(b.title));
   for (const f of rootFiles) {
+    const iconSvg = _getNoteIconSvg(f.id, 'file', 13);
     html += `<li class="shard-tree-root">
       <div class="shard-tree-row root ${f.id === _selectedNoteId ? 'selected' : ''}" data-note-id="${_esc(f.id)}" draggable="true">
         <span class="shard-tree-arrow leaf"></span>
+        <span class="shard-tree-file-icon">${iconSvg}</span>
         <span class="shard-tree-name">${_esc(f.title)}</span>
       </div>
     </li>`;
@@ -706,11 +938,28 @@ function _renderFolderTree() {
   html += '</ul>';
   tree.innerHTML = html;
 
+  // Wire refresh button
+  const refreshBtn = tree.querySelector('#shard-refresh-tree');
+  if (refreshBtn) {
+    refreshBtn.addEventListener('mouseenter', () => { refreshBtn.style.opacity = '1'; });
+    refreshBtn.addEventListener('mouseleave', () => { refreshBtn.style.opacity = '0.7'; });
+    refreshBtn.addEventListener('click', async () => {
+      refreshBtn.style.opacity = '0.3';
+      await _refreshFileExplorer();
+      refreshBtn.style.opacity = '';
+    });
+  }
+
   // Wire interactions — toggle classes directly for smooth animation (no re-render)
   tree.querySelectorAll('.shard-tree-row').forEach(row => {
     row.addEventListener('click', (e) => {
-      // Note click
+      // Note click — skip if this row was just dragged (click fires after dragend)
       if (row.dataset.noteId) {
+        if (_recentDragNoteId === row.dataset.noteId) {
+          _recentDragNoteId = null;
+          clearTimeout(_recentDragTimer);
+          return;
+        }
         _navigateToNote(row.dataset.noteId, true, e.ctrlKey || e.metaKey);
         _updateTreeSelection();
         return;
@@ -733,16 +982,27 @@ function _renderFolderTree() {
       }
     });
 
-    // Drag start for note rows
-    if (row.dataset.noteId) {
+    // Drag start for note / folder rows
+    if (row.dataset.noteId || row.dataset.folder) {
       row.addEventListener('dragstart', (e) => {
-        e.dataTransfer.setData('text/plain', row.dataset.noteId);
+        _isDraggingTree = true;
+        clearTimeout(_recentDragTimer);
+        if (row.dataset.noteId) {
+          _recentDragNoteId = row.dataset.noteId;
+          e.dataTransfer.setData('text/plain', row.dataset.noteId);
+        } else if (row.dataset.folder) {
+          e.dataTransfer.setData('text/x-shard-folder', row.dataset.folder);
+        }
         e.dataTransfer.effectAllowed = 'copy';
         tree.classList.add('shard-dragging');
       });
       row.addEventListener('dragend', () => {
+        _isDraggingTree = false;
         tree.classList.remove('shard-dragging');
         tree.classList.remove('shard-root-drag-over');
+        _recentDragTimer = setTimeout(() => { _recentDragNoteId = null; }, 200);
+        // Re-render after drag completes so the dragged element survives until dragend
+        requestAnimationFrame(() => _renderFolderTree());
       });
     }
 
@@ -760,33 +1020,74 @@ function _renderFolderTree() {
         e.preventDefault();
         e.stopPropagation();
         row.classList.remove('drag-over');
+        const targetFolder = row.dataset.folder;
+        if (!targetFolder) return;
+
         const noteId = e.dataTransfer.getData('text/plain');
-        const folder = row.dataset.folder;
-        if (!noteId || !folder) return;
-        // Optimistic UI: update _notes in memory immediately
-        const note = _notes.find(n => n.id === noteId);
-        const oldFolder = note ? note.folder : '';
-        if (note) note.folder = folder;
-        _renderFolderTree();
-        try {
-          const r = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(noteId)}/move`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'same-origin',
-            body: JSON.stringify({ folder }),
-          });
-          if (!r.ok) {
-            // Revert optimistic update on failure
+        const sourceFolder = e.dataTransfer.getData('text/x-shard-folder');
+
+        if (noteId) {
+          // Drop note onto folder
+          const note = _notes.find(n => n.id === noteId);
+          const oldFolder = note ? note.folder : '';
+          if (note) note.folder = targetFolder;
+          try {
+            const r = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(noteId)}/move`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'same-origin',
+              body: JSON.stringify({ folder: targetFolder }),
+            });
+            if (!r.ok) {
+              if (note) note.folder = oldFolder;
+              const data = await r.json().catch(() => ({}));
+              console.error('[shard] move note failed:', data.detail || r.status);
+            } else {
+              const data = await r.json().catch(() => ({}));
+              if (data.new_path && note) {
+                const newId = data.new_path;
+                _syncNoteIdAfterMove(noteId, newId);
+                note.id = newId;
+                note.rel_path = newId;
+              }
+            }
+          } catch (err) {
             if (note) note.folder = oldFolder;
-            _renderFolderTree();
-            const data = await r.json().catch(() => ({}));
-            console.error('[shard] move note failed:', data.detail || r.status);
+            console.error('[shard] move note error:', err);
           }
-        } catch (err) {
-          // Revert optimistic update on error
-          if (note) note.folder = oldFolder;
           _renderFolderTree();
-          console.error('[shard] move note error:', err);
+        } else if (sourceFolder && sourceFolder !== targetFolder && !targetFolder.startsWith(sourceFolder + '/')) {
+          // Drop folder into another folder (avoid dropping a folder into itself or its descendant)
+          const newPath = targetFolder ? `${targetFolder}/${sourceFolder.split('/').pop()}` : sourceFolder.split('/').pop();
+          // Optimistic: update _folders and note.folder paths
+          const oldPrefix = sourceFolder;
+          const newPrefix = newPath;
+          _folders = _folders.map(f => {
+            if (f === oldPrefix) return newPrefix;
+            if (f.startsWith(oldPrefix + '/')) return newPrefix + f.slice(oldPrefix.length);
+            return f;
+          });
+          _notes.forEach(n => {
+            if (!n.folder) return;
+            const f = n.folder.replace(/\\/g, '/');
+            if (f === oldPrefix) n.folder = newPrefix;
+            else if (f.startsWith(oldPrefix + '/')) n.folder = newPrefix + f.slice(oldPrefix.length);
+          });
+          try {
+            const r = await fetch(`${API_BASE}/api/shard/folders/rename`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'same-origin',
+              body: JSON.stringify({ old_path: sourceFolder, new_path: newPath }),
+            });
+            if (!r.ok) throw new Error();
+            await _loadFolders();
+            await _loadNotes();
+          } catch (err) {
+            console.error('[shard] move folder failed:', err);
+            await _loadFolders();
+            await _loadNotes();
+          }
         }
       });
     }
@@ -831,29 +1132,69 @@ function _renderFolderTree() {
       e.preventDefault();
       tree.classList.remove('shard-root-drag-over');
       const noteId = e.dataTransfer.getData('text/plain');
-      if (!noteId) return;
-      // Optimistic UI: move to root
-      const note = _notes.find(n => n.id === noteId);
-      const oldFolder = note ? note.folder : '';
-      if (note) note.folder = '';
-      _renderFolderTree();
-      try {
-        const r = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(noteId)}/move`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ folder: '' }),
-        });
-        if (!r.ok) {
+      const sourceFolder = e.dataTransfer.getData('text/x-shard-folder');
+
+      if (noteId) {
+        // Drop note onto root
+        const note = _notes.find(n => n.id === noteId);
+        const oldFolder = note ? note.folder : '';
+        if (note) note.folder = '';
+        try {
+          const r = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(noteId)}/move`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ folder: '' }),
+          });
+          if (!r.ok) {
+            if (note) note.folder = oldFolder;
+            const data = await r.json().catch(() => ({}));
+            console.error('[shard] move to root failed:', data.detail || r.status);
+          } else {
+            const data = await r.json().catch(() => ({}));
+            if (data.new_path && note) {
+              const newId = data.new_path;
+              _syncNoteIdAfterMove(noteId, newId);
+              note.id = newId;
+              note.rel_path = newId;
+            }
+          }
+        } catch (err) {
           if (note) note.folder = oldFolder;
-          _renderFolderTree();
-          const data = await r.json().catch(() => ({}));
-          console.error('[shard] move to root failed:', data.detail || r.status);
+          console.error('[shard] move to root error:', err);
         }
-      } catch (err) {
-        if (note) note.folder = oldFolder;
         _renderFolderTree();
-        console.error('[shard] move to root error:', err);
+      } else if (sourceFolder) {
+        // Drop folder onto root
+        const newPath = sourceFolder.split('/').pop();
+        const oldPrefix = sourceFolder;
+        const newPrefix = newPath;
+        _folders = _folders.map(f => {
+          if (f === oldPrefix) return newPrefix;
+          if (f.startsWith(oldPrefix + '/')) return newPrefix + f.slice(oldPrefix.length);
+          return f;
+        });
+        _notes.forEach(n => {
+          if (!n.folder) return;
+          const f = n.folder.replace(/\\/g, '/');
+          if (f === oldPrefix) n.folder = newPrefix;
+          else if (f.startsWith(oldPrefix + '/')) n.folder = newPrefix + f.slice(oldPrefix.length);
+        });
+        try {
+          const r = await fetch(`${API_BASE}/api/shard/folders/rename`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ old_path: sourceFolder, new_path: newPath }),
+          });
+          if (!r.ok) throw new Error();
+          await _loadFolders();
+          await _loadNotes();
+        } catch (err) {
+          console.error('[shard] move folder to root failed:', err);
+          await _loadFolders();
+          await _loadNotes();
+        }
       }
     });
   }
@@ -991,7 +1332,7 @@ function _switchTab(tab) {
 
 function _navigateToNote(noteId, addToHistory = true, openNewTab = false) {
   const note = _notes.find(n => n.id === noteId);
-  if (!note) return;
+  // Don't return early if note isn't in cache — _selectNote will fetch fresh
   if (!_openTabs.includes(noteId)) {
     if (openNewTab) {
       _openTabs.push(noteId);
@@ -1017,7 +1358,7 @@ function _navigateToNote(noteId, addToHistory = true, openNewTab = false) {
     }
   }
   _renderNoteTabs();
-  _renderBreadcrumb(note);
+  _renderBreadcrumb(note || null);
   _updateNavButtons();
   document.querySelectorAll('[data-shard-content]').forEach(p => {
     p.classList.toggle('hidden', p.dataset.shardContent !== 'note');
@@ -1025,6 +1366,31 @@ function _navigateToNote(noteId, addToHistory = true, openNewTab = false) {
   _renderFolderTree();
   _updateTreeSelection();
   _selectNote(noteId);
+  // Persist last opened note for this vault
+  if (_selectedVaultId) {
+    try { localStorage.setItem(`shard-last-note-${_selectedVaultId}`, noteId); } catch {}
+  }
+}
+
+function _openGraphView() {
+  const graphTabId = '__graph__';
+  if (!_openTabs.includes(graphTabId)) {
+    _openTabs.push(graphTabId);
+  }
+  _selectedNoteId = graphTabId;
+  _activeTab = 'graph';
+  _renderNoteTabs();
+  _renderBreadcrumb(null);
+  _updateNavButtons();
+  document.querySelectorAll('[data-shard-content]').forEach(p => {
+    p.classList.toggle('hidden', p.dataset.shardContent !== 'graph');
+  });
+  const container = document.getElementById('shard-main-graph-canvas');
+  if (container && window.vis) {
+    import('./shardGraphCanvas.js').then(mod => {
+      mod.renderShardGraph(container, _selectedVaultId);
+    });
+  }
 }
 
 function _goBack() {
@@ -1085,10 +1451,15 @@ function _hideModeTooltip() {
 
 function _closeCurrentTab() {
   if (_selectedNoteId) {
+    _lastClosedTab = _selectedNoteId;
     _openTabs = _openTabs.filter(id => id !== _selectedNoteId);
   }
   if (_openTabs.length > 0) {
     const nextId = _openTabs[_openTabs.length - 1];
+    if (nextId === '__graph__') {
+      _openGraphView();
+      return;
+    }
     _selectedNoteId = nextId;
     const note = _notes.find(n => n.id === nextId);
     if (note) {
@@ -1127,10 +1498,21 @@ function _renderNoteTabs() {
     return;
   }
   const html = _openTabs.map(noteId => {
+    if (noteId === '__graph__') {
+      const active = noteId === _selectedNoteId ? 'active' : '';
+      const icon = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>`;
+      return `<button class="shard-tab ${active}" data-note-id="__graph__" title="Graph view">
+        <span style="display:inline-flex;align-items:center;flex-shrink:0;margin-right:4px;">${icon}</span>
+        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;min-width:0;text-align:left;">Graph view</span>
+        <span class="shard-tab-close" data-note-id="__graph__">&times;</span>
+      </button>`;
+    }
     const note = _notes.find(n => n.id === noteId);
     const title = _esc(note ? note.title : noteId);
     const active = noteId === _selectedNoteId ? 'active' : '';
+    const icon = note ? _getNoteIconSvg(note.id, 'file', 11) : '';
     return `<button class="shard-tab ${active}" data-note-id="${_esc(noteId)}" title="${title}">
+      <span style="display:inline-flex;align-items:center;flex-shrink:0;margin-right:4px;">${icon}</span>
       <span style="flex:1;overflow:hidden;text-overflow:ellipsis;min-width:0;text-align:left;">${title}</span>
       <span class="shard-tab-close" data-note-id="${_esc(noteId)}">&times;</span>
     </button>`;
@@ -1139,15 +1521,47 @@ function _renderNoteTabs() {
 }
 
 async function _showNewNotePrompt() {
-  // Auto-generate "new note.md", "new note 1.md", etc.
-  let baseName = 'new note';
+  // Auto-generate "Untitled.md", "Untitled 1.md", etc.
+  let baseName = 'Untitled';
   let name = `${baseName}.md`;
   let counter = 1;
   while (_notes.some(n => n.id === name || n.rel_path === name || n.title === baseName || n.title === name.replace(/\.md$/, ''))) {
-    baseName = `new note ${counter}`;
+    baseName = `Untitled ${counter}`;
     name = `${baseName}.md`;
     counter++;
   }
+  // Determine target folder based on newNoteLocation setting
+  let targetFolder = '';
+  const loc = _shardSettings.filesAndLinks.newNoteLocation;
+  if (loc === 'same-folder') {
+    const currentNote = _notes.find(n => n.id === _selectedNoteId);
+    targetFolder = currentNote ? (currentNote.folder || '') : '';
+  } else if (loc === 'folder') {
+    targetFolder = _shardSettings.filesAndLinks.newNoteFolder || '';
+  }
+
+  // Optimistic UI: create note immediately
+  const optimisticNote = {
+    id: name,
+    rel_path: name,
+    folder: targetFolder,
+    title: baseName,
+    content: '',
+    frontmatter: {},
+    tags: [],
+    outbound_links: [],
+    backlinks: [],
+    last_modified_src: new Date().toISOString(),
+    sync_status: 'synced',
+    _optimistic: true,
+  };
+  _notes.push(optimisticNote);
+  _notes.sort((a, b) => a.title.toLowerCase().localeCompare(b.title.toLowerCase()));
+  _renderFolderTree();
+  _autoRenameNoteId = optimisticNote.id;
+  _navigateToNote(optimisticNote.id, true, true);
+
+  // Backend call
   try {
     const r = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(name)}/edit`, {
       method: 'POST',
@@ -1155,18 +1569,42 @@ async function _showNewNotePrompt() {
       body: JSON.stringify({ content: '' }),
       credentials: 'same-origin'
     });
-    if (r.ok) {
-      await _loadNotes();
-      await _loadFolders();
-      _renderFolderTree();
-      const note = _notes.find(n => n.id === name || n.rel_path === name);
-      if (note) _navigateToNote(note.id, true, true);
-    } else {
-      const data = await r.json().catch(() => ({}));
-      console.error('[shard] create note failed:', data.detail || r.status);
+    if (!r.ok) throw new Error();
+
+    if (targetFolder) {
+      try {
+        const moveR = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(name)}/move`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ folder: targetFolder }),
+        });
+        if (moveR.ok) {
+          const data = await moveR.json().catch(() => ({}));
+          if (data.new_path) {
+            _syncNoteIdAfterMove(name, data.new_path);
+            optimisticNote.id = data.new_path;
+            optimisticNote.rel_path = data.new_path;
+            optimisticNote.folder = targetFolder;
+          }
+        }
+        await _loadNotes();
+        await _loadFolders();
+        _renderFolderTree();
+      } catch (moveErr) {
+        console.error('[shard] move new note failed:', moveErr);
+      }
     }
+    delete optimisticNote._optimistic;
+    _autoRenameNoteId = optimisticNote.id;
   } catch (e) {
     console.error('[shard] create note failed', e);
+    const idx = _notes.findIndex(n => n.id === name || n.rel_path === name);
+    if (idx !== -1) _notes.splice(idx, 1);
+    _renderFolderTree();
+    _renderNoteTabs();
+    if (_selectedNoteId === name) _closeCurrentTab();
+    showToast('Failed to create note');
   }
 }
 
@@ -1191,6 +1629,38 @@ function _renderBreadcrumb(note) {
       _renderFolderTree();
     });
   });
+  _fitBreadcrumb(el);
+}
+
+function _fitBreadcrumb(el) {
+  if (!el) return;
+  const parts = Array.from(el.querySelectorAll('.shard-breadcrumb-part'));
+  const current = el.querySelector('.shard-breadcrumb-current');
+  // Reset any previous constraints
+  parts.forEach(p => { p.style.maxWidth = ''; });
+  if (current) current.style.maxWidth = '';
+
+  const containerWidth = el.clientWidth;
+  if (el.scrollWidth <= containerWidth) return;
+
+  const MIN_PART = 20;
+  const MIN_CURRENT = 60;
+
+  // Shrink leftmost parts first
+  for (let i = 0; i < parts.length; i++) {
+    if (el.scrollWidth <= containerWidth) break;
+    const part = parts[i];
+    const natural = part.scrollWidth;
+    const target = Math.max(MIN_PART, natural - 50);
+    part.style.maxWidth = target + 'px';
+  }
+
+  // If still overflowing, also constrain current title
+  if (el.scrollWidth > containerWidth && current) {
+    const overflow = el.scrollWidth - containerWidth;
+    const natural = current.scrollWidth;
+    current.style.maxWidth = Math.max(MIN_CURRENT, natural - overflow) + 'px';
+  }
 }
 
 function _updateNavButtons() {
@@ -1213,21 +1683,439 @@ function _switchLeftTab(tab) {
     pane.classList.toggle('hidden', pane.dataset.pane !== tab);
   });
 
-  const _disabled = (paneId) => {
-    const el = document.getElementById('shard-' + paneId + '-pane');
-    if (el) el.innerHTML = '<div style="padding:12px;text-align:center;opacity:0.5;font-size:12px;">Plugin disabled.<br>Enable it in Settings > Core Plugins.</div>';
-  };
-
   if (tab === 'tags') {
     if (_pluginManager?.isEnabled('tags')) _renderTagsPane();
-    else _disabled('tags');
   }
   if (tab === 'bookmarks') {
     if (_pluginManager?.isEnabled('bookmarks')) _renderBookmarksPane();
-    else _disabled('bookmarks');
   }
-  if (tab === 'search') {
-    if (!_pluginManager?.isEnabled('search')) _disabled('search');
+}
+
+// ── Ribbon ────────────────────────────────────────────────
+
+// Registry of all ribbon items (core + plugins)
+const _ribbonRegistry = new Map();
+let _ribbonDraggedId = null;
+
+function _registerRibbonItem(id, title, iconSvg, action, pluginId = null) {
+  _ribbonRegistry.set(id, { id, title, iconSvg, action, pluginId });
+}
+
+function _renderRibbon() {
+  const ribbon = document.getElementById('shard-ribbon-bar');
+  const pane3 = document.querySelector('.shard-3pane');
+  if (!ribbon) return;
+
+  const showRibbon = _shardSettings?.appearance?.showRibbon !== false;
+  const hiddenItems = new Set(_shardSettings?.appearance?.ribbonHiddenItems || []);
+
+  // Show/hide ribbon container and adjust grid layout
+  ribbon.style.display = showRibbon ? '' : 'none';
+  if (pane3) {
+    if (showRibbon) pane3.classList.remove('shard-ribbon-hidden');
+    else pane3.classList.add('shard-ribbon-hidden');
+  }
+  if (!showRibbon) return;
+
+  // Register core items if not already registered
+  if (_ribbonRegistry.size === 0) {
+    _registerRibbonItem('new-note', 'New note',
+      `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>`,
+      () => _showNewNotePrompt());
+    _registerRibbonItem('quick-switcher', 'Quick switcher',
+      `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`,
+      () => _showQuickSwitcher());
+    _registerRibbonItem('graph-view', 'Open graph view',
+      `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>`,
+      () => _openGraphView());
+  }
+
+  // Sort by ribbonOrder if present, otherwise use registry insertion order
+  const order = _shardSettings?.appearance?.ribbonOrder || [];
+  const items = Array.from(_ribbonRegistry.values());
+  items.sort((a, b) => {
+    const ai = order.indexOf(a.id);
+    const bi = order.indexOf(b.id);
+    if (ai !== -1 && bi !== -1) return ai - bi;
+    if (ai !== -1) return -1;
+    if (bi !== -1) return 1;
+    return 0;
+  });
+
+  // Rebuild ribbon
+  ribbon.innerHTML = '';
+  let lastPluginId = null;
+  for (const item of items) {
+    if (hiddenItems.has(item.id)) continue;
+    // Add separator between items from different plugins
+    if (lastPluginId !== null && lastPluginId !== item.pluginId) {
+      const s = document.createElement('div');
+      s.className = 'shard-ribbon-sep';
+      ribbon.appendChild(s);
+    }
+    lastPluginId = item.pluginId;
+    const b = document.createElement('div');
+    b.className = 'shard-ribbon-btn';
+    b.title = item.title;
+    b.draggable = true;
+    b.dataset.ribbonId = item.id;
+    b.role = 'button';
+    b.tabIndex = 0;
+    b.innerHTML = item.iconSvg;
+    b.addEventListener('click', item.action);
+    b.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); item.action(); }
+    });
+
+    // Drag-and-drop reordering
+    b.addEventListener('dragstart', (e) => {
+      _ribbonDraggedId = item.id;
+      b.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', item.id);
+    });
+    b.addEventListener('dragend', () => {
+      b.classList.remove('dragging');
+      _ribbonDraggedId = null;
+      b.style.borderTop = '';
+      b.style.borderBottom = '';
+    });
+    b.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      if (!_ribbonDraggedId || _ribbonDraggedId === item.id) return;
+      const rect = b.getBoundingClientRect();
+      const midY = rect.top + rect.height / 2;
+      b.style.borderTop = '';
+      b.style.borderBottom = '';
+      if (e.clientY < midY) b.style.borderTop = '2px solid var(--accent, var(--red, #4a9eff))';
+      else b.style.borderBottom = '2px solid var(--accent, var(--red, #4a9eff))';
+    });
+    b.addEventListener('dragleave', () => {
+      b.style.borderTop = '';
+      b.style.borderBottom = '';
+    });
+    b.addEventListener('drop', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      b.style.borderTop = '';
+      b.style.borderBottom = '';
+      if (!_ribbonDraggedId || _ribbonDraggedId === item.id) return;
+
+      // Move the dragged button directly in the DOM for instant feedback
+      const draggedBtn = ribbon.querySelector(`[data-ribbon-id="${_ribbonDraggedId}"]`);
+      if (!draggedBtn) return;
+      draggedBtn.classList.remove('dragging');
+
+      const rect = b.getBoundingClientRect();
+      const midY = rect.top + rect.height / 2;
+      if (e.clientY < midY) {
+        ribbon.insertBefore(draggedBtn, b);
+      } else {
+        ribbon.insertBefore(draggedBtn, b.nextElementSibling);
+      }
+
+      // Persist order
+      const allIds = Array.from(ribbon.querySelectorAll('.shard-ribbon-btn')).map(el => el.dataset.ribbonId);
+      _shardSettings.appearance.ribbonOrder = allIds;
+      _saveShardSettings();
+    });
+
+    ribbon.appendChild(b);
+  }
+}
+
+/** Right-click context menu for ribbon */
+let _ribbonMenu = null;
+function _showRibbonMenu(x, y) {
+  console.log('[shard] _showRibbonMenu called', x, y);
+  if (_ribbonMenu) { _ribbonMenu.remove(); _ribbonMenu = null; }
+  const hiddenItems = new Set(_shardSettings?.appearance?.ribbonHiddenItems || []);
+  const showRibbon = _shardSettings?.appearance?.showRibbon !== false;
+
+  const menu = document.createElement('div');
+  menu.className = 'shard-ribbon-menu';
+  const items = Array.from(_ribbonRegistry.values());
+  console.log('[shard] ribbon items count:', items.length);
+  if (items.length === 0) { console.log('[shard] no ribbon items, returning'); return; }
+
+  let html = '';
+  for (const item of items) {
+    const isHidden = hiddenItems.has(item.id);
+    const actionClass = isHidden ? 'add' : 'remove';
+    const actionIcon = isHidden
+      ? '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>'
+      : '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+    html += `
+      <div class="shard-ribbon-menu-item" data-ribbon-id="${item.id}">
+        <span class="shard-ribbon-menu-icon">${item.iconSvg.replace(/width="18" height="18"/g, 'width="14" height="14"')}</span>
+        <span>${_esc(item.title)}</span>
+        <button type="button" class="shard-ribbon-menu-action ${actionClass}" data-ribbon-action="toggle-item" data-ribbon-id="${item.id}" title="${isHidden ? 'Show' : 'Hide'} item">
+          ${actionIcon}
+        </button>
+      </div>`;
+  }
+  html += `<div class="shard-ribbon-menu-divider"></div>`;
+  html += `
+    <div class="shard-ribbon-menu-item" data-ribbon-action="hide-ribbon">
+      <span class="shard-ribbon-menu-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg></span>
+      <span>Hide ribbon</span>
+    </div>`;
+  menu.innerHTML = html;
+  document.body.appendChild(menu);
+  console.log('[shard] ribbon menu appended to body');
+
+  // Position
+  const rect = menu.getBoundingClientRect();
+  console.log('[shard] ribbon menu rect:', rect);
+  const winW = window.innerWidth;
+  const winH = window.innerHeight;
+  let left = x;
+  let top = y;
+  if (left + rect.width > winW) left = winW - rect.width - 4;
+  if (top + rect.height > winH) top = winH - rect.height - 4;
+  menu.style.left = left + 'px';
+  menu.style.top = top + 'px';
+  menu.style.position = 'fixed';
+  menu.style.zIndex = '9999';
+  console.log('[shard] ribbon menu positioned at', left, top);
+
+  // Wire hide/show item buttons
+  menu.querySelectorAll('button[data-ribbon-action="toggle-item"]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = btn.dataset.ribbonId;
+      const set = new Set(_shardSettings.appearance.ribbonHiddenItems || []);
+      if (set.has(id)) set.delete(id);
+      else set.add(id);
+      _shardSettings.appearance.ribbonHiddenItems = Array.from(set);
+      _saveShardSettings();
+      _renderRibbon();
+      // Refresh menu to swap icon
+      _ribbonMenu?.remove();
+      _ribbonMenu = null;
+      _showRibbonMenu(parseInt(menu.style.left), parseInt(menu.style.top));
+    });
+  });
+  // Wire "Hide ribbon" click
+  menu.querySelector('div[data-ribbon-action="hide-ribbon"]')?.addEventListener('click', () => {
+    _shardSettings.appearance.showRibbon = false;
+    _saveShardSettings();
+    _renderRibbon();
+    _ribbonMenu?.remove();
+    _ribbonMenu = null;
+  });
+
+  _ribbonMenu = menu;
+  console.log('[shard] ribbon menu stored in _ribbonMenu');
+}
+
+// Close ribbon menu on outside click (delayed to avoid closing on the same click that opened it)
+let _ribbonMenuClickAway = null;
+function _ribbonMenuClose(e) {
+  if (_ribbonMenu && !_ribbonMenu.contains(e.target)) {
+    console.log('[shard] ribbon menu closing via outside click');
+    _ribbonMenu.remove();
+    _ribbonMenu = null;
+    document.removeEventListener('click', _ribbonMenuClose);
+    _ribbonMenuClickAway = null;
+  }
+}
+document.addEventListener('contextmenu', (e) => {
+  const ribbon = e.target.closest('#shard-ribbon-bar');
+  if (ribbon) {
+    e.preventDefault();
+    e.stopPropagation();
+    console.log('[shard] ribbon contextmenu triggered');
+    _showRibbonMenu(e.clientX, e.clientY);
+    // Delay click-away so the same right-click doesn't immediately close it
+    if (_ribbonMenuClickAway) clearTimeout(_ribbonMenuClickAway);
+    _ribbonMenuClickAway = setTimeout(() => {
+      document.addEventListener('click', _ribbonMenuClose);
+    }, 50);
+  } else if (_ribbonMenu) {
+    _ribbonMenu.remove();
+    _ribbonMenu = null;
+    if (_ribbonMenuClickAway) clearTimeout(_ribbonMenuClickAway);
+    document.removeEventListener('click', _ribbonMenuClose);
+  }
+}, true);
+
+/** Ribbon configuration dialog */
+function _openRibbonConfigDialog() {
+  // Remove existing dialog if any
+  const existing = document.getElementById('shard-ribbon-config-overlay');
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'shard-ribbon-config-overlay';
+  overlay.className = 'shard-ribbon-config-overlay';
+  overlay.innerHTML = `
+    <div class="shard-ribbon-config-dialog">
+      <div class="shard-ribbon-config-header">
+        <h3>Ribbon menu</h3>
+        <button type="button" class="close-btn" id="shard-ribbon-config-close">&#x2715;</button>
+      </div>
+      <div class="shard-ribbon-config-body">
+        <div class="shard-ribbon-config-desc">Choose what items you want to be active in the ribbon. Drag and drop to change the order.</div>
+        <div id="shard-ribbon-config-active-list"></div>
+        <div class="shard-ribbon-config-section-title">Other ribbon items</div>
+        <div id="shard-ribbon-config-available-list"></div>
+      </div>
+      <div class="shard-ribbon-config-footer">
+        <button type="button" id="shard-ribbon-config-done">Done</button>
+      </div>
+    </div>
+  `;
+  const modal = document.getElementById('shard-modal');
+  (modal || document.body).appendChild(overlay);
+  overlay.style.pointerEvents = 'auto';
+
+  const close = () => { overlay.remove(); };
+  overlay.querySelector('#shard-ribbon-config-close').addEventListener('click', close);
+  overlay.querySelector('#shard-ribbon-config-done').addEventListener('click', close);
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) close();
+  });
+
+  _renderRibbonConfigLists();
+}
+
+function _renderRibbonConfigLists() {
+  const activeContainer = document.getElementById('shard-ribbon-config-active-list');
+  const availableContainer = document.getElementById('shard-ribbon-config-available-list');
+  if (!activeContainer || !availableContainer) return;
+
+  const hiddenItems = new Set(_shardSettings?.appearance?.ribbonHiddenItems || []);
+  const allItems = Array.from(_ribbonRegistry.values());
+  const activeItems = allItems.filter(i => !hiddenItems.has(i.id));
+  const availableItems = allItems.filter(i => hiddenItems.has(i.id));
+
+  // Active list
+  if (activeItems.length === 0) {
+    activeContainer.innerHTML = '<div style="padding:8px;text-align:center;opacity:0.5;font-size:12px;">No active ribbon items.</div>';
+  } else {
+    activeContainer.innerHTML = `<div class="shard-ribbon-config-section-title">Active</div>`;
+    const list = document.createElement('div');
+    list.className = 'shard-ribbon-config-list';
+    activeItems.forEach((item, idx) => {
+      const row = document.createElement('div');
+      row.className = 'shard-ribbon-config-item';
+      row.draggable = true;
+      row.dataset.ribbonId = item.id;
+      row.innerHTML = `
+        <span class="item-drag"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="18" x2="16" y2="18"/></svg></span>
+        <span class="item-icon">${item.iconSvg.replace(/width="18" height="18"/g, 'width="16" height="16"')}</span>
+        <span class="item-title">${_esc(item.title)}</span>
+        <button type="button" class="item-action remove" data-ribbon-action="remove" data-ribbon-id="${item.id}" title="Remove from ribbon">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
+      `;
+      list.appendChild(row);
+    });
+    activeContainer.appendChild(list);
+
+    // Wire remove buttons
+    list.querySelectorAll('button[data-ribbon-action="remove"]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.ribbonId;
+        const set = new Set(_shardSettings.appearance.ribbonHiddenItems || []);
+        set.add(id);
+        _shardSettings.appearance.ribbonHiddenItems = Array.from(set);
+        _saveShardSettings();
+        _renderRibbon();
+        _renderRibbonConfigLists();
+      });
+    });
+
+    // Drag-and-drop reordering for active items
+    let draggedId = null;
+    list.querySelectorAll('.shard-ribbon-config-item').forEach(item => {
+      item.addEventListener('dragstart', (e) => {
+        draggedId = item.dataset.ribbonId;
+        item.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+      });
+      item.addEventListener('dragend', () => {
+        item.classList.remove('dragging');
+        draggedId = null;
+      });
+      item.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        if (!draggedId || draggedId === item.dataset.ribbonId) return;
+        const rect = item.getBoundingClientRect();
+        const midY = rect.top + rect.height / 2;
+        if (e.clientY < midY) item.style.borderTop = '2px solid var(--red)';
+        else item.style.borderBottom = '2px solid var(--red)';
+      });
+      item.addEventListener('dragleave', () => {
+        item.style.borderTop = '';
+        item.style.borderBottom = '';
+      });
+      item.addEventListener('drop', (e) => {
+        e.preventDefault();
+        item.style.borderTop = '';
+        item.style.borderBottom = '';
+        if (!draggedId || draggedId === item.dataset.ribbonId) return;
+        const allIds = Array.from(list.querySelectorAll('.shard-ribbon-config-item')).map(el => el.dataset.ribbonId);
+        const fromIdx = allIds.indexOf(draggedId);
+        const toIdx = allIds.indexOf(item.dataset.ribbonId);
+        if (fromIdx === -1 || toIdx === -1) return;
+        const rect = item.getBoundingClientRect();
+        const midY = rect.top + rect.height / 2;
+        const targetIdx = e.clientY < midY ? toIdx : toIdx + 1;
+        allIds.splice(fromIdx, 1);
+        const insertIdx = allIds.indexOf(item.dataset.ribbonId);
+        const finalIdx = e.clientY < midY ? insertIdx : insertIdx + 1;
+        allIds.splice(finalIdx, 0, draggedId);
+        // Save order and hidden items
+        _shardSettings.appearance.ribbonOrder = allIds;
+        const newHidden = new Set();
+        const activeSet = new Set(allIds);
+        _ribbonRegistry.forEach((_, id) => {
+          if (!activeSet.has(id)) newHidden.add(id);
+        });
+        _shardSettings.appearance.ribbonHiddenItems = Array.from(newHidden);
+        _saveShardSettings();
+        _renderRibbon();
+        _renderRibbonConfigLists();
+      });
+    });
+  }
+
+  // Available list
+  if (availableItems.length === 0) {
+    availableContainer.innerHTML = '<div style="padding:8px;text-align:center;opacity:0.5;font-size:12px;">All ribbon items are active.</div>';
+  } else {
+    const list = document.createElement('div');
+    list.className = 'shard-ribbon-config-list';
+    availableItems.forEach(item => {
+      const row = document.createElement('div');
+      row.className = 'shard-ribbon-config-item';
+      row.dataset.ribbonId = item.id;
+      row.innerHTML = `
+        <span class="item-icon">${item.iconSvg.replace(/width="18" height="18"/g, 'width="16" height="16"')}</span>
+        <span class="item-title">${_esc(item.title)}</span>
+        <button type="button" class="item-action add" data-ribbon-action="add" data-ribbon-id="${item.id}" title="Add to ribbon">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
+      `;
+      list.appendChild(row);
+    });
+    availableContainer.appendChild(list);
+
+    // Wire add buttons
+    list.querySelectorAll('button[data-ribbon-action="add"]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.ribbonId;
+        const set = new Set(_shardSettings.appearance.ribbonHiddenItems || []);
+        set.delete(id);
+        _shardSettings.appearance.ribbonHiddenItems = Array.from(set);
+        _saveShardSettings();
+        _renderRibbon();
+        _renderRibbonConfigLists();
+      });
+    });
   }
 }
 
@@ -1266,6 +2154,7 @@ let _searchHistoryTimer = null;
 // -- Settings ------------------------------------------------
 
 let _shardSettings = {
+  enabledPlugins: CORE_PLUGINS.map(m => m.id),
   editor: {
     defaultView: 'live',
     readableLineLength: true,
@@ -1278,19 +2167,122 @@ let _shardSettings = {
     smartLists: true,
     indentWithTabs: false,
     vimBindings: false,
+    alwaysFocusNewTabs: true,
+    showEditingModeInStatusBar: true,
+    propertiesInDocument: 'visible',
+    indentationGuides: true,
+    rtl: false,
+    spellcheck: false,
+    indentVisualWidth: 4,
+    convertPastedHtml: true,
   },
   filesAndLinks: {
     newNoteLocation: 'vault-root',
+    newNoteFolder: '',
+    newAttachmentLocation: 'vault-root',
+    newAttachmentFolder: '',
     useWikilinks: true,
     linkFormat: 'shortest',
     autoUpdateLinks: true,
+    confirmAutoUpdateLinks: true,
     confirmDelete: true,
+    defaultFileToOpen: 'last-opened',
+    defaultSpecificFile: '',
+    detectAllFileExtensions: false,
   },
   appearance: {
     fontSize: 16,
     quickFontSizeAdjust: true,
     showInlineTitle: true,
     monospaceFont: false,
+    showRibbon: true,
+    ribbonHiddenItems: [],
+    ribbonOrder: [],
+    showTabTitleBar: true,
+    showBacklinksAtBottom: false,
+  },
+  plugins: {
+    backlinks: { showBacklinksAtBottom: false },
+    canvas: { newFileLocation: 'vault-root', mouseWheelBehaviour: 'pan', ctrlDragBehaviour: 'show-menu', showCardNames: 'always', snapToGrid: true, snapToObjects: true, zoomThreshold: 50 },
+    'command-palette': { pinnedCommands: [] },
+    'daily-notes': { dateFormat: 'YYYY-MM-DD', newFileLocation: '', templateFileLocation: '' },
+    'file-recovery': { snapshotInterval: 5, historyLength: 7 },
+    'note-composer': { textAfterExtraction: 'link', templateFileLocation: '', confirmFileMerge: true },
+    'quick-switcher': { showExistingOnly: false, showAttachments: true },
+    templates: { templateFolderLocation: '', dateFormat: 'DD-MM-YYYY', timeFormat: 'HH:mm' },
+    'unique-note-creator': { newFileLocation: '', templateFileLocation: '', uniquePrefixFormat: 'YYYYMMDDHHmm' },
+  },
+  hotkeys: {
+    'quick-switcher': 'ctrl+o',
+    'cycle-view-mode': 'ctrl+alt+e',
+    'new-note': 'ctrl+alt+n',
+    'command-palette': 'ctrl+shift+p',
+    'toggle-bold': 'ctrl+b',
+    'toggle-italics': 'ctrl+i',
+    'toggle-strikethrough': '',
+    'toggle-code': '',
+    'toggle-comment': 'ctrl+/',
+    'toggle-highlight': '',
+    'toggle-underline': '',
+    'toggle-blockquote': '',
+    'toggle-bullet-list': '',
+    'toggle-numbered-list': '',
+    'toggle-heading': '',
+    'set-heading-1': 'ctrl+1',
+    'set-heading-2': 'ctrl+2',
+    'set-heading-3': 'ctrl+3',
+    'set-heading-4': 'ctrl+4',
+    'set-heading-5': 'ctrl+5',
+    'set-heading-6': 'ctrl+6',
+    'remove-heading': '',
+    'indent-list': 'ctrl+]',
+    'unindent-list-item': 'ctrl+[',
+    'toggle-checklist-status': 'ctrl+l',
+    'fold-all': '',
+    'unfold-all': '',
+    'navigate-back': 'alt+left',
+    'navigate-forward': 'alt+right',
+    'close-current-tab': 'ctrl+w',
+    'new-tab': 'ctrl+t',
+    'toggle-reading': 'ctrl+e',
+    'toggle-live': '',
+    'toggle-source': '',
+    'graph-view': '',
+    'open-local-graph': '',
+    'daily-note': '',
+    'files-create-folder': '',
+    'delete-current-file': '',
+    'rename-file': 'ctrl+r',
+    'save-current-file': 'ctrl+s',
+    'open-settings': 'ctrl+,',
+    'close-all-other-tabs': '',
+    'go-next-tab': 'ctrl+shift+]',
+    'go-previous-tab': 'ctrl+shift+[',
+    'go-tab-1': 'alt+1',
+    'go-tab-2': 'alt+2',
+    'go-tab-3': 'alt+3',
+    'go-tab-4': 'alt+4',
+    'go-tab-5': 'alt+5',
+    'go-tab-6': 'alt+6',
+    'go-tab-7': 'alt+7',
+    'go-tab-8': 'alt+8',
+    'zoom-in': 'ctrl+=',
+    'zoom-out': 'ctrl+-',
+    'reset-zoom': 'ctrl+0',
+    'undo-close-tab': 'ctrl+shift+t',
+    'move-line-up': 'alt+up',
+    'move-line-down': 'alt+down',
+    'clear-formatting': '',
+    'insert-horizontal-rule': '',
+    'insert-code-block': '',
+    'add-internal-link': '',
+    'add-embed': '',
+    'insert-callout': '',
+    'insert-footnote': '',
+    'insert-math-block': '',
+    'follow-link-under-cursor': '',
+    'toggle-left-sidebar': '',
+    'toggle-right-sidebar': '',
   },
 };
 
@@ -1300,7 +2292,7 @@ function _loadShardSettings() {
     if (raw) {
       const parsed = JSON.parse(raw);
       _shardSettings = { ..._shardSettings, ...parsed };
-      ['editor', 'filesAndLinks', 'appearance'].forEach(key => {
+      ['editor', 'filesAndLinks', 'appearance', 'hotkeys', 'plugins'].forEach(key => {
         if (parsed[key]) _shardSettings[key] = { ..._shardSettings[key], ...parsed[key] };
       });
     }
@@ -1311,10 +2303,927 @@ function _saveShardSettings() {
   try { localStorage.setItem('shard-settings', JSON.stringify(_shardSettings)); } catch {}
 }
 
+const SHARD_COMMANDS = [
+  {id:'quick-switcher',label:'Open quick switcher',impl:true},
+  {id:'cycle-view-mode',label:'Cycle view mode',impl:true},
+  {id:'new-note',label:'New note',impl:true},
+  {id:'command-palette',label:'Open command palette',impl:true},
+  {id:'toggle-reading',label:'Toggle reading view',impl:true},
+  {id:'toggle-live',label:'Toggle live preview',impl:true},
+  {id:'toggle-source',label:'Toggle source view',impl:true},
+  {id:'fold-all',label:'Fold all headings and lists',impl:true},
+  {id:'unfold-all',label:'Unfold all headings and lists',impl:true},
+  {id:'graph-view',label:'Graph view: Open graph view',impl:true},
+  {id:'open-local-graph',label:'Graph view: Open local graph',impl:true},
+  {id:'daily-note',label:"Daily notes: Open today's daily note",impl:true},
+  {id:'navigate-back',label:'Navigate back',impl:true},
+  {id:'navigate-forward',label:'Navigate forward',impl:true},
+  {id:'close-current-tab',label:'Close current tab',impl:true},
+  {id:'new-tab',label:'New tab',impl:true},
+  {id:'add-alias',label:'Add alias',impl:false},
+  {id:'add-cursor-above',label:'Add cursor above',impl:false},
+  {id:'add-cursor-below',label:'Add cursor below',impl:false},
+  {id:'add-embed',label:'Add embed',impl:true},
+  {id:'add-file-property',label:'Add file property',impl:false},
+  {id:'add-internal-link',label:'Add internal link',impl:true},
+  {id:'add-tag',label:'Add tag',impl:false},
+  {id:'backlinks-open',label:'Backlinks: Open backlinks for the current note',impl:false},
+  {id:'backlinks-show',label:'Backlinks: Show backlinks',impl:false},
+  {id:'backlinks-toggle',label:'Backlinks: Toggle backlinks in document',impl:false},
+  {id:'bases-add-item',label:'Bases: Add item',impl:false},
+  {id:'bases-add-view',label:'Bases: Add view',impl:false},
+  {id:'bases-change-view',label:'Bases: Change view',impl:false},
+  {id:'bases-copy-table',label:'Bases: Copy table to clipboard',impl:false},
+  {id:'bases-create-base',label:'Bases: Create new base',impl:false},
+  {id:'bases-insert-base',label:'Bases: Insert new base',impl:false},
+  {id:'bookmarks-bookmark-all-tabs',label:'Bookmarks: Bookmark all tabs...',impl:false},
+  {id:'bookmarks-bookmark-block',label:'Bookmarks: Bookmark block under cursor...',impl:false},
+  {id:'bookmarks-bookmark-search',label:'Bookmarks: Bookmark current search...',impl:false},
+  {id:'bookmarks-bookmark-heading',label:'Bookmarks: Bookmark heading under cursor...',impl:false},
+  {id:'bookmarks-bookmark',label:'Bookmarks: Bookmark...',impl:false},
+  {id:'bookmarks-remove',label:'Bookmarks: Remove bookmark for the current file',impl:false},
+  {id:'bookmarks-show',label:'Bookmarks: Show bookmarks',impl:false},
+  {id:'canvas-convert',label:'Canvas: Convert to file...',impl:false},
+  {id:'canvas-create',label:'Canvas: Create new canvas',impl:false},
+  {id:'canvas-export',label:'Canvas: Export as image',impl:false},
+  {id:'canvas-jump-group',label:'Canvas: Jump to group',impl:false},
+  {id:'change-vault',label:'Change vault...',impl:false},
+  {id:'clear-file-properties',label:'Clear file properties',impl:false},
+  {id:'clear-formatting',label:'Clear formatting',impl:true},
+  {id:'close-all-other-tabs',label:'Close all other tabs',impl:true},
+  {id:'close-others-in-tab-group',label:'Close others in tab group',impl:false},
+  {id:'close-this-tab-group',label:'Close this tab group',impl:false},
+  {id:'close-window',label:'Close window',impl:false},
+  {id:'command-palette-open',label:'Command palette: Open command palette',impl:false},
+  {id:'copy-file-path-root',label:'Copy current file path from system root',impl:false},
+  {id:'copy-file-path-vault',label:'Copy current file path from vault folder',impl:false},
+  {id:'copy-obsidian-url',label:'Copy Obsidian URL for current file',impl:false},
+  {id:'create-new-note',label:'Create new note',impl:false},
+  {id:'create-new-note-current-tab',label:'Create new note in current tab',impl:false},
+  {id:'create-note-to-right',label:'Create note to the right',impl:false},
+  {id:'cycle-bullet-checkbox',label:'Cycle bullet/checkbox',impl:false},
+  {id:'daily-notes-next',label:'Daily notes: Open next daily note',impl:false},
+  {id:'daily-notes-previous',label:'Daily notes: Open previous daily note',impl:false},
+  {id:'delete-current-file',label:'Delete current file',impl:true},
+  {id:'delete-paragraph',label:'Delete paragraph',impl:false},
+  {id:'download-attachments',label:'Download attachments for current file',impl:false},
+  {id:'export-pdf',label:'Export to PDF...',impl:false},
+  {id:'file-recovery-history',label:'File recovery: Open local history',impl:false},
+  {id:'files-create-folder',label:'Files: Create new folder',impl:true},
+  {id:'files-reveal-file',label:'Files: Reveal current file in navigation',impl:false},
+  {id:'files-show-explorer',label:'Files: Show file explorer',impl:false},
+  {id:'focus-last-note',label:'Focus on last note',impl:false},
+  {id:'focus-tab-group-above',label:'Focus on tab group above',impl:false},
+  {id:'focus-tab-group-below',label:'Focus on tab group below',impl:false},
+  {id:'focus-tab-group-left',label:'Focus on tab group to the left',impl:false},
+  {id:'focus-tab-group-right',label:'Focus on tab group to the right',impl:false},
+  {id:'fold-less',label:'Fold less',impl:false},
+  {id:'fold-more',label:'Fold more',impl:false},
+  {id:'follow-link-under-cursor',label:'Follow link under cursor',impl:true},
+  {id:'go-last-tab',label:'Go to last tab',impl:false},
+  {id:'go-next-tab',label:'Go to next tab',impl:true},
+  {id:'go-previous-tab',label:'Go to previous tab',impl:true},
+  {id:'go-tab-1',label:'Go to tab #1',impl:true},
+  {id:'go-tab-2',label:'Go to tab #2',impl:true},
+  {id:'go-tab-3',label:'Go to tab #3',impl:true},
+  {id:'go-tab-4',label:'Go to tab #4',impl:true},
+  {id:'go-tab-5',label:'Go to tab #5',impl:true},
+  {id:'go-tab-6',label:'Go to tab #6',impl:true},
+  {id:'go-tab-7',label:'Go to tab #7',impl:true},
+  {id:'go-tab-8',label:'Go to tab #8',impl:true},
+  {id:'graph-local',label:'Graph view: Open local graph',impl:false},
+  {id:'graph-time-lapse',label:'Graph view: Start graph time-lapse animation',impl:false},
+  {id:'indent-list',label:'Indent list item',impl:true},
+  {id:'insert-attachment',label:'Insert attachment',impl:false},
+  {id:'insert-callout',label:'Insert callout',impl:true},
+  {id:'insert-code-block',label:'Insert code block',impl:true},
+  {id:'insert-footnote',label:'Insert footnote',impl:true},
+  {id:'insert-horizontal-rule',label:'Insert horizontal rule',impl:true},
+  {id:'insert-markdown-link',label:'Insert Markdown link',impl:false},
+  {id:'insert-math-block',label:'Insert maths block',impl:true},
+  {id:'insert-table',label:'Insert table',impl:false},
+  {id:'make-copy',label:'Make a copy of the current file',impl:false},
+  {id:'manage-vaults',label:'Manage vaults',impl:false},
+  {id:'move-file-folder',label:'Move current file to another folder',impl:false},
+  {id:'move-tab-new-window',label:'Move current tab to new window',impl:false},
+  {id:'move-line-down',label:'Move line down',impl:true},
+  {id:'move-line-up',label:'Move line up',impl:true},
+  {id:'new-window',label:'New window',impl:false},
+  {id:'note-composer-extract-selection',label:'Note composer: Extract current selection...',impl:false},
+  {id:'note-composer-extract-heading',label:'Note composer: Extract this heading...',impl:false},
+  {id:'open-settings',label:'Open settings',impl:true},
+  {id:'open-vault',label:'Open vault',impl:false},
+  {id:'outgoing-links-open',label:'Outgoing links: Open outgoing links',impl:false},
+  {id:'outgoing-links-show',label:'Outgoing links: Show outgoing links',impl:false},
+  {id:'outline-open',label:'Outline: Open outline',impl:false},
+  {id:'page-preview-toggle',label:'Page preview: Toggle page preview',impl:false},
+  {id:'random-note',label:'Random note: Open random note',impl:false},
+  {id:'reload-app',label:'Reload app without saving',impl:false},
+  {id:'rename-file',label:'Rename file',impl:true},
+  {id:'search-all-files',label:'Search: Search in all files',impl:false},
+  {id:'split-down',label:'Split down',impl:false},
+  {id:'split-left',label:'Split left',impl:false},
+  {id:'split-right',label:'Split right',impl:false},
+  {id:'split-up',label:'Split up',impl:false},
+  {id:'tags-open',label:'Tags: Open tag pane',impl:false},
+  {id:'templates-insert',label:'Templates: Insert template',impl:false},
+  {id:'toggle-bold',label:'Toggle bold',impl:true},
+  {id:'toggle-checklist-status',label:'Toggle checklist status',impl:true},
+  {id:'toggle-code',label:'Toggle code',impl:true},
+  {id:'toggle-comment',label:'Toggle comment',impl:true},
+  {id:'toggle-highlight',label:'Toggle highlight',impl:true},
+  {id:'toggle-italics',label:'Toggle italics',impl:true},
+  {id:'toggle-left-sidebar',label:'Toggle left sidebar',impl:true},
+  {id:'toggle-right-sidebar',label:'Toggle right sidebar',impl:true},
+  {id:'toggle-strikethrough',label:'Toggle strikethrough',impl:true},
+  {id:'toggle-underline',label:'Toggle underline',impl:true},
+  {id:'unlinked-mentions-open',label:'Unlinked mentions: Open unlinked mentions',impl:false},
+  {id:'word-count-show',label:'Word count: Show word count',impl:false},
+  {id:'note-composer-merge',label:'Note composer: Merge current file with another file...',impl:false},
+  {id:'open-current-tab-new-window',label:'Open current tab in new window',impl:false},
+  {id:'open-help',label:'Open help',impl:false},
+  {id:'open-in-default-app',label:'Open in default app',impl:false},
+  {id:'open-link-new-tab',label:'Open link under cursor in new tab',impl:false},
+  {id:'open-link-new-window',label:'Open link under cursor in new window',impl:false},
+  {id:'open-link-to-right',label:'Open link under cursor to the right',impl:false},
+  {id:'open-sandbox-vault',label:'Open sandbox vault',impl:false},
+  {id:'outline-open-current',label:'Outline: Open outline of the current file',impl:false},
+  {id:'outline-show',label:'Outline: Show outline',impl:false},
+  {id:'quick-switcher-open',label:'Quick switcher: Open quick switcher',impl:false},
+  {id:'random-note-open',label:'Random note: Open random note',impl:false},
+  {id:'remove-heading',label:'Remove heading',impl:true},
+  {id:'rename-heading',label:'Rename this heading...',impl:false},
+  {id:'reset-zoom',label:'Reset zoom',impl:true},
+  {id:'save-current-file',label:'Save current file',impl:true},
+  {id:'search-replace-current-file',label:'Search & replace in current file',impl:false},
+  {id:'search-current-file',label:'Search current file...',impl:false},
+  {id:'set-heading-1',label:'Set as heading 1',impl:true},
+  {id:'set-heading-2',label:'Set as heading 2',impl:true},
+  {id:'set-heading-3',label:'Set as heading 3',impl:true},
+  {id:'set-heading-4',label:'Set as heading 4',impl:true},
+  {id:'set-heading-5',label:'Set as heading 5',impl:true},
+  {id:'set-heading-6',label:'Set as heading 6',impl:true},
+  {id:'show-context-menu',label:'Show context menu under cursor',impl:false},
+  {id:'show-debug-info',label:'Show debug info',impl:false},
+  {id:'show-system-explorer',label:'Show in system explorer',impl:false},
+  {id:'show-release-notes',label:'Show release notes',impl:false},
+  {id:'show-trash',label:'Show trash',impl:false},
+  {id:'table-add-column-after',label:'Table: Add column after',impl:false},
+  {id:'table-add-column-before',label:'Table: Add column before',impl:false},
+  {id:'table-add-row-after',label:'Table: Add row after',impl:false},
+  {id:'table-add-row-before',label:'Table: Add row before',impl:false},
+  {id:'table-align-centre',label:'Table: Align centre',impl:false},
+  {id:'table-align-left',label:'Table: Align left',impl:false},
+  {id:'table-align-right',label:'Table: Align right',impl:false},
+  {id:'table-delete-column',label:'Table: Delete column',impl:false},
+  {id:'table-delete-row',label:'Table: Delete row',impl:false},
+  {id:'table-duplicate-column',label:'Table: Duplicate column',impl:false},
+  {id:'table-duplicate-row',label:'Table: Duplicate row',impl:false},
+  {id:'table-move-column-left',label:'Table: Move column left',impl:false},
+  {id:'table-move-row-down',label:'Table: Move row down',impl:false},
+  {id:'table-move-row-up',label:'Table: Move row up',impl:false},
+  {id:'tags-view-show-tags',label:'Tags view: Show tags',impl:false},
+  {id:'templates-insert-current-date',label:'Templates: Insert current date',impl:false},
+  {id:'templates-insert-current-time',label:'Templates: Insert current time',impl:false},
+  {id:'toggle-blockquote',label:'Toggle blockquote',impl:true},
+  {id:'toggle-bullet-list',label:'Toggle bullet list',impl:true},
+  {id:'toggle-fold-current-line',label:'Toggle fold on the current line',impl:false},
+  {id:'toggle-fold-properties',label:'Toggle fold properties in current file',impl:false},
+  {id:'toggle-heading',label:'Toggle heading',impl:true},
+  {id:'toggle-inline-maths',label:'Toggle inline maths',impl:false},
+  {id:'toggle-live-preview-source-mode',label:'Toggle Live Preview/Source mode',impl:false},
+  {id:'toggle-numbered-list',label:'Toggle numbered list',impl:true},
+  {id:'toggle-pin',label:'Toggle pin',impl:false},
+  {id:'toggle-reading-view-short',label:'Toggle reading view',impl:false},
+  {id:'undo-close-tab',label:'Undo close tab',impl:true},
+  {id:'unindent-list-item',label:'Unindent list item',impl:true},
+  {id:'unique-note-creator-add-link',label:'Unique note creator: Add unique internal link',impl:false},
+  {id:'unique-note-creator-create-note',label:'Unique note creator: Create new unique note',impl:false},
+  {id:'zoom-in',label:'Zoom in',impl:true},
+  {id:'zoom-out',label:'Zoom out',impl:true},
+];
+
+function _getAllCommands() {
+  const pluginCmds = _pluginManager ? Array.from(_pluginManager._instances.values()).flatMap(p =>
+    (p._commands || []).map(c => ({ id: c.id, label: c.name || c.id, callback: c.callback, impl: true }))
+  ) : [];
+  return [...SHARD_COMMANDS, ...pluginCmds];
+}
+
+function _formatCombo(combo) {
+  if (!combo) return '';
+  return combo.split('+').map(p => {
+    if (p === 'ctrl') return IS_MAC ? 'Cmd' : 'Ctrl';
+    if (p === 'alt') return IS_MAC ? 'Opt' : 'Alt';
+    if (p === 'shift') return 'Shift';
+    if (p === 'meta') return 'Cmd';
+    return p.charAt(0).toUpperCase() + p.slice(1);
+  }).join(' + ');
+}
+
+function _matchesShardCombo(e, combo) {
+  if (!combo) return false;
+  const parts = combo.split('+');
+  const needCtrl = parts.includes('ctrl');
+  const needAlt = parts.includes('alt');
+  const needShift = parts.includes('shift');
+  const needMeta = parts.includes('meta');
+  const key = parts.filter(p => !['ctrl', 'alt', 'shift', 'meta'].includes(p))[0] || '';
+  // On Mac, meta (Cmd) counts as ctrl for shard shortcuts; on Win/Linux, Ctrl counts as ctrl
+  const hasCtrl = IS_MAC ? (e.metaKey || e.ctrlKey) : e.ctrlKey;
+  if (needCtrl !== hasCtrl) return false;
+  if (needAlt !== e.altKey) return false;
+  if (needShift !== e.shiftKey) return false;
+  if (needMeta && !e.metaKey) return false;
+  return e.key.toLowerCase() === key;
+}
+
+function _normalizeCapturedCombo(e) {
+  // Always store as 'ctrl' when the user presses Cmd (Mac) or Ctrl (Win/Linux)
+  const modifiers = [];
+  if (IS_MAC ? e.metaKey : e.ctrlKey) modifiers.push('ctrl');
+  if (e.altKey) modifiers.push('alt');
+  if (e.shiftKey) modifiers.push('shift');
+  if (!IS_MAC && e.metaKey) modifiers.push('meta');
+  const key = e.key.toLowerCase();
+  if (key === 'control' || key === 'alt' || key === 'shift' || key === 'meta') return null;
+  modifiers.push(key);
+  return modifiers.join('+');
+}
+
+function _getActiveShardEditor() {
+  const modal = document.getElementById('shard-modal');
+  if (!modal || modal.classList.contains('hidden')) return null;
+  const activeLp = modal.querySelector('.lp-line.active .lp-source[contenteditable="true"]');
+  if (activeLp) return { el: activeLp, mode: 'live' };
+  const sourceDiv = modal.querySelector('.shard-source-view[contenteditable="true"]');
+  if (sourceDiv) return { el: sourceDiv, mode: 'source' };
+  return null;
+}
+
+function _getCurrentLineRange(editor) {
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return null;
+  const container = editor.el;
+  const range = sel.getRangeAt(0).cloneRange();
+  if (editor.mode === 'live') {
+    const r = document.createRange();
+    r.selectNodeContents(container);
+    return r;
+  }
+  let node = range.startContainer;
+  while (node && node !== container) {
+    if (node.nodeType === Node.ELEMENT_NODE && node.classList?.contains('lp-line')) {
+      const r = document.createRange();
+      r.selectNodeContents(node);
+      return r;
+    }
+    node = node.parentNode;
+  }
+  const r = document.createRange();
+  r.selectNodeContents(container);
+  return r;
+}
+
+function _toggleInlineWrap(prefix, suffix) {
+  suffix = suffix || prefix;
+  const editor = _getActiveShardEditor();
+  if (!editor) return;
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return;
+  const selected = sel.toString();
+  if (selected.startsWith(prefix) && selected.endsWith(suffix)) {
+    document.execCommand('insertText', false, selected.slice(prefix.length, -suffix.length));
+  } else if (selected) {
+    document.execCommand('insertText', false, prefix + selected + suffix);
+  } else {
+    document.execCommand('insertText', false, prefix + suffix);
+    const newSel = window.getSelection();
+    if (newSel.rangeCount) {
+      const range = newSel.getRangeAt(0);
+      const node = range.startContainer;
+      if (node.nodeType === Node.TEXT_NODE) {
+        const pos = Math.max(0, range.startOffset - suffix.length);
+        const newRange = document.createRange();
+        newRange.setStart(node, pos);
+        newRange.collapse(true);
+        newSel.removeAllRanges();
+        newSel.addRange(newRange);
+      }
+    }
+  }
+  editor.el.focus();
+}
+
+function _toggleLinePrefix(prefix) {
+  const editor = _getActiveShardEditor();
+  if (!editor) return;
+  const lineRange = _getCurrentLineRange(editor);
+  if (!lineRange) return;
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(lineRange);
+  const oldText = sel.toString();
+  const newText = oldText.startsWith(prefix) ? oldText.slice(prefix.length) : prefix + oldText;
+  document.execCommand('insertText', false, newText);
+  editor.el.focus();
+}
+
+function _toggleHeading(level) {
+  const editor = _getActiveShardEditor();
+  if (!editor) return;
+  const lineRange = _getCurrentLineRange(editor);
+  if (!lineRange) return;
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(lineRange);
+  const oldText = sel.toString();
+  const headingRe = /^(#{1,6})\s/;
+  const match = oldText.match(headingRe);
+  let newText;
+  if (match) {
+    const currentLevel = match[1].length;
+    if (level != null) {
+      if (currentLevel === level) {
+        newText = oldText.replace(headingRe, '');
+      } else {
+        newText = '#'.repeat(level) + ' ' + oldText.replace(headingRe, '');
+      }
+    } else {
+      const nextLevel = currentLevel >= 6 ? 0 : currentLevel + 1;
+      if (nextLevel === 0) {
+        newText = oldText.replace(headingRe, '');
+      } else {
+        newText = '#'.repeat(nextLevel) + ' ' + oldText.replace(headingRe, '');
+      }
+    }
+  } else {
+    if (level != null) {
+      newText = '#'.repeat(level) + ' ' + oldText;
+    } else {
+      newText = '# ' + oldText;
+    }
+  }
+  document.execCommand('insertText', false, newText);
+  editor.el.focus();
+}
+
+function _removeHeadingPrefix() {
+  const editor = _getActiveShardEditor();
+  if (!editor) return;
+  const lineRange = _getCurrentLineRange(editor);
+  if (!lineRange) return;
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(lineRange);
+  const oldText = sel.toString();
+  document.execCommand('insertText', false, oldText.replace(/^(#{1,6})\s/, ''));
+  editor.el.focus();
+}
+
+function _toggleIndent(delta) {
+  const editor = _getActiveShardEditor();
+  if (!editor) return;
+  const lineRange = _getCurrentLineRange(editor);
+  if (!lineRange) return;
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(lineRange);
+  const oldText = sel.toString();
+  let newText;
+  if (delta > 0) {
+    newText = '  ' + oldText;
+  } else {
+    newText = oldText.replace(/^(\t|  )/, '');
+  }
+  document.execCommand('insertText', false, newText);
+  editor.el.focus();
+}
+
+function _toggleCheckboxStatus() {
+  const editor = _getActiveShardEditor();
+  if (!editor) return;
+  const lineRange = _getCurrentLineRange(editor);
+  if (!lineRange) return;
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(lineRange);
+  const oldText = sel.toString();
+  let newText;
+  if (/^- \[x\]\s/i.test(oldText)) {
+    newText = oldText.replace(/^- \[x\]\s/i, '- [ ] ');
+  } else if (/^- \[ \]\s/.test(oldText)) {
+    newText = oldText.replace(/^- \[ \]\s/, '- ');
+  } else if (/^-\s/.test(oldText)) {
+    newText = oldText.replace(/^-\s/, '- [ ] ');
+  } else {
+    newText = '- [ ] ' + oldText;
+  }
+  document.execCommand('insertText', false, newText);
+  editor.el.focus();
+}
+
+function _clearFormatting() {
+  const editor = _getActiveShardEditor();
+  if (!editor) return;
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return;
+  const selected = sel.toString();
+  if (!selected) return;
+  const cleaned = selected
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/\*(.*?)\*/g, '$1')
+    .replace(/~~(.*?)~~/g, '$1')
+    .replace(/==(.*?)==/g, '$1')
+    .replace(/`(.*?)`/g, '$1')
+    .replace(/%%(.*?)%%/g, '$1')
+    .replace(/<u>(.*?)<\/u>/g, '$1');
+  document.execCommand('insertText', false, cleaned);
+  editor.el.focus();
+}
+
+function _moveLine(delta) {
+  const editor = _getActiveShardEditor();
+  if (!editor || editor.mode !== 'source') return;
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return;
+  const fullText = editor.el.innerText;
+  const lines = fullText.split('\n');
+  const range = sel.getRangeAt(0);
+  let pos = 0;
+  const node = range.startContainer;
+  if (node.nodeType === Node.TEXT_NODE) {
+    const pre = document.createRange();
+    pre.selectNodeContents(editor.el);
+    pre.setEnd(node, range.startOffset);
+    pos = pre.toString().length;
+  }
+  let lineIdx = 0;
+  let cum = 0;
+  for (let i = 0; i < lines.length; i++) {
+    if (pos >= cum && pos <= cum + lines[i].length) { lineIdx = i; break; }
+    cum += lines[i].length + 1;
+  }
+  const swapIdx = lineIdx + delta;
+  if (swapIdx < 0 || swapIdx >= lines.length) return;
+  [lines[lineIdx], lines[swapIdx]] = [lines[swapIdx], lines[lineIdx]];
+  editor.el.innerText = lines.join('\n');
+  // Restore caret roughly
+  const newPos = lines.slice(0, swapIdx).join('\n').length + (swapIdx > 0 ? 1 : 0) + Math.min(pos - cum, lines[swapIdx].length);
+  _setCursorOffset(editor.el, newPos);
+  editor.el.focus();
+  const note = _notes.find(n => n.id === _selectedNoteId);
+  if (note) _flushSourceEdit(editor.el, note);
+}
+
+function _setCursorOffset(container, offset) {
+  const sel = window.getSelection();
+  const range = document.createRange();
+  range.setStart(container.firstChild || container, 0);
+  range.setEnd(container.firstChild || container, 0);
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
+function _zoom(delta) {
+  let fs = _shardSettings.appearance.fontSize || 16;
+  fs = Math.max(10, Math.min(32, fs + delta));
+  _shardSettings.appearance.fontSize = fs;
+  _saveShardSettings();
+  document.documentElement.style.setProperty('--shard-font-size', fs + 'px');
+}
+
+function _insertBlock(text) {
+  const editor = _getActiveShardEditor();
+  if (!editor) return;
+  document.execCommand('insertText', false, text);
+  editor.el.focus();
+}
+
+function _followLinkUnderCursor() {
+  const editor = _getActiveShardEditor();
+  if (!editor) return;
+  const sel = window.getSelection();
+  const text = sel.toString() || _getCurrentLineRange(editor)?.toString() || '';
+  const match = text.match(/\[\[(.*?)\]\]|\[(.*?)\]\((.*?)\)/);
+  if (!match) return;
+  const link = match[1] || match[3];
+  if (!link) return;
+  const target = _notes.find(n => n.title === link || n.id === link);
+  if (target) _navigateToNote(target.id);
+}
+
+function _goToTab(index) {
+  if (index < 0 || index >= _openTabs.length) return;
+  _navigateToNote(_openTabs[index]);
+}
+
+function _runCommandById(cmdId) {
+  switch (cmdId) {
+    case 'quick-switcher': _showQuickSwitcher(); return true;
+    case 'cycle-view-mode': {
+      if (_previewMode === 'preview') _previewMode = _editModePref;
+      else _previewMode = 'preview';
+      _updateModeButtons();
+      if (_selectedNoteId) _selectNote(_selectedNoteId);
+      return true;
+    }
+    case 'new-note': _showNewNotePrompt(); return true;
+    case 'command-palette': _showCommandPalette(); return true;
+    case 'toggle-reading': {
+      _previewMode = 'preview'; _updateModeButtons();
+      if (_selectedNoteId) _selectNote(_selectedNoteId);
+      return true;
+    }
+    case 'toggle-live': {
+      _editModePref = 'live'; _previewMode = 'live'; _updateModeButtons();
+      if (_selectedNoteId) _selectNote(_selectedNoteId);
+      return true;
+    }
+    case 'toggle-source': {
+      _editModePref = 'edit'; _previewMode = 'edit'; _updateModeButtons();
+      if (_selectedNoteId) _selectNote(_selectedNoteId);
+      return true;
+    }
+    case 'fold-all':
+      document.querySelectorAll('#shard-preview details').forEach(d => d.open = false);
+      return true;
+    case 'unfold-all':
+      document.querySelectorAll('#shard-preview details').forEach(d => d.open = true);
+      return true;
+    case 'graph-view': {
+      _openGraphView();
+      return true;
+    }
+    case 'open-local-graph': {
+      const localGraphTab = document.querySelector('#shard-right-tabs [data-tab="local-graph"]');
+      if (localGraphTab) localGraphTab.click();
+      return true;
+    }
+    case 'daily-note': {
+      const dailyPlugin = _pluginManager?.getInstance('daily-notes');
+      if (dailyPlugin?._commands?.[0]) dailyPlugin._commands[0].callback();
+      return true;
+    }
+    case 'navigate-back': _goBack(); return true;
+    case 'navigate-forward': _goForward(); return true;
+    case 'close-current-tab': _closeCurrentTab(); return true;
+    case 'new-tab': _showNewNotePrompt(); return true;
+    case 'files-create-folder': _promptNewFolder(); return true;
+    case 'toggle-bold': _toggleInlineWrap('**'); return true;
+    case 'toggle-italics': _toggleInlineWrap('*'); return true;
+    case 'toggle-strikethrough': _toggleInlineWrap('~~'); return true;
+    case 'toggle-highlight': _toggleInlineWrap('=='); return true;
+    case 'toggle-code': _toggleInlineWrap('`'); return true;
+    case 'toggle-comment': _toggleInlineWrap('%%'); return true;
+    case 'toggle-underline': _toggleInlineWrap('<u>', '</u>'); return true;
+    case 'toggle-blockquote': _toggleLinePrefix('> '); return true;
+    case 'toggle-bullet-list': _toggleLinePrefix('- '); return true;
+    case 'toggle-numbered-list': _toggleLinePrefix('1. '); return true;
+    case 'toggle-heading': _toggleHeading(null); return true;
+    case 'set-heading-1': _toggleHeading(1); return true;
+    case 'set-heading-2': _toggleHeading(2); return true;
+    case 'set-heading-3': _toggleHeading(3); return true;
+    case 'set-heading-4': _toggleHeading(4); return true;
+    case 'set-heading-5': _toggleHeading(5); return true;
+    case 'set-heading-6': _toggleHeading(6); return true;
+    case 'remove-heading': _removeHeadingPrefix(); return true;
+    case 'indent-list': _toggleIndent(1); return true;
+    case 'unindent-list-item': _toggleIndent(-1); return true;
+    case 'toggle-checklist-status': _toggleCheckboxStatus(); return true;
+    // Newly wired commands
+    case 'clear-formatting': _clearFormatting(); return true;
+    case 'close-all-other-tabs': {
+      if (_selectedNoteId) {
+        _openTabs = _openTabs.filter(id => id === _selectedNoteId);
+        _renderNoteTabs();
+      }
+      return true;
+    }
+    case 'delete-current-file': {
+      if (_selectedNoteId) _deleteNote(_selectedNoteId);
+      return true;
+    }
+    case 'follow-link-under-cursor': _followLinkUnderCursor(); return true;
+    case 'go-next-tab': {
+      const idx = _openTabs.indexOf(_selectedNoteId);
+      if (idx !== -1 && idx < _openTabs.length - 1) _goToTab(idx + 1);
+      return true;
+    }
+    case 'go-previous-tab': {
+      const idx = _openTabs.indexOf(_selectedNoteId);
+      if (idx > 0) _goToTab(idx - 1);
+      return true;
+    }
+    case 'go-tab-1': _goToTab(0); return true;
+    case 'go-tab-2': _goToTab(1); return true;
+    case 'go-tab-3': _goToTab(2); return true;
+    case 'go-tab-4': _goToTab(3); return true;
+    case 'go-tab-5': _goToTab(4); return true;
+    case 'go-tab-6': _goToTab(5); return true;
+    case 'go-tab-7': _goToTab(6); return true;
+    case 'go-tab-8': _goToTab(7); return true;
+    case 'insert-callout': _insertBlock('> [!note]\n> '); return true;
+    case 'insert-code-block': _insertBlock('```\n\n```'); return true;
+    case 'insert-footnote': _insertBlock('[^1]: '); return true;
+    case 'insert-horizontal-rule': _insertBlock('---\n'); return true;
+    case 'insert-math-block': _insertBlock('$$\n\n$$'); return true;
+    case 'move-line-down': _moveLine(1); return true;
+    case 'move-line-up': _moveLine(-1); return true;
+    case 'open-settings': _openShardSettings(); return true;
+    case 'rename-file': {
+      if (_selectedNoteId) _promptRenameNote(_selectedNoteId);
+      return true;
+    }
+    case 'reset-zoom': { _zoom(16 - (_shardSettings.appearance.fontSize || 16)); return true; }
+    case 'save-current-file': {
+      const note = _notes.find(n => n.id === _selectedNoteId);
+      const sourceDiv = document.querySelector('.shard-source-view[contenteditable="true"]');
+      if (sourceDiv && note) _flushSourceEdit(sourceDiv, note);
+      return true;
+    }
+    case 'undo-close-tab': {
+      if (_lastClosedTab) {
+        _navigateToNote(_lastClosedTab, false, true);
+      }
+      return true;
+    }
+    case 'zoom-in': _zoom(1); return true;
+    case 'zoom-out': _zoom(-1); return true;
+    case 'add-internal-link': _toggleInlineWrap('[[', ']]'); return true;
+    case 'add-embed': _toggleInlineWrap('![[', ']]'); return true;
+    case 'toggle-left-sidebar': {
+      const leftPane = document.querySelector('.shard-left-pane');
+      if (leftPane) leftPane.classList.toggle('hidden');
+      return true;
+    }
+    case 'toggle-right-sidebar': {
+      const rightPane = document.querySelector('.shard-right-pane');
+      if (rightPane) rightPane.classList.toggle('hidden');
+      return true;
+    }
+    default: {
+      const pluginCmd = _getAllCommands().find(c => c.id === cmdId);
+      if (pluginCmd && pluginCmd.callback) { pluginCmd.callback(); return true; }
+      if (_pluginManager) {
+        for (const p of _pluginManager._instances.values()) {
+          const c = (p._commands || []).find(x => x.id === cmdId);
+          if (c) { c.callback(); return true; }
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function _renderHotkeySettings() {
+  const container = document.querySelector('[data-settings-pane="hotkeys"]');
+  if (!container) return;
+  let commands = _getAllCommands();
+  const hotkeys = _shardSettings.hotkeys || {};
+
+  // Determine sort mode from data attribute
+  const sortMode = container.dataset.sort || 'az';
+  if (sortMode === 'az') {
+    commands.sort((a, b) => a.label.localeCompare(b.label));
+  } else if (sortMode === 'za') {
+    commands.sort((a, b) => b.label.localeCompare(a.label));
+  } else if (sortMode === 'bound') {
+    commands.sort((a, b) => {
+      const aBound = hotkeys[a.id] ? 1 : 0;
+      const bBound = hotkeys[b.id] ? 1 : 0;
+      if (aBound !== bBound) return bBound - aBound;
+      return a.label.localeCompare(b.label);
+    });
+  }
+
+  const sortLabels = { az: 'A–Z', za: 'Z–A', bound: 'Bound first' };
+
+  container.innerHTML = `
+    <div class="shard-settings-group">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <h6 class="shard-settings-group-title" style="margin:0;">Keyboard shortcuts</h6>
+        <span style="font-size:11px;opacity:0.5;">${commands.length} commands</span>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:10px;">
+        <input type="text" id="shard-hotkeys-filter" placeholder="Search Hotkeys" style="flex:1;padding:6px 10px;font-size:13px;background:var(--bg-raised);border:1px solid var(--border);border-radius:6px;color:var(--fg);box-sizing:border-box;" autocomplete="off" spellcheck="false">
+        <div style="position:relative;">
+          <button type="button" id="shard-hotkeys-sort" title="Sort commands" style="padding:6px 10px;font-size:12px;background:var(--bg-raised);border:1px solid var(--border);border-radius:6px;color:var(--fg);cursor:pointer;white-space:nowrap;">&#x2195;</button>
+          <div id="shard-hotkeys-sort-dropdown" style="display:none;position:absolute;right:0;top:calc(100% + 4px);background:var(--bg-raised);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.15);z-index:9999;min-width:140px;overflow:hidden;">
+            <button type="button" data-sort="az" style="display:block;width:100%;text-align:left;padding:6px 10px;font-size:12px;background:transparent;border:none;color:var(--fg);cursor:pointer;${sortMode === 'az' ? 'background:color-mix(in srgb,var(--accent,var(--red,#4a9eff)) 10%,transparent);' : ''}">A–Z</button>
+            <button type="button" data-sort="za" style="display:block;width:100%;text-align:left;padding:6px 10px;font-size:12px;background:transparent;border:none;color:var(--fg);cursor:pointer;${sortMode === 'za' ? 'background:color-mix(in srgb,var(--accent,var(--red,#4a9eff)) 10%,transparent);' : ''}">Z–A</button>
+            <button type="button" data-sort="bound" style="display:block;width:100%;text-align:left;padding:6px 10px;font-size:12px;background:transparent;border:none;color:var(--fg);cursor:pointer;${sortMode === 'bound' ? 'background:color-mix(in srgb,var(--accent,var(--red,#4a9eff)) 10%,transparent);' : ''}">Bound first</button>
+          </div>
+        </div>
+      </div>
+      <div id="shard-hotkeys-list" style="display:flex;flex-direction:column;gap:4px;max-height:400px;overflow-y:auto;">
+        ${commands.map(cmd => {
+          const combo = hotkeys[cmd.id] || '';
+          const display = _formatCombo(combo) || '—';
+          const disabled = cmd.impl === false;
+          return `<div class="shard-settings-row shard-hotkey-row ${disabled ? 'shard-hotkey-disabled' : ''}" style="gap:12px;${disabled ? 'opacity:0.4;' : 'cursor:pointer;'}" data-cmd-id="${_esc(cmd.id)}" data-impl="${cmd.impl !== false}">
+            <div class="shard-settings-info" style="flex:1;${disabled ? 'font-style:italic;' : ''}">
+              <span>${_esc(cmd.label)}</span>
+              ${disabled ? '<span style="font-size:10px;opacity:0.6;margin-left:6px;">(not yet hooked up)</span>' : ''}
+            </div>
+            <kbd class="shard-hotkey-kbd" style="font-family:monospace;font-size:12px;padding:2px 8px;border-radius:4px;background:var(--bg-raised);border:1px solid var(--border);min-width:80px;text-align:center;cursor:pointer;user-select:none;${disabled ? 'pointer-events:none;' : ''}">${_esc(display)}</kbd>
+            <button type="button" class="shard-hotkey-clear" style="background:none;border:none;color:var(--fg);opacity:0.5;cursor:pointer;font-size:12px;padding:2px 6px;${disabled ? 'pointer-events:none;' : ''}" title="Clear shortcut">&#x2715;</button>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+  `;
+
+  // Sort dropdown
+  const sortBtn = document.getElementById('shard-hotkeys-sort');
+  const sortDropdown = document.getElementById('shard-hotkeys-sort-dropdown');
+  if (sortBtn && sortDropdown) {
+    const _closeSortDropdown = (e) => {
+      if (!sortDropdown.contains(e.target) && !sortBtn.contains(e.target)) {
+        sortDropdown.style.display = 'none';
+        document.removeEventListener('click', _closeSortDropdown);
+      }
+    };
+    sortBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isOpen = sortDropdown.style.display !== 'none';
+      if (isOpen) {
+        sortDropdown.style.display = 'none';
+        document.removeEventListener('click', _closeSortDropdown);
+      } else {
+        sortDropdown.style.display = 'block';
+        // Delay adding listener so current click doesn't immediately close it
+        setTimeout(() => document.addEventListener('click', _closeSortDropdown), 0);
+      }
+    });
+    sortDropdown.querySelectorAll('button[data-sort]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        container.dataset.sort = btn.dataset.sort;
+        _renderHotkeySettings();
+      });
+    });
+  }
+
+  // Filter logic
+  const filterInput = document.getElementById('shard-hotkeys-filter');
+  if (filterInput) {
+    filterInput.addEventListener('input', () => {
+      const q = filterInput.value.trim().toLowerCase();
+      container.querySelectorAll('.shard-hotkey-row').forEach(row => {
+        const label = row.querySelector('.shard-settings-info span')?.textContent.toLowerCase() || '';
+        row.style.display = label.includes(q) ? '' : 'none';
+      });
+    });
+  }
+
+  let _capturingCmd = null;
+  let _captureHandler = null;
+  let _clickOutsideHandler = null;
+
+  const stopCapture = () => {
+    if (_captureHandler) {
+      document.removeEventListener('keydown', _captureHandler, true);
+      _captureHandler = null;
+    }
+    if (_clickOutsideHandler) {
+      document.removeEventListener('click', _clickOutsideHandler, true);
+      _clickOutsideHandler = null;
+    }
+    _capturingCmd = null;
+    container.querySelectorAll('.shard-hotkey-kbd').forEach(k => {
+      k.style.borderColor = 'var(--border)';
+      k.style.background = 'var(--bg-raised)';
+    });
+  };
+
+  container.querySelectorAll('.shard-settings-row[data-cmd-id]').forEach(row => {
+    if (row.dataset.impl === 'false') return; // Skip binding for unimplemented commands
+    const cmdId = row.dataset.cmdId;
+    const kbd = row.querySelector('.shard-hotkey-kbd');
+    const clearBtn = row.querySelector('.shard-hotkey-clear');
+
+    kbd.addEventListener('click', () => {
+      if (_capturingCmd === cmdId) { stopCapture(); return; }
+      stopCapture();
+      _capturingCmd = cmdId;
+      kbd.textContent = 'Press keys...';
+      kbd.style.borderColor = 'var(--accent, var(--red))';
+      kbd.style.background = 'color-mix(in srgb, var(--accent, var(--red)) 10%, var(--bg-raised))';
+
+      _clickOutsideHandler = (ev) => {
+        if (!ev.target.closest('[data-settings-pane="hotkeys"]')) {
+          stopCapture();
+          _renderHotkeySettings();
+        }
+      };
+      document.addEventListener('click', _clickOutsideHandler, true);
+
+      _captureHandler = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+
+        if (e.key === 'Escape') {
+          stopCapture();
+          _renderHotkeySettings();
+          return;
+        }
+        if (e.key === 'Backspace' || e.key === 'Delete') {
+          delete _shardSettings.hotkeys[cmdId];
+          _saveShardSettings();
+          stopCapture();
+          _renderHotkeySettings();
+          return;
+        }
+
+        const combo = _normalizeCapturedCombo(e);
+        if (!combo) return; // Lone modifier or invalid
+
+        // Check for conflicts
+        const conflict = Object.entries(_shardSettings.hotkeys || {}).find(([id, c]) => id !== cmdId && c === combo);
+        if (conflict) {
+          showToast(`Conflict: ${_getAllCommands().find(c => c.id === conflict[0])?.label || conflict[0]} already uses ${_formatCombo(combo)}`);
+          return;
+        }
+
+        _shardSettings.hotkeys[cmdId] = combo;
+        _saveShardSettings();
+        stopCapture();
+        _renderHotkeySettings();
+      };
+      document.addEventListener('keydown', _captureHandler, true);
+    });
+
+    clearBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      delete _shardSettings.hotkeys[cmdId];
+      _saveShardSettings();
+      _renderHotkeySettings();
+    });
+  });
+}
+
 function _applyMonospaceFont() {
   const modal = document.getElementById('shard-modal');
   if (!modal) return;
-  modal.classList.toggle('shard-monospace-font', _shardSettings.appearance.monospaceFont);
+  const on = _shardSettings.appearance.monospaceFont === true;
+  const before = modal.classList.contains('shard-monospace-font');
+  if (on) {
+    modal.classList.add('shard-monospace-font');
+  } else {
+    modal.classList.remove('shard-monospace-font');
+  }
+  const after = modal.classList.contains('shard-monospace-font');
+
+  // Belt-and-suspenders: also set inline font-family on key vault content
+  // elements so the change is visible even if CSS specificity has edge cases.
+  const monoFont = "'Fira Code', 'Consolas', monospace";
+  const targets = [
+    modal.querySelector('#shard-preview'),
+    modal.querySelector('#shard-folder-tree'),
+    ...modal.querySelectorAll('.shard-source-view, .shard-live-view, .shard-reading-view'),
+  ].filter(Boolean);
+  for (const el of targets) {
+    if (on) {
+      el.style.setProperty('font-family', monoFont, 'important');
+    } else {
+      el.style.removeProperty('font-family');
+    }
+  }
+
+  // Diagnostic: report computed font-family of representative vault content
+  // elements so we can verify the CSS actually takes effect.
+  const probe = (sel) => {
+    const el = modal.querySelector(sel);
+    if (!el) return `${sel}: <missing>`;
+    const ff = getComputedStyle(el).fontFamily;
+    return `${sel}: ${ff.slice(0, 60)}`;
+  };
+  console.log('[shard] _applyMonospaceFont', {
+    settingOn: on,
+    classBefore: before,
+    classAfter: after,
+    settingsObj: _shardSettings.appearance,
+  });
+  console.log('[shard] computed font-family:', [
+    probe('#shard-preview'),
+    probe('.shard-source-view'),
+    probe('.shard-live-view'),
+    probe('.shard-reading-view'),
+    probe('.shard-folder-tree'),
+    probe('.shard-tab'),
+  ].join(' | '));
+}
+
+function _applyReadableLineLength() {
+  const preview = document.getElementById('shard-preview');
+  if (!preview) return;
+  if (_shardSettings.editor.readableLineLength) {
+    preview.classList.add('shard-readable-line');
+  } else {
+    preview.classList.remove('shard-readable-line');
+  }
 }
 
 function _switchSettingsPane(section) {
@@ -1324,6 +3233,188 @@ function _switchSettingsPane(section) {
   document.querySelectorAll('.shard-settings-section').forEach(el => {
     el.classList.toggle('hidden', el.dataset.settingsPane !== section);
   });
+}
+
+let _selectedPluginSettings = 'backlinks';
+
+function _switchPluginSettingsPane(pluginId) {
+  _selectedPluginSettings = pluginId;
+  const contentEl = document.querySelector('.shard-plugin-settings-content');
+  // If no pane exists for this plugin, inject a fallback
+  let pane = document.querySelector(`.shard-plugin-settings-pane[data-plugin-pane="${_esc(pluginId)}"]`);
+  if (!pane && contentEl) {
+    const plugin = CORE_PLUGINS.find(p => p.id === pluginId);
+    const title = plugin ? plugin.name : pluginId;
+    pane = document.createElement('div');
+    pane.className = 'shard-plugin-settings-pane';
+    pane.dataset.pluginPane = pluginId;
+    pane.innerHTML = `<h3 class="shard-plugin-title">${_esc(title)}</h3><p style="opacity:0.6;font-size:13px;margin-top:8px;">This plugin has no settings.</p>`;
+    contentEl.appendChild(pane);
+  }
+  document.querySelectorAll('.shard-plugin-settings-pane').forEach(el => {
+    el.classList.toggle('hidden', el.dataset.pluginPane !== pluginId);
+  });
+  document.querySelectorAll('.shard-plugin-settings-sidebar-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.pluginId === pluginId);
+  });
+}
+
+function _renderPluginSettings(query = '') {
+  const container = document.getElementById('shard-settings-plugins-list');
+  const countEl = document.getElementById('shard-plugins-count');
+  if (!container || !_pluginManager) return;
+  const enabled = new Set(_shardSettings.enabledPlugins || []);
+  const q = query.toLowerCase().trim();
+  const filtered = CORE_PLUGINS.filter(p =>
+    !q || p.name.toLowerCase().includes(q) || p.description.toLowerCase().includes(q)
+  );
+  if (countEl) countEl.textContent = `${filtered.length} / ${CORE_PLUGINS.length}`;
+  container.innerHTML = filtered.map(p => {
+    const isOn = enabled.has(p.id);
+    const isActive = _selectedPluginSettings === p.id;
+    return `<button type="button" class="shard-plugin-settings-sidebar-item ${isActive ? 'active' : ''}" data-plugin-id="${_esc(p.id)}" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;border:none;background:none;color:var(--fg);cursor:pointer;width:100%;text-align:left;font-size:13px;">
+      <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(p.name)}</span>
+      <label class="admin-switch" style="flex-shrink:0;">
+        <input type="checkbox" class="shard-plugin-toggle" data-plugin-id="${_esc(p.id)}" ${isOn ? 'checked' : ''}>
+        <span class="admin-slider" style="background:${isOn ? 'var(--red)' : 'color-mix(in srgb, var(--fg) 50%, transparent)'};"></span>
+      </label>
+    </button>`;
+  }).join('');
+  container.querySelectorAll('.shard-plugin-settings-sidebar-item').forEach(item => {
+    item.addEventListener('click', () => {
+      const pid = item.dataset.pluginId;
+      _switchPluginSettingsPane(pid);
+    });
+  });
+  container.querySelectorAll('.admin-switch').forEach(label => {
+    label.addEventListener('click', (e) => { e.stopPropagation(); });
+  });
+  container.querySelectorAll('.shard-plugin-toggle').forEach(toggle => {
+    toggle.addEventListener('change', async () => {
+      const pid = toggle.dataset.pluginId;
+      const on = toggle.checked;
+      try {
+        if (on) {
+          await _pluginManager.enable(pid);
+          showToast(`${_esc(pid)} enabled`);
+        } else {
+          await _pluginManager.disable(pid);
+          showToast(`${_esc(pid)} disabled`);
+        }
+      } catch (err) {
+        console.error(`[shard] plugin toggle ${pid} failed:`, err);
+        showToast(`Failed to toggle ${pid}`);
+        toggle.checked = !on;
+        return;
+      }
+      _shardSettings.enabledPlugins = CORE_PLUGINS
+        .filter(p => _pluginManager.isEnabled(p.id))
+        .map(p => p.id);
+      _saveShardSettings();
+      _syncPluginTabs();
+      const leftMap = { bookmarks: 'bookmarks', tags: 'tags', search: 'search' };
+      const rightMap = { backlinks: 'backlinks', 'outgoing-links': 'outgoing', unlinked: 'unlinked', outline: 'outline', orphans: 'orphans' };
+      if (!on && leftMap[pid] && _activeLeftTab === leftMap[pid]) {
+        const fallback = Array.from(document.querySelectorAll('#shard-left-tabs .shard-sidebar-tab:not(.hidden)')).map(b => b.dataset.tab)[0];
+        if (fallback) _switchLeftTab(fallback);
+      }
+      if (!on && rightMap[pid] && _activeRightTab === rightMap[pid]) {
+        const fallback = Array.from(document.querySelectorAll('#shard-right-tabs .shard-right-tab:not(.hidden)')).map(b => b.dataset.tab)[0];
+        if (fallback) _switchRightTab(fallback);
+      }
+      _switchLeftTab(_activeLeftTab);
+      _switchRightTab(_activeRightTab);
+      if (_selectedNoteId) _selectNote(_selectedNoteId);
+      // Re-render sidebar to update toggle visual state
+      _renderPluginSettings(document.getElementById('shard-plugin-search')?.value || '');
+    });
+  });
+}
+
+function _enhanceShardSelects() {
+  const dialog = document.getElementById('shard-settings-dialog');
+  if (!dialog) return;
+  dialog.querySelectorAll('.shard-settings-select').forEach(select => {
+    const existing = select.closest('.shard-custom-select');
+    if (existing) {
+      // Just sync the trigger text for already-enhanced selects
+      const trigger = existing.querySelector('.shard-custom-select-trigger');
+      if (trigger) {
+        const selected = select.options[select.selectedIndex];
+        trigger.textContent = selected ? selected.text : '';
+      }
+      existing.querySelectorAll('.shard-custom-select-option').forEach(opt => {
+        opt.classList.toggle('selected', opt.dataset.value === select.value);
+      });
+      return;
+    }
+    const wrapper = document.createElement('div');
+    wrapper.className = 'shard-custom-select';
+    select.parentNode.insertBefore(wrapper, select);
+    wrapper.appendChild(select);
+
+    const trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'shard-custom-select-trigger';
+    wrapper.appendChild(trigger);
+
+    const dropdown = document.createElement('div');
+    dropdown.className = 'shard-custom-select-dropdown';
+    wrapper.appendChild(dropdown);
+
+    const _sync = () => {
+      const selected = select.options[select.selectedIndex];
+      trigger.textContent = selected ? selected.text : '';
+      dropdown.querySelectorAll('.shard-custom-select-option').forEach(opt => {
+        opt.classList.toggle('selected', opt.dataset.value === select.value);
+      });
+    };
+
+    const _build = () => {
+      dropdown.innerHTML = '';
+      Array.from(select.options).forEach(opt => {
+        const div = document.createElement('div');
+        div.className = 'shard-custom-select-option';
+        div.textContent = opt.text;
+        div.dataset.value = opt.value;
+        div.tabIndex = 0;
+        div.addEventListener('click', () => {
+          select.value = opt.value;
+          _sync();
+          select.dispatchEvent(new Event('change', { bubbles: true }));
+          wrapper.classList.remove('open');
+        });
+        div.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            div.click();
+          }
+        });
+        dropdown.appendChild(div);
+      });
+      _sync();
+    };
+
+    trigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const wasOpen = wrapper.classList.contains('open');
+      dialog.querySelectorAll('.shard-custom-select.open').forEach(w => w.classList.remove('open'));
+      if (!wasOpen) wrapper.classList.add('open');
+    });
+
+    _build();
+    // Rebuild when options change (e.g. specific-file select)
+    const observer = new MutationObserver(_build);
+    observer.observe(select, { childList: true });
+  });
+
+  // Close on outside click (attach once)
+  if (!dialog.dataset.shardSelectsWired) {
+    dialog.dataset.shardSelectsWired = '1';
+    const closeAll = () => dialog.querySelectorAll('.shard-custom-select.open').forEach(w => w.classList.remove('open'));
+    document.addEventListener('click', closeAll);
+    dialog.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAll(); });
+  }
 }
 
 function _openShardSettings() {
@@ -1344,21 +3435,58 @@ function _openShardSettings() {
   if (getEl('shard-set-smart-lists')) getEl('shard-set-smart-lists').checked = set.editor.smartLists;
   if (getEl('shard-set-indent-tabs')) getEl('shard-set-indent-tabs').checked = set.editor.indentWithTabs;
   if (getEl('shard-set-vim')) getEl('shard-set-vim').checked = set.editor.vimBindings;
-  if (getEl('shard-set-font-size')) {
-    getEl('shard-set-font-size').value = set.appearance.fontSize;
-    if (getEl('shard-set-font-size-val')) getEl('shard-set-font-size-val').textContent = set.appearance.fontSize;
-  }
   if (getEl('shard-set-inline-title')) getEl('shard-set-inline-title').checked = set.appearance.showInlineTitle;
-  if (getEl('shard-set-quick-font')) getEl('shard-set-quick-font').checked = set.appearance.quickFontSizeAdjust;
   if (getEl('shard-set-monospace-font')) getEl('shard-set-monospace-font').checked = set.appearance.monospaceFont;
+  if (getEl('shard-set-show-ribbon')) getEl('shard-set-show-ribbon').checked = set.appearance.showRibbon !== false;
   if (getEl('shard-set-wikilinks')) getEl('shard-set-wikilinks').checked = set.filesAndLinks.useWikilinks;
   if (getEl('shard-set-link-format')) getEl('shard-set-link-format').value = set.filesAndLinks.linkFormat;
   if (getEl('shard-set-confirm-delete')) getEl('shard-set-confirm-delete').checked = set.filesAndLinks.confirmDelete;
   if (getEl('shard-set-auto-links')) getEl('shard-set-auto-links').checked = set.filesAndLinks.autoUpdateLinks;
+  if (getEl('shard-set-confirm-auto-links')) getEl('shard-set-confirm-auto-links').checked = set.filesAndLinks.confirmAutoUpdateLinks !== false;
   if (getEl('shard-set-new-note-loc')) getEl('shard-set-new-note-loc').value = set.filesAndLinks.newNoteLocation;
+  if (getEl('shard-set-new-note-folder')) getEl('shard-set-new-note-folder').value = set.filesAndLinks.newNoteFolder;
+  if (getEl('shard-set-new-attach-loc')) getEl('shard-set-new-attach-loc').value = set.filesAndLinks.newAttachmentLocation;
+  if (getEl('shard-set-new-attach-folder')) getEl('shard-set-new-attach-folder').value = set.filesAndLinks.newAttachmentFolder;
+  if (getEl('shard-set-always-focus')) getEl('shard-set-always-focus').checked = set.editor.alwaysFocusNewTabs;
+  if (getEl('shard-set-show-edit-mode')) getEl('shard-set-show-edit-mode').checked = set.editor.showEditingModeInStatusBar;
+  if (getEl('shard-set-properties')) getEl('shard-set-properties').value = set.editor.propertiesInDocument;
+  if (getEl('shard-set-indent-guides')) getEl('shard-set-indent-guides').checked = set.editor.indentationGuides;
+  if (getEl('shard-set-rtl')) getEl('shard-set-rtl').checked = set.editor.rtl;
+  if (getEl('shard-set-spellcheck')) getEl('shard-set-spellcheck').checked = set.editor.spellcheck;
+  if (getEl('shard-set-indent-width')) getEl('shard-set-indent-width').value = set.editor.indentVisualWidth;
+  if (getEl('shard-set-convert-html')) getEl('shard-set-convert-html').checked = set.editor.convertPastedHtml;
+  if (getEl('shard-set-default-file-open')) getEl('shard-set-default-file-open').value = set.filesAndLinks.defaultFileToOpen;
+  const specificFileRow = document.getElementById('shard-specific-file-row');
+  const specificFileSelect = document.getElementById('shard-set-specific-file');
+  if (specificFileRow && specificFileSelect) {
+    specificFileRow.classList.toggle('hidden', set.filesAndLinks.defaultFileToOpen !== 'specific-file');
+    const notes = [..._notes].sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+    specificFileSelect.innerHTML = notes.map(n => `<option value="${_esc(n.id)}">${_esc(n.title || n.id)}</option>`).join('');
+    if (set.filesAndLinks.defaultSpecificFile) {
+      specificFileSelect.value = set.filesAndLinks.defaultSpecificFile;
+    }
+  }
+  if (getEl('shard-set-detect-ext')) getEl('shard-set-detect-ext').checked = set.filesAndLinks.detectAllFileExtensions;
+  if (getEl('shard-set-tab-title-bar')) getEl('shard-set-tab-title-bar').checked = set.appearance.showTabTitleBar;
+  if (getEl('shard-set-backlinks-bottom')) getEl('shard-set-backlinks-bottom').checked = set.appearance.showBacklinksAtBottom;
+  // Plugin settings
+  const ps = set.plugins || {};
+  if (getEl('shard-plugin-set-backlinks-bottom')) getEl('shard-plugin-set-backlinks-bottom').checked = ps.backlinks?.showBacklinksAtBottom ?? false;
+  if (getEl('shard-plugin-set-dn-date-format')) getEl('shard-plugin-set-dn-date-format').value = ps['daily-notes']?.dateFormat ?? 'YYYY-MM-DD';
+  if (getEl('shard-plugin-set-dn-location')) getEl('shard-plugin-set-dn-location').value = ps['daily-notes']?.newFileLocation ?? '';
+  if (getEl('shard-plugin-set-dn-template')) getEl('shard-plugin-set-dn-template').value = ps['daily-notes']?.templateFileLocation ?? '';
+  if (getEl('shard-plugin-set-qs-existing')) getEl('shard-plugin-set-qs-existing').checked = ps['quick-switcher']?.showExistingOnly ?? false;
+  if (getEl('shard-plugin-set-qs-attachments')) getEl('shard-plugin-set-qs-attachments').checked = ps['quick-switcher']?.showAttachments ?? true;
+  if (getEl('shard-plugin-set-tmpl-folder')) getEl('shard-plugin-set-tmpl-folder').value = ps.templates?.templateFolderLocation ?? '';
+  if (getEl('shard-plugin-set-tmpl-date')) getEl('shard-plugin-set-tmpl-date').value = ps.templates?.dateFormat ?? 'DD-MM-YYYY';
+  if (getEl('shard-plugin-set-tmpl-time')) getEl('shard-plugin-set-tmpl-time').value = ps.templates?.timeFormat ?? 'HH:mm';
+  _renderPluginSettings();
+  _switchPluginSettingsPane(_selectedPluginSettings);
+  _renderHotkeySettings();
   _applyMonospaceFont();
-  document.documentElement.style.setProperty('--shard-font-size', set.appearance.fontSize + 'px');
+  _applyReadableLineLength();
   _switchSettingsPane('editor');
+  _enhanceShardSelects();
 }
 
 function _closeShardSettings() {
@@ -1391,6 +3519,12 @@ function _wireShardSettings() {
       if (path === 'appearance.monospaceFont') {
         _applyMonospaceFont();
       }
+      if (path === 'editor.readableLineLength') {
+        _applyReadableLineLength();
+      }
+      if (path === 'editor.strictLineBreaks' || path === 'editor.foldHeading' || path === 'editor.foldIndent') {
+        if (_selectedNoteId) _selectNote(_selectedNoteId);
+      }
     });
   };
   const bindSelect = (id, path) => {
@@ -1404,6 +3538,8 @@ function _wireShardSettings() {
       _saveShardSettings();
       if (path === 'editor.defaultView') {
         _previewMode = el.value === 'live' ? 'live' : el.value === 'source' ? 'edit' : 'preview';
+        _editModePref = el.value === 'source' ? 'edit' : 'live';
+        _sourceModeEnabled = el.value === 'source';
       }
     });
   };
@@ -1427,23 +3563,125 @@ function _wireShardSettings() {
   bindToggle('shard-set-strict-breaks', 'editor.strictLineBreaks');
   bindToggle('shard-set-fold-heading', 'editor.foldHeading');
   bindToggle('shard-set-fold-indent', 'editor.foldIndent');
-  bindToggle('shard-set-line-numbers', 'editor.showLineNumbers');
+  bindToggle('shard-set-always-focus', 'editor.alwaysFocusNewTabs');
+  bindToggle('shard-set-show-edit-mode', 'editor.showEditingModeInStatusBar');
+  bindSelect('shard-set-properties', 'editor.propertiesInDocument');
+  bindToggle('shard-set-indent-guides', 'editor.indentationGuides');
+  bindToggle('shard-set-rtl', 'editor.rtl');
+  bindToggle('shard-set-spellcheck', 'editor.spellcheck');
+  bindToggle('shard-set-convert-html', 'editor.convertPastedHtml');
+  bindToggle('shard-set-detect-ext', 'filesAndLinks.detectAllFileExtensions');
+  bindToggle('shard-set-tab-title-bar', 'appearance.showTabTitleBar');
+  bindToggle('shard-set-backlinks-bottom', 'appearance.showBacklinksAtBottom');
+  const indentWidthInput = document.getElementById('shard-set-indent-width');
+  if (indentWidthInput) {
+    indentWidthInput.addEventListener('change', () => {
+      _shardSettings.editor.indentVisualWidth = parseInt(indentWidthInput.value, 10) || 4;
+      _saveShardSettings();
+    });
+  }
+  const defaultFileOpenSelect = document.getElementById('shard-set-default-file-open');
+  if (defaultFileOpenSelect) {
+    defaultFileOpenSelect.addEventListener('change', () => {
+      _shardSettings.filesAndLinks.defaultFileToOpen = defaultFileOpenSelect.value;
+      const row = document.getElementById('shard-specific-file-row');
+      if (row) row.classList.toggle('hidden', defaultFileOpenSelect.value !== 'specific-file');
+      _saveShardSettings();
+    });
+  }
+  const specificFileSelect = document.getElementById('shard-set-specific-file');
+  if (specificFileSelect) {
+    specificFileSelect.addEventListener('change', () => {
+      _shardSettings.filesAndLinks.defaultSpecificFile = specificFileSelect.value;
+      _saveShardSettings();
+    });
+  }
+  const lineNumToggle = document.getElementById('shard-set-line-numbers');
+  if (lineNumToggle) {
+    lineNumToggle.addEventListener('change', () => {
+      _shardSettings.editor.showLineNumbers = lineNumToggle.checked;
+      _saveShardSettings();
+      if (_selectedNoteId) _selectNote(_selectedNoteId);
+    });
+  }
   bindToggle('shard-set-auto-brackets', 'editor.autoPairBrackets');
   bindToggle('shard-set-auto-md', 'editor.autoPairMarkdown');
   bindToggle('shard-set-smart-lists', 'editor.smartLists');
   bindToggle('shard-set-indent-tabs', 'editor.indentWithTabs');
   bindToggle('shard-set-vim', 'editor.vimBindings');
-  bindToggle('shard-set-inline-title', 'appearance.showInlineTitle');
-  bindToggle('shard-set-quick-font', 'appearance.quickFontSizeAdjust');
+  const pluginSearchInput = document.getElementById('shard-plugin-search');
+  if (pluginSearchInput) {
+    pluginSearchInput.addEventListener('input', () => {
+      _renderPluginSettings(pluginSearchInput.value);
+    });
+  }
+  // Plugin settings wiring
+  const wirePluginToggle = (id, pluginId, key) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('change', () => {
+      if (!_shardSettings.plugins[pluginId]) _shardSettings.plugins[pluginId] = {};
+      _shardSettings.plugins[pluginId][key] = el.checked;
+      _saveShardSettings();
+    });
+  };
+  const wirePluginInput = (id, pluginId, key) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('change', () => {
+      if (!_shardSettings.plugins[pluginId]) _shardSettings.plugins[pluginId] = {};
+      _shardSettings.plugins[pluginId][key] = el.value;
+      _saveShardSettings();
+    });
+  };
+  wirePluginToggle('shard-plugin-set-backlinks-bottom', 'backlinks', 'showBacklinksAtBottom');
+  wirePluginInput('shard-plugin-set-dn-date-format', 'daily-notes', 'dateFormat');
+  wirePluginInput('shard-plugin-set-dn-location', 'daily-notes', 'newFileLocation');
+  wirePluginInput('shard-plugin-set-dn-template', 'daily-notes', 'templateFileLocation');
+  wirePluginToggle('shard-plugin-set-qs-existing', 'quick-switcher', 'showExistingOnly');
+  wirePluginToggle('shard-plugin-set-qs-attachments', 'quick-switcher', 'showAttachments');
+  wirePluginInput('shard-plugin-set-tmpl-folder', 'templates', 'templateFolderLocation');
+  wirePluginInput('shard-plugin-set-tmpl-date', 'templates', 'dateFormat');
+  wirePluginInput('shard-plugin-set-tmpl-time', 'templates', 'timeFormat');
+  const inlineTitleToggle = document.getElementById('shard-set-inline-title');
+  if (inlineTitleToggle) {
+    inlineTitleToggle.addEventListener('change', () => {
+      _shardSettings.appearance.showInlineTitle = inlineTitleToggle.checked;
+      _saveShardSettings();
+      if (_selectedNoteId) _selectNote(_selectedNoteId);
+    });
+  }
   bindToggle('shard-set-monospace-font', 'appearance.monospaceFont');
+  bindToggle('shard-set-show-ribbon', 'appearance.showRibbon');
+  const showRibbonToggle = document.getElementById('shard-set-show-ribbon');
+  if (showRibbonToggle) {
+    showRibbonToggle.addEventListener('change', () => _renderRibbon());
+  }
+  document.getElementById('shard-set-ribbon-config-btn')?.addEventListener('click', () => {
+    _openRibbonConfigDialog();
+  });
   bindToggle('shard-set-wikilinks', 'filesAndLinks.useWikilinks');
   bindToggle('shard-set-confirm-delete', 'filesAndLinks.confirmDelete');
   bindToggle('shard-set-auto-links', 'filesAndLinks.autoUpdateLinks');
+  bindToggle('shard-set-confirm-auto-links', 'filesAndLinks.confirmAutoUpdateLinks');
   bindSelect('shard-set-default-view', 'editor.defaultView');
   bindSelect('shard-set-link-format', 'filesAndLinks.linkFormat');
   bindSelect('shard-set-new-note-loc', 'filesAndLinks.newNoteLocation');
-  bindRange('shard-set-font-size', 'appearance.fontSize', 'shard-set-font-size-val');
-
+  bindSelect('shard-set-new-attach-loc', 'filesAndLinks.newAttachmentLocation');
+  const newNoteFolderInput = document.getElementById('shard-set-new-note-folder');
+  if (newNoteFolderInput) {
+    newNoteFolderInput.addEventListener('change', () => {
+      _shardSettings.filesAndLinks.newNoteFolder = newNoteFolderInput.value;
+      _saveShardSettings();
+    });
+  }
+  const newAttachFolderInput = document.getElementById('shard-set-new-attach-folder');
+  if (newAttachFolderInput) {
+    newAttachFolderInput.addEventListener('change', () => {
+      _shardSettings.filesAndLinks.newAttachmentFolder = newAttachFolderInput.value;
+      _saveShardSettings();
+    });
+  }
   // Settings dialog drag
   const settingsHeader = document.getElementById('shard-settings-header');
   const settingsCard = document.querySelector('.shard-settings-dialog-card');
@@ -1490,6 +3728,131 @@ function _wireShardSettings() {
   }
 }
 
+
+// ── CSS Snippets (Phase E) ─────────────────────────────────
+
+let _cssSnippets = [];
+try {
+  const raw = localStorage.getItem('shard-css-snippets');
+  if (raw) _cssSnippets = JSON.parse(raw);
+} catch {}
+
+function _persistCssSnippets() {
+  try { localStorage.setItem('shard-css-snippets', JSON.stringify(_cssSnippets)); } catch {}
+}
+
+function _injectCssSnippets() {
+  // Remove existing injected snippets
+  document.querySelectorAll('style.shard-css-snippet').forEach(el => el.remove());
+  const enabled = _cssSnippets.filter(s => s.enabled);
+  for (const s of enabled) {
+    const style = document.createElement('style');
+    style.className = 'shard-css-snippet';
+    style.dataset.snippetId = s.id;
+    style.textContent = s.content;
+    document.head.appendChild(style);
+  }
+}
+
+let _snippetEditingId = null;
+
+function _renderSnippetsList() {
+  const list = document.getElementById('shard-snippets-list');
+  const editor = document.getElementById('shard-snippet-editor');
+  if (!list) return;
+  if (_cssSnippets.length === 0) {
+    list.innerHTML = '<div style="padding:8px;text-align:center;opacity:0.5;font-size:12px;">No snippets yet. Click "+ New snippet" to create one.</div>';
+  } else {
+    list.innerHTML = _cssSnippets.map(s => `
+      <div class="shard-settings-row" style="gap:10px;">
+        <label class="admin-switch" style="flex-shrink:0;">
+          <input type="checkbox" class="shard-snippet-toggle" data-snippet-id="${_esc(s.id)}" ${s.enabled ? 'checked' : ''}>
+          <span class="admin-slider"></span>
+        </label>
+        <div class="shard-settings-info" style="flex:1;cursor:pointer;" data-snippet-edit="${_esc(s.id)}">
+          <span>${_esc(s.name || 'Untitled')}</span>
+          <span class="shard-settings-desc">${s.content.length} chars</span>
+        </div>
+        <button type="button" class="shard-snippet-edit-btn admin-btn-sm" data-snippet-id="${_esc(s.id)}">Edit</button>
+      </div>
+    `).join('');
+    // Wire toggles
+    list.querySelectorAll('.shard-snippet-toggle').forEach(toggle => {
+      toggle.addEventListener('change', () => {
+        const id = toggle.dataset.snippetId;
+        const s = _cssSnippets.find(x => x.id === id);
+        if (s) { s.enabled = toggle.checked; _persistCssSnippets(); _injectCssSnippets(); }
+      });
+    });
+    // Wire edit buttons
+    list.querySelectorAll('.shard-snippet-edit-btn').forEach(btn => {
+      btn.addEventListener('click', () => _openSnippetEditor(btn.dataset.snippetId));
+    });
+    list.querySelectorAll('[data-snippet-edit]').forEach(row => {
+      row.addEventListener('click', () => _openSnippetEditor(row.dataset.snippetEdit));
+    });
+  }
+  if (editor) editor.classList.add('hidden');
+  if (list.parentElement) list.parentElement.classList.remove('hidden');
+}
+
+function _openSnippetEditor(id) {
+  const list = document.getElementById('shard-snippets-list');
+  const editor = document.getElementById('shard-snippet-editor');
+  const nameInput = document.getElementById('shard-snippet-name');
+  const contentInput = document.getElementById('shard-snippet-content');
+  if (!editor || !nameInput || !contentInput) return;
+  _snippetEditingId = id || null;
+  if (id) {
+    const s = _cssSnippets.find(x => x.id === id);
+    nameInput.value = s ? s.name : '';
+    contentInput.value = s ? s.content : '';
+  } else {
+    nameInput.value = '';
+    contentInput.value = '';
+  }
+  if (list) list.parentElement.classList.add('hidden');
+  editor.classList.remove('hidden');
+  nameInput.focus();
+}
+
+function _closeSnippetEditor() {
+  _renderSnippetsList();
+}
+
+function _saveSnippet() {
+  const nameInput = document.getElementById('shard-snippet-name');
+  const contentInput = document.getElementById('shard-snippet-content');
+  if (!nameInput || !contentInput) return;
+  const name = nameInput.value.trim() || 'Untitled';
+  const content = contentInput.value;
+  if (_snippetEditingId) {
+    const s = _cssSnippets.find(x => x.id === _snippetEditingId);
+    if (s) { s.name = name; s.content = content; }
+  } else {
+    _cssSnippets.push({ id: 'snippet_' + Date.now(), name, content, enabled: true });
+  }
+  _persistCssSnippets();
+  _injectCssSnippets();
+  _closeSnippetEditor();
+}
+
+function _deleteSnippet() {
+  if (!_snippetEditingId) return;
+  if (!confirm('Delete this snippet?')) return;
+  _cssSnippets = _cssSnippets.filter(s => s.id !== _snippetEditingId);
+  _persistCssSnippets();
+  _injectCssSnippets();
+  _closeSnippetEditor();
+}
+
+function _wireSnippetSettings() {
+  // CSS snippets are managed in their dedicated Snippets settings pane
+  document.getElementById('shard-snippet-add')?.addEventListener('click', () => _openSnippetEditor(null));
+  document.getElementById('shard-snippet-back')?.addEventListener('click', _closeSnippetEditor);
+  document.getElementById('shard-snippet-save')?.addEventListener('click', _saveSnippet);
+  document.getElementById('shard-snippet-delete')?.addEventListener('click', _deleteSnippet);
+}
 
 function _getSearchRegex(query, caseSensitive) {
   const flags = caseSensitive ? 'g' : 'gi';
@@ -1748,6 +4111,78 @@ function _toggleBookmark(noteId) {
   if (_activeLeftTab === 'bookmarks') _renderBookmarksPane();
 }
 
+// ── Note / folder icon pack ──
+const _NOTE_ICON_PACK = {
+  file:   '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>',
+  folder: '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
+  star:   '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>',
+  heart:  '<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>',
+  bolt:   '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
+  book:   '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>',
+  check:  '<polyline points="20 6 9 17 4 12"/>',
+  clock:  '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+  code:   '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>',
+  edit:   '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>',
+  flag:   '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>',
+  image:  '<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>',
+  link:   '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+  lock:   '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+  map:    '<polygon points="1 6 1 22 8 18 16 22 21 18 21 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/>',
+  music:  '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
+  paper:  '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>',
+  pen:    '<path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1-1 3-3 1 1-3 3z"/><path d="M3 3h6l2 4H7z"/>',
+  pin:    '<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>',
+  tag:    '<path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><circle cx="7" cy="7" r="1"/>',
+  trash:  '<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
+  zap:    '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
+};
+
+let _noteIcons = {};
+try {
+  const raw = localStorage.getItem('shard-note-icons');
+  if (raw) _noteIcons = JSON.parse(raw);
+} catch {}
+
+function _persistNoteIcons() {
+  try { localStorage.setItem('shard-note-icons', JSON.stringify(_noteIcons)); } catch {}
+}
+
+function _setNoteIcon(noteId, iconKey) {
+  if (!iconKey) delete _noteIcons[noteId];
+  else _noteIcons[noteId] = iconKey;
+  _persistNoteIcons();
+  _renderFolderTree();
+}
+
+function _getNoteIconSvg(noteId, fallbackKey = 'file', size = 13) {
+  const key = _noteIcons[noteId] || fallbackKey;
+  const paths = _NOTE_ICON_PACK[key] || _NOTE_ICON_PACK.file;
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;flex-shrink:0;opacity:0.7;">${paths}</svg>`;
+}
+
+let _folderIcons = {};
+try {
+  const raw = localStorage.getItem('shard-folder-icons');
+  if (raw) _folderIcons = JSON.parse(raw);
+} catch {}
+
+function _persistFolderIcons() {
+  try { localStorage.setItem('shard-folder-icons', JSON.stringify(_folderIcons)); } catch {}
+}
+
+function _setFolderIcon(folderPath, iconKey) {
+  if (!iconKey) delete _folderIcons[folderPath];
+  else _folderIcons[folderPath] = iconKey;
+  _persistFolderIcons();
+  _renderFolderTree();
+}
+
+function _getFolderIconSvg(folderPath, fallbackKey = 'folder', size = 13) {
+  const key = _folderIcons[folderPath] || fallbackKey;
+  const paths = _NOTE_ICON_PACK[key] || _NOTE_ICON_PACK.folder;
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;flex-shrink:0;opacity:0.7;">${paths}</svg>`;
+}
+
 function _renderBookmarksPane() {
   const el = document.getElementById('shard-bookmarks-list');
   if (!el) return;
@@ -1756,10 +4191,13 @@ function _renderBookmarksPane() {
     el.innerHTML = '<div style="padding:10px;text-align:center;opacity:0.5;font-size:12px;">No bookmarks yet.<br>Right-click a note and select Bookmark.</div>';
     return;
   }
-  el.innerHTML = items.map(n => `<div class="shard-bookmark-item" data-note-id="${_esc(n.id)}">
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
-    ${_esc(n.title)}
-  </div>`).join('');
+  el.innerHTML = items.map(n => {
+    const icon = _getNoteIconSvg(n.id, 'file', 12);
+    return `<div class="shard-bookmark-item" data-note-id="${_esc(n.id)}">
+      <span style="display:inline-flex;align-items:center;flex-shrink:0;">${icon}</span>
+      ${_esc(n.title)}
+    </div>`;
+  }).join('');
   el.querySelectorAll('.shard-bookmark-item').forEach(item => {
     item.addEventListener('click', () => _navigateToNote(item.dataset.noteId));
   });
@@ -1824,7 +4262,10 @@ async function _loadNotes() {
       return;
     }
     const data = await r.json();
-    _notes = data.notes || [];
+    const backendNotes = data.notes || [];
+    // Preserve optimistic notes not yet confirmed by backend
+    const optimisticExtras = _notes.filter(n => n._optimistic && !backendNotes.some(b => b.id === n.id || b.rel_path === n.rel_path));
+    _notes = [...backendNotes, ...optimisticExtras];
     _noteCache = buildNoteCache(_notes);
     _renderNoteList();
     _populateVaultDropdown();
@@ -1909,6 +4350,23 @@ function _serializeFrontmatter(fm) {
 function _getNoteFullRaw(note) {
   const serialized = _serializeFrontmatter(note.frontmatter || {});
   return note.content ? serialized + '\n' + note.content : serialized;
+}
+
+async function _flushSourceEdit(sourceDiv, note) {
+  const fullText = sourceDiv.innerText;
+  const lines = fullText.split('\n');
+  let contentStart = 0;
+  let frontmatter = {};
+  if (lines[0]?.trim() === '---') {
+    const endIdx = lines.findIndex((l, idx) => idx > 0 && l.trim() === '---');
+    if (endIdx > 0) {
+      frontmatter = _parseFrontmatter(fullText);
+      contentStart = endIdx + 1;
+    }
+  }
+  note.frontmatter = frontmatter;
+  note.content = lines.slice(contentStart).join('\n').replace(/^\n+/, '');
+  await _saveNoteContent(note);
 }
 
 function _splitMarkdownBlocks(text) {
@@ -2006,8 +4464,11 @@ function _propTypeIconSvg(type) {
 
 function _propIconSvg(key, value, propType) {
   const type = propType || _inferPropType(key, value);
-  if (type === 'tags' || type === 'list') {
+  if (type === 'tags') {
     return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>`;
+  }
+  if (type === 'list') {
+    return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>`;
   }
   if (type === 'date' || type === 'datetime') {
     return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>`;
@@ -2058,16 +4519,43 @@ function _buildTagChip(text, key) {
 }
 
 function _inferPropType(key, value) {
-  if (Array.isArray(value)) {
-    if (key.toLowerCase() === 'tags') return 'tags';
-    return 'list';
-  }
+  if (key.toLowerCase() === 'tags') return 'tags';
+  if (key.toLowerCase() === 'aliases') return 'aliases';
+  if (Array.isArray(value)) return 'list';
   if (typeof value === 'boolean') return 'checkbox';
   if (typeof value === 'number') return 'number';
-  if (key.toLowerCase() === 'aliases') return 'aliases';
   if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?/.test(String(value))) return 'datetime';
   if (/^\d{4}-\d{2}-\d{2}$/.test(String(value))) return 'date';
+  if (/^https?:\/\//.test(String(value))) return 'url';
   return 'text';
+}
+
+function _parseFrontmatter(text) {
+  const fm = {};
+  const lines = text.split('\n');
+  let i = 0;
+  if (lines[0]?.trim() === '---') i = 1;
+  for (; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.trim() === '---') break;
+    const colonIdx = line.indexOf(':');
+    if (colonIdx < 0) continue;
+    const key = line.slice(0, colonIdx).trim();
+    let val = line.slice(colonIdx + 1).trim();
+    if (val === '') {
+      const listItems = [];
+      let j = i + 1;
+      while (j < lines.length && lines[j].startsWith('  - ')) {
+        listItems.push(lines[j].slice(4).trim());
+        j++;
+      }
+      if (listItems.length) { fm[key] = listItems; i = j - 1; }
+      else { fm[key] = ''; }
+    } else {
+      fm[key] = val;
+    }
+  }
+  return fm;
 }
 
 function _buildPropertiesHtml(frontmatter, note) {
@@ -2082,6 +4570,9 @@ function _buildPropertiesHtml(frontmatter, note) {
       valHtml = `<span class="shard-prop-val" data-prop-key="${_esc(k)}" data-type="array" data-prop-type="${propType}" spellcheck="false">${chips}<span class="shard-prop-chip-input" contenteditable="plaintext-only" spellcheck="false"></span></span>`;
     } else if (v && typeof v === 'object') {
       valHtml = `<span class="shard-prop-val" contenteditable="plaintext-only" spellcheck="false" data-prop-key="${_esc(k)}" data-prop-type="${propType}">${_esc(JSON.stringify(v))}</span>`;
+    } else if (propType === 'url') {
+      const url = String(v ?? '');
+      valHtml = `<a class="shard-prop-val shard-prop-url" href="${_esc(url)}" target="_blank" rel="noopener noreferrer" data-prop-key="${_esc(k)}" data-prop-type="${propType}">${_esc(url)}</a>`;
     } else {
       valHtml = `<span class="shard-prop-val" contenteditable="plaintext-only" spellcheck="false" data-prop-key="${_esc(k)}" data-prop-type="${propType}">${_esc(String(v ?? ''))}</span>`;
     }
@@ -2092,7 +4583,8 @@ function _buildPropertiesHtml(frontmatter, note) {
     </div>`;
   }).join('');
   const addBtn = note ? `<button class="shard-prop-add-main" data-add-prop spellcheck="false"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add property</button>` : '';
-  return `<div class="shard-properties-inline"><h4>Properties</h4><div class="shard-prop-grid">${rows || ''}</div>${addBtn}</div>`;
+  const collapsedClass = _propsCollapsed ? 'collapsed' : '';
+  return `<div class="shard-properties-inline ${collapsedClass}" data-properties-container><h4 class="shard-prop-header">Properties<span class="shard-prop-chevron"></span></h4><div class="shard-prop-grid">${rows || ''}</div>${addBtn}</div>`;
 }
 
 async function _selectNote(id) {
@@ -2102,37 +4594,70 @@ async function _selectNote(id) {
   if (!preview) return;
 
   try {
+    // 1. Render from cache immediately for fast navigation
     let note = _noteContentCache.get(id);
     if (!note) {
-      // _loadNotes already returns full content; avoid a second fetch
       const cached = _notes.find(n => n.id === id || n.rel_path === id);
       if (cached) {
         note = { ...cached };
         _noteContentCache.set(id, note);
       }
     }
+    // If nothing in cache, must fetch before rendering
     if (!note) {
       const r = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(id)}`);
       if (!r.ok) { preview.style.display = 'none'; return; }
       note = await r.json();
       _noteContentCache.set(id, note);
     }
+    if (!note) { preview.style.display = 'none'; return; }
+    // Server returns frontmatter as a raw YAML string; parse it into an object
+    if (note && typeof note.frontmatter === 'string') {
+      note.frontmatter = _parseFrontmatter(note.frontmatter);
+    }
     preview.style.display = 'block';
     const isAutoRename = _autoRenameNoteId === note.id;
-    const titleHtml = isAutoRename
-      ? `<span class="shard-title-edit" contenteditable="plaintext-only" spellcheck="false">${_esc(note.title)}</span>`
-      : `<h1>${_esc(note.title)}</h1>`;
+    const showTitle = _shardSettings.appearance.showInlineTitle;
+    const scTitle = _shardSettings.editor.spellcheck ? 'true' : 'false';
+    const headerHtml = showTitle
+      ? `<div class="shard-preview-header">${isAutoRename
+          ? `<span class="shard-title-edit" contenteditable="plaintext-only" spellcheck="${scTitle}">${_esc(note.title)}</span>`
+          : `<h1>${_esc(note.title)}</h1>`}</div>`
+      : '';
     // In source mode, show raw YAML instead of property chips
     const showProps = _previewMode !== 'edit';
     preview.innerHTML = `
-      <div class="shard-preview-header">
-        ${titleHtml}
-      </div>
+      ${headerHtml}
       ${showProps ? _buildPropertiesHtml(note.frontmatter, note) : ''}
       <div class="shard-preview-body"></div>
     `;
 
-    // Wire inline title editing for newly-created notes
+    // Wire inline title editing for all notes (click h1 to edit)
+    const _wireTitleEdit = (el) => {
+      const finishRename = async () => {
+        const newName = el.textContent.trim();
+        _autoRenameNoteId = null;
+        if (newName && newName !== note.title) {
+          await _doRenameNote(note.id, newName);
+        } else {
+          const h1 = document.createElement('h1');
+          h1.textContent = note.title;
+          el.replaceWith(h1);
+          _wireTitleEdit(h1);
+        }
+      };
+      el.addEventListener('blur', finishRename, { once: true });
+      el.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
+        if (e.key === 'Escape') {
+          _autoRenameNoteId = null;
+          const h1 = document.createElement('h1');
+          h1.textContent = note.title;
+          el.replaceWith(h1);
+          _wireTitleEdit(h1);
+        }
+      });
+    };
     if (isAutoRename) {
       const titleEdit = preview.querySelector('.shard-title-edit');
       if (titleEdit) {
@@ -2142,29 +4667,40 @@ async function _selectNote(id) {
         const sel = window.getSelection();
         sel.removeAllRanges();
         sel.addRange(range);
-        const finishRename = async () => {
-          const newName = titleEdit.textContent.trim();
-          _autoRenameNoteId = null;
-          if (newName && newName !== note.title) {
-            await _doRenameNote(note.id, newName);
-          } else {
-            const h1 = document.createElement('h1');
-            h1.textContent = note.title;
-            titleEdit.replaceWith(h1);
-          }
-        };
-        titleEdit.addEventListener('blur', finishRename, { once: true });
-        titleEdit.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter') { e.preventDefault(); titleEdit.blur(); }
-          if (e.key === 'Escape') {
-            _autoRenameNoteId = null;
-            const h1 = document.createElement('h1');
-            h1.textContent = note.title;
-            titleEdit.replaceWith(h1);
-          }
+        _wireTitleEdit(titleEdit);
+      }
+    } else {
+      const h1 = preview.querySelector('.shard-preview-header h1');
+      if (h1) {
+        h1.style.cursor = 'pointer';
+        h1.title = 'Click to rename';
+        h1.addEventListener('click', () => {
+          const span = document.createElement('span');
+          span.className = 'shard-title-edit';
+          span.contentEditable = 'plaintext-only';
+          span.spellcheck = _shardSettings.editor.spellcheck;
+          span.textContent = note.title;
+          h1.replaceWith(span);
+          span.focus();
+          const range = document.createRange();
+          range.selectNodeContents(span);
+          const sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+          _wireTitleEdit(span);
         });
       }
     }
+
+    // Wire properties section collapse toggle
+    preview.querySelectorAll('.shard-prop-header').forEach(header => {
+      header.addEventListener('click', () => {
+        _propsCollapsed = !_propsCollapsed;
+        preview.querySelectorAll('.shard-properties-inline').forEach(el => {
+          el.classList.toggle('collapsed', _propsCollapsed);
+        });
+      });
+    });
 
     const bodyEl = preview.querySelector('.shard-preview-body');
 
@@ -2211,36 +4747,85 @@ async function _selectNote(id) {
       });
     };
 
-    const _parseFrontmatter = (text) => {
-      const fm = {};
-      const lines = text.split('\n');
-      let i = 0;
-      if (lines[0]?.trim() === '---') i = 1;
-      for (; i < lines.length; i++) {
-        const line = lines[i];
-        if (line.trim() === '---') break;
-        const colonIdx = line.indexOf(':');
-        if (colonIdx < 0) continue;
-        const key = line.slice(0, colonIdx).trim();
-        let val = line.slice(colonIdx + 1).trim();
-        if (val === '') {
-          const listItems = [];
-          let j = i + 1;
-          while (j < lines.length && lines[j].startsWith('  - ')) {
-            listItems.push(lines[j].slice(4).trim());
-            j++;
-          }
-          if (listItems.length) { fm[key] = listItems; i = j - 1; }
-          else { fm[key] = ''; }
-        } else {
-          fm[key] = val;
-        }
+    const _wireReadingViewFolds = (wrap) => {
+      if (!wrap) return;
+      const lines = wrap.querySelectorAll('.lp-line');
+      // foldHeading
+      if (_shardSettings.editor.foldHeading) {
+        lines.forEach(line => {
+          const heading = line.querySelector('.md-h1, .md-h2, .md-h3, .md-h4, .md-h5, .md-h6');
+          if (!heading) return;
+          const hClass = Array.from(heading.classList).find(c => c.startsWith('md-h'));
+          if (!hClass) return;
+          const level = parseInt(hClass.replace('md-h', ''), 10);
+          // Add fold toggle
+          const toggle = document.createElement('span');
+          toggle.className = 'shard-fold-toggle';
+          toggle.textContent = '▼';
+          toggle.style.cssText = 'cursor:pointer;margin-right:6px;opacity:0.6;font-size:0.8em;user-select:none;';
+          heading.insertBefore(toggle, heading.firstChild);
+          toggle.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const isCollapsed = toggle.classList.toggle('collapsed');
+            toggle.textContent = isCollapsed ? '▶' : '▼';
+            // Hide/show subsequent lines until next heading of same or higher level (smaller h#)
+            let next = line.nextElementSibling;
+            while (next) {
+              const nextHeading = next.querySelector('.md-h1, .md-h2, .md-h3, .md-h4, .md-h5, .md-h6');
+              if (nextHeading) {
+                const nhClass = Array.from(nextHeading.classList).find(c => c.startsWith('md-h'));
+                const nhLevel = nhClass ? parseInt(nhClass.replace('md-h', ''), 10) : 7;
+                if (nhLevel <= level) break;
+              }
+              next.style.display = isCollapsed ? 'none' : '';
+              next = next.nextElementSibling;
+            }
+          });
+        });
       }
-      return fm;
+      // foldIndent
+      if (_shardSettings.editor.foldIndent) {
+        lines.forEach(line => {
+          const liMarker = line.querySelector('.md-li-marker');
+          if (!liMarker) return;
+          // Determine indent level from the raw text
+          const raw = line.getAttribute('data-raw') || '';
+          const indentMatch = raw.match(/^(\s*)/);
+          const indent = indentMatch ? indentMatch[1].length : 0;
+          // Add fold toggle
+          const toggle = document.createElement('span');
+          toggle.className = 'shard-fold-toggle';
+          toggle.textContent = '▼';
+          toggle.style.cssText = 'cursor:pointer;margin-right:4px;opacity:0.6;font-size:0.8em;user-select:none;';
+          const source = line.querySelector('.lp-source');
+          if (source) source.insertBefore(toggle, source.firstChild);
+          toggle.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const isCollapsed = toggle.classList.toggle('collapsed');
+            toggle.textContent = isCollapsed ? '▶' : '▼';
+            let next = line.nextElementSibling;
+            while (next) {
+              const nextRaw = next.getAttribute('data-raw') || '';
+              const nextIndentMatch = nextRaw.match(/^(\s*)/);
+              const nextIndent = nextIndentMatch ? nextIndentMatch[1].length : 0;
+              // Stop when we hit a line with equal or less indent (or empty line then equal indent)
+              if (!nextRaw.trim()) {
+                next = next.nextElementSibling;
+                continue;
+              }
+              if (nextIndent <= indent) break;
+              next.style.display = isCollapsed ? 'none' : '';
+              next = next.nextElementSibling;
+            }
+          });
+        });
+      }
     };
 
     const _renderSourceLine = (line) => {
       let h = _esc(line);
+      // Escaped chars \char
+      h = h.replace(/\\([*_{}[\]()#+-.!|`~^=$])/g, '<span class="md-escaped"><span class="md-syntax">\\</span>$1</span>');
       // Heading: ### Text
       const hm = h.match(/^(#{1,6})\s+(.*)$/);
       if (hm) { const lvl = hm[1].length; return `<span class="md-h${lvl}"><span class="md-hash">${hm[1]} </span>${hm[2]}</span>`; }
@@ -2250,15 +4835,22 @@ async function _selectNote(id) {
       if (/^&gt;\s/.test(h)) { h = h.replace(/^&gt;\s/, '<span class="md-bq-mark">&gt; </span>'); return `<span class="md-bq">${h}</span>`; }
       // List item
       const lm = h.match(/^(\s*)([-*+])\s+(.*)$/) || h.match(/^(\s*)(\d+\.)\s+(.*)$/);
-      if (lm) return `${lm[1]}<span class="md-li-marker">${lm[2]} </span>${lm[3]}`;
+      if (lm) {
+        const content = lm[3];
+        const taskMatch = content.match(/^\[([ xX])\]\s+(.*)$/);
+        if (taskMatch) {
+          return `${lm[1]}<span class="md-li-marker">${lm[2]} </span><span class="md-task"><span class="md-task-check">[${taskMatch[1]}] </span>${taskMatch[2]}</span>`;
+        }
+        return `${lm[1]}<span class="md-li-marker">${lm[2]} </span>${content}`;
+      }
       // Bold + italic ***text***
       h = h.replace(/\*\*\*([^*]+)\*\*\*/g, '<span class="md-bold md-italic"><span class="md-syntax">***</span>$1<span class="md-syntax">***</span></span>');
       // Bold **text**
       h = h.replace(/\*\*([^*]+)\*\*/g, '<span class="md-bold"><span class="md-syntax">**</span>$1<span class="md-syntax">**</span></span>');
-      // Italic *text*
-      h = h.replace(/\*([^*]+)\*/g, '<span class="md-italic"><span class="md-syntax">*</span>$1<span class="md-syntax">*</span></span>');
+      // Italic *text* (avoid matching * inside bold HTML tags)
+      h = h.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<span class="md-italic"><span class="md-syntax">*</span>$1<span class="md-syntax">*</span></span>');
       // Italic _text_
-      h = h.replace(/_([^_]+)_/g, '<span class="md-italic"><span class="md-syntax">_</span>$1<span class="md-syntax">_</span></span>');
+      h = h.replace(/(?<!_)_([^_]+)_(?!_)/g, '<span class="md-italic"><span class="md-syntax">_</span>$1<span class="md-syntax">_</span></span>');
       // Strikethrough ~~text~~
       h = h.replace(/~~([^~]+)~~/g, '<span class="md-strike"><span class="md-syntax">~~</span>$1<span class="md-syntax">~~</span></span>');
       // Inline code `text`
@@ -2270,6 +4862,10 @@ async function _selectNote(id) {
         const display = pipeIdx >= 0 ? content.slice(pipeIdx + 1).trim() : target;
         return `<span class="md-wikilink"><span class="md-bracket">[[</span><a class="wikilink-source" href="#" data-note="${_esc(target)}">${_esc(display)}</a><span class="md-bracket">]]</span></span>`;
       });
+      // Incomplete wikilinks [[text (still being typed)
+      h = h.replace(/\[\[([^\]]*)$/g, (match, content) => {
+        return `<span class="md-wikilink"><span class="md-bracket">[[</span><span class="wikilink-source">${_esc(content)}</span></span>`;
+      });
       // Alternative wikilinks [/[/text]/]
       h = h.replace(/\[\/\[([^\]]+)\]\/\]/g, (match, content) => {
         const pipeIdx = content.indexOf('|');
@@ -2277,51 +4873,24 @@ async function _selectNote(id) {
         const display = pipeIdx >= 0 ? content.slice(pipeIdx + 1).trim() : target;
         return `<span class="md-wikilink"><span class="md-bracket">[/[</span><a class="wikilink-source" href="#" data-note="${_esc(target)}">${_esc(display)}</a><span class="md-bracket">]/]</span></span>`;
       });
+      // Incomplete alt wikilinks [/[/text
+      h = h.replace(/\[\/\[([^\]]*)$/g, (match, content) => {
+        return `<span class="md-wikilink"><span class="md-bracket">[/[</span><span class="wikilink-source">${_esc(content)}</span></span>`;
+      });
+      // Highlight ==text==
+      h = h.replace(/==([^=]+)==/g, '<span class="md-highlight"><span class="md-syntax">==</span>$1<span class="md-syntax">==</span></span>');
+      // Images ![alt](url)
+      h = h.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<span class="md-image"><span class="md-syntax">!</span><span class="md-syntax">[</span><span class="md-image-alt">$1</span><span class="md-syntax">](</span><span class="md-image-url">$2</span><span class="md-syntax">)</span></span>');
+      // Footnotes [^ref]
+      h = h.replace(/\[\^([^\]]+)\]/g, '<span class="md-footnote"><span class="md-syntax">[^</span>$1<span class="md-syntax">]</span></span>');
+      // Comments %%text%%
+      h = h.replace(/%%([^%]+)%%/g, '<span class="md-comment"><span class="md-syntax">%%</span>$1<span class="md-syntax">%%</span></span>');
+      // Math inline $text$
+      h = h.replace(/\$([^$\s][^$]*[^$\s])\$/g, '<span class="md-math"><span class="md-syntax">$</span>$1<span class="md-syntax">$</span></span>');
       // External links [text](url)
       h = h.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<span class="md-link"><span class="md-syntax">[</span><span class="md-link-text">$1</span><span class="md-syntax">](</span><span class="md-link-url">$2</span><span class="md-syntax">)</span></span>');
-      return h;
-    };
-
-    const _renderCleanLine = (line) => {
-      let h = _esc(line);
-      // Heading: ### Text
-      const hm = h.match(/^(#{1,6})\s+(.*)$/);
-      if (hm) { const lvl = hm[1].length; return `<h${lvl}>${hm[2]}</h${lvl}>`; }
-      // Horizontal rule ---
-      if (/^---+$/.test(line.trim())) return '<hr>';
-      // Blockquote > Text
-      if (/^&gt;\s/.test(h)) { h = `<blockquote>${h.replace(/^&gt;\s/, '')}</blockquote>`; }
-      // List item
-      const lm = h.match(/^(\s*)([-*+])\s+(.*)$/) || h.match(/^(\s*)(\d+\.)\s+(.*)$/);
-      if (lm) { h = `${lm[1]}<li>${lm[3]}</li>`; }
-      // Bold + italic ***text***
-      h = h.replace(/\*\*\*([^*]+)\*\*\*/g, '<strong><em>$1</em></strong>');
-      // Bold **text**
-      h = h.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-      // Italic *text*
-      h = h.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-      // Italic _text_
-      h = h.replace(/_([^_]+)_/g, '<em>$1</em>');
-      // Strikethrough ~~text~~
-      h = h.replace(/~~([^~]+)~~/g, '<del>$1</del>');
-      // Inline code `text`
-      h = h.replace(/`([^`]+)`/g, '<code>$1</code>');
-      // Wikilinks [[text]]
-      h = h.replace(/\[\[([^\]]+)\]\]/g, (match, content) => {
-        const pipeIdx = content.indexOf('|');
-        const target = pipeIdx >= 0 ? content.slice(0, pipeIdx).trim() : content.trim();
-        const display = pipeIdx >= 0 ? content.slice(pipeIdx + 1).trim() : target;
-        return `<a class="wikilink" href="#" data-note="${_esc(target)}">${_esc(display)}</a>`;
-      });
-      // Alternative wikilinks [/[/text]/]
-      h = h.replace(/\[\/\[([^\]]+)\]\/\]/g, (match, content) => {
-        const pipeIdx = content.indexOf('|');
-        const target = pipeIdx >= 0 ? content.slice(0, pipeIdx).trim() : content.trim();
-        const display = pipeIdx >= 0 ? content.slice(pipeIdx + 1).trim() : target;
-        return `<a class="wikilink" href="#" data-note="${_esc(target)}">${_esc(display)}</a>`;
-      });
-      // External links [text](url)
-      h = h.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+      // Live preview Enter inserts \n; normalize to <br> so the break survives innerHTML
+      h = h.replace(/\n/g, '<br>');
       return h;
     };
 
@@ -2360,11 +4929,32 @@ async function _selectNote(id) {
       let inCodeBlock = false;
       const codeLines = [];
       const out = [];
+      const isReading = _previewMode === 'preview';
+      const strictBreaks = _shardSettings.editor.strictLineBreaks;
+      const paragraphLines = [];
+
+      const flushParagraph = () => {
+        if (paragraphLines.length === 0) return;
+        const mergedRaw = paragraphLines.join('\n');
+        const mergedHtml = paragraphLines.map(l => _renderSourceLine(l)).join('<br>');
+        out.push(`<div class="lp-line" data-raw="${_esc(mergedRaw)}"><div class="lp-source">${mergedHtml}</div></div>`);
+        paragraphLines.length = 0;
+      };
+
+      const isBlockLine = (line) => {
+        const t = line.trim();
+        return /^#{1,6}\s/.test(t) ||
+               /^&gt;\s/.test(_esc(t)) ||
+               /^(\s*)([-*+]|\d+\.)\s/.test(t) ||
+               /^---+$/.test(t);
+      };
+
       for (const line of lines) {
         if (/^\s*```/.test(line)) {
+          flushParagraph();
           if (inCodeBlock) {
             codeLines.push(_esc(line));
-            out.push(`<div class="lp-line" data-raw="${_esc(line)}"><div class="lp-clean"><div class="md-code-block">${codeLines.join('<br>')}</div></div></div>`);
+            out.push(`<div class="lp-line" data-raw="${_esc(line)}"><div class="md-code-block">${codeLines.join('<br>')}</div></div>`);
             codeLines.length = 0;
             inCodeBlock = false;
           } else {
@@ -2373,50 +4963,144 @@ async function _selectNote(id) {
           }
         } else if (inCodeBlock) {
           codeLines.push(_esc(line));
+        } else if (isReading && !strictBreaks && !line.trim()) {
+          // Empty line in reading view with strictLineBreaks=false
+          flushParagraph();
+          out.push(`<div class="lp-line lp-empty" data-raw=""><div class="lp-source"><br></div></div>`);
+        } else if (isReading && !strictBreaks && isBlockLine(line)) {
+          // Block element in reading view with strictLineBreaks=false
+          flushParagraph();
+          out.push(`<div class="lp-line" data-raw="${_esc(line)}"><div class="lp-source">${_renderSourceLine(line)}</div></div>`);
+        } else if (isReading && !strictBreaks) {
+          // Regular paragraph line
+          paragraphLines.push(line);
         } else {
+          // Default: line-by-line (live preview or strict line breaks)
           const emptyClass = !line.trim() ? ' lp-empty' : '';
-          out.push(`<div class="lp-line${emptyClass}" data-raw="${_esc(line)}"><div class="lp-clean">${_renderCleanLine(line)}</div><div class="lp-source">${_renderSourceLine(line)}</div></div>`);
+          out.push(`<div class="lp-line${emptyClass}" data-raw="${_esc(line)}"><div class="lp-source">${_renderSourceLine(line)}</div></div>`);
         }
       }
+      flushParagraph();
       if (inCodeBlock) {
-        out.push(`<div class="lp-line" data-raw=""><div class="lp-clean"><div class="md-code-block">${codeLines.join('<br>')}</div></div></div>`);
+        out.push(`<div class="lp-line" data-raw=""><div class="md-code-block">${codeLines.join('<br>')}</div></div>`);
       }
       return out.join('');
     };
+
+const _getRawFromSource = (source) => {
+  let raw = '';
+  const walker = document.createTreeWalker(source, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    if (node.nodeType === Node.TEXT_NODE) {
+      raw += node.textContent;
+    } else if (node.tagName === 'BR') {
+      raw += '\n';
+    } else if (node.tagName === 'DIV' && node !== source) {
+      raw += '\n';
+    }
+  }
+  return raw;
+};
+
+const _getRawOffsetUpTo = (root, endNode, endOffset) => {
+  let offset = 0;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    if (node.nodeType === Node.TEXT_NODE) {
+      if (node === endNode) return offset + Math.min(endOffset, node.textContent.length);
+      offset += node.textContent.length;
+    } else if (node.tagName === 'BR' || (node.tagName === 'DIV' && node !== root)) {
+      if (node === endNode) return offset + (endOffset > 0 ? 1 : 0);
+      offset += 1;
+    }
+  }
+  return offset;
+};
 
     const updateBody = () => {
       if (_previewMode === 'edit') {
         // Source mode: styled text div, contentEditable, clickable wikilinks
         const raw = _getNoteFullRaw(note);
-        bodyEl.innerHTML = `<div class="shard-body-wrap"><div class="shard-source-view" contenteditable="true" spellcheck="false">${_renderSourceView(raw)}</div></div>`;
+        const lineNumClass = _shardSettings.editor.showLineNumbers ? 'shard-show-line-numbers' : '';
+        const sc = _shardSettings.editor.spellcheck ? 'true' : 'false';
+        const dir = _shardSettings.editor.rtl ? 'rtl' : 'ltr';
+        bodyEl.innerHTML = `<div class="shard-body-wrap" dir="${dir}"><div class="shard-source-view ${lineNumClass}" contenteditable="true" spellcheck="${sc}">${_renderSourceView(raw)}</div></div>`;
         const sourceDiv = bodyEl.querySelector('.shard-source-view');
         _wireSourceWikilinks(sourceDiv);
         sourceDiv.focus();
-        const finishEdit = async () => {
-          const fullText = sourceDiv.innerText;
-          const lines = fullText.split('\n');
-          let contentStart = 0;
-          let frontmatter = {};
-          if (lines[0]?.trim() === '---') {
-            const endIdx = lines.findIndex((l, idx) => idx > 0 && l.trim() === '---');
-            if (endIdx > 0) {
-              frontmatter = _parseFrontmatter(fullText);
-              contentStart = endIdx + 1;
-            }
+        sourceDiv.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            document.execCommand('insertText', false, '\n');
           }
-          note.frontmatter = frontmatter;
-          note.content = lines.slice(contentStart).join('\n').replace(/^\n+/, '');
-          await _saveNoteContent(note);
+        });
+        let _sourceRenderTimer = null;
+        sourceDiv.addEventListener('input', () => {
+          clearTimeout(_sourceRenderTimer);
+          _sourceRenderTimer = setTimeout(() => {
+            const sel = window.getSelection();
+            let offset = 0;
+            if (sel.rangeCount) {
+              const range = sel.getRangeAt(0);
+              offset = _getRawOffsetUpTo(sourceDiv, range.startContainer, range.startOffset);
+            }
+            const raw = sourceDiv.innerText;
+            sourceDiv.innerHTML = _renderSourceView(raw);
+            _wireSourceWikilinks(sourceDiv);
+            // Restore cursor (handles <br> and past-end offsets)
+            let curr = 0;
+            let lastNode = null;
+            const walker = document.createTreeWalker(sourceDiv, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+            while (walker.nextNode()) {
+              const node = walker.currentNode;
+              if (node.nodeType === Node.TEXT_NODE) {
+                const len = node.textContent.length;
+                lastNode = node;
+                if (curr + len >= offset) {
+                  const r = document.createRange();
+                  r.setStart(node, Math.max(0, offset - curr));
+                  r.collapse(true);
+                  sel.removeAllRanges();
+                  sel.addRange(r);
+                  return;
+                }
+                curr += len;
+              } else if (node.tagName === 'BR') {
+                if (curr + 1 >= offset) {
+                  const r = document.createRange();
+                  r.setStartAfter(node);
+                  r.collapse(true);
+                  sel.removeAllRanges();
+                  sel.addRange(r);
+                  return;
+                }
+                curr += 1;
+              }
+            }
+            if (lastNode) {
+              const r = document.createRange();
+              r.setStart(lastNode, lastNode.textContent.length);
+              r.collapse(true);
+              sel.removeAllRanges();
+              sel.addRange(r);
+            }
+          }, 100);
+        });
+        sourceDiv.addEventListener('blur', async () => {
+          clearTimeout(_sourceRenderTimer);
+          await _flushSourceEdit(sourceDiv, note);
           _selectNote(note.id);
-        };
-        sourceDiv.addEventListener('blur', finishEdit, { once: true });
+        }, { once: true });
       } else if (_previewMode === 'live') {
         // Live Preview: token-level inline editing — syntax hidden by default,
         // revealed only for the token(s) containing the cursor.
         const content = note.content || '';
-        bodyEl.innerHTML = `<div class="shard-body-wrap"><div class="shard-live-view">${_renderLiveView(content)}</div></div>`;
+        const dir = _shardSettings.editor.rtl ? 'rtl' : 'ltr';
+        bodyEl.innerHTML = `<div class="shard-body-wrap" dir="${dir}"><div class="shard-live-view">${_renderLiveView(content)}</div></div>`;
         const liveDiv = bodyEl.querySelector('.shard-live-view');
-        _wireWikilinks(liveDiv);
+        _wireSourceWikilinks(liveDiv);
 
         let activeLine = null;
         let _caretTimer = null;
@@ -2424,7 +5108,9 @@ async function _selectNote(id) {
         const TOKEN_CLASSES = new Set([
           'md-h1','md-h2','md-h3','md-h4','md-h5','md-h6',
           'md-bq','md-bold','md-italic','md-strike','md-code',
-          'md-wikilink','md-link','md-hr','md-li-marker'
+          'md-wikilink','md-link','md-hr','md-li-marker',
+          'md-highlight','md-footnote','md-comment','md-math',
+          'md-image','md-task','md-escaped'
         ]);
 
         const _isTokenSpan = (el) => {
@@ -2453,48 +5139,52 @@ async function _selectNote(id) {
           const range = sel.getRangeAt(0);
           const node = range.startContainer;
 
-          // Find the token span containing the cursor
-          let token = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
-          while (token && !token.classList?.contains('lp-source')) {
-            if (_isTokenSpan(token)) {
-              _activateToken(token);
-              // If cursor is at a boundary, also check adjacent siblings
-              const offset = range.startOffset;
-              const isAtStart = offset === 0;
-              const textLen = node.textContent?.length || 0;
-              const isAtEnd = offset === textLen;
-              if (isAtStart && token.previousElementSibling) {
-                _activateToken(token.previousElementSibling);
-              }
-              if (isAtEnd && token.nextElementSibling) {
-                _activateToken(token.nextElementSibling);
-              }
+          // 1. Walk up from cursor to find the nearest token-span ancestor
+          let el = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+          while (el && !el.classList?.contains('lp-source')) {
+            if (_isTokenSpan(el)) {
+              _activateToken(el);
               return;
             }
-            token = token.parentElement;
+            el = el.parentElement;
           }
 
-          // Cursor is in plain text inside lp-source; always activate adjacent tokens
-          let sibling = node.nodeType === Node.TEXT_NODE ? node : null;
-          if (!sibling) return;
-          if (sibling.previousElementSibling) {
-            _activateToken(sibling.previousElementSibling);
-          }
-          if (sibling.nextElementSibling) {
-            _activateToken(sibling.nextElementSibling);
+          // 2. Boundary fallback: caret at exact text-node edge between tokens
+          if (node.nodeType === Node.TEXT_NODE) {
+            const offset = range.startOffset;
+            const textLen = node.textContent.length;
+
+            if (offset === 0) {
+              let prev = node.previousElementSibling;
+              let curr = node;
+              while (!prev && curr.parentElement && !curr.parentElement.classList?.contains('lp-source')) {
+                prev = curr.parentElement.previousElementSibling;
+                curr = curr.parentElement;
+              }
+              if (prev && _isTokenSpan(prev)) _activateToken(prev);
+            }
+            if (offset === textLen) {
+              let next = node.nextElementSibling;
+              let curr = node;
+              while (!next && curr.parentElement && !curr.parentElement.classList?.contains('lp-source')) {
+                next = curr.parentElement.nextElementSibling;
+                curr = curr.parentElement;
+              }
+              if (next && _isTokenSpan(next)) _activateToken(next);
+            }
           }
         };
+
 
         const _deactivateLine = (line) => {
           if (!line) return;
           _clearActiveTokens(line);
           const source = line.querySelector('.lp-source');
-          const clean = line.querySelector('.lp-clean');
-          if (!source || !clean) return;
-          const raw = source.innerText;
+          if (!source) return;
+          const raw = _getRawFromSource(source);
           line.setAttribute('data-raw', raw);
-          clean.innerHTML = _renderCleanLine(raw);
-          _wireWikilinks(clean);
+          source.innerHTML = _renderSourceLine(raw);
+          _wireSourceWikilinks(source);
           source.setAttribute('contenteditable', 'false');
           line.classList.remove('active');
         };
@@ -2523,9 +5213,9 @@ async function _selectNote(id) {
           if (activeLine) _deactivateLine(activeLine);
           activeLine = line;
           const source = line.querySelector('.lp-source');
-          const clean = line.querySelector('.lp-clean');
-          if (!source || !clean) return;
+          if (!source) return;
           source.setAttribute('contenteditable', 'true');
+          source.setAttribute('spellcheck', _shardSettings.editor.spellcheck ? 'true' : 'false');
           _wireSourceWikilinks(source);
           line.classList.add('active');
           source.focus();
@@ -2591,11 +5281,81 @@ async function _selectNote(id) {
         liveDiv.addEventListener('input', _onCaretChange);
         liveDiv.addEventListener('mouseup', _onCaretChange);
 
+        // Debounced re-render of the active source line so syntax highlighting
+        // catches up while typing (e.g., [[...]] wikilinks).
+        let _renderLineTimer = null;
+        const _setCursorOffset = (source, offset) => {
+          const sel = window.getSelection();
+          const range = document.createRange();
+          let currentOffset = 0;
+          const walker = document.createTreeWalker(source, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+          let lastNode = null;
+          while (walker.nextNode()) {
+            const node = walker.currentNode;
+            if (node.nodeType === Node.TEXT_NODE) {
+              const len = node.textContent.length;
+              lastNode = node;
+              if (currentOffset + len >= offset) {
+                range.setStart(node, Math.max(0, offset - currentOffset));
+                range.collapse(true);
+                sel.removeAllRanges();
+                sel.addRange(range);
+                return;
+              }
+              currentOffset += len;
+            } else if (node.tagName === 'BR') {
+              if (currentOffset + 1 >= offset) {
+                range.setStartAfter(node);
+                range.collapse(true);
+                sel.removeAllRanges();
+                sel.addRange(range);
+                return;
+              }
+              currentOffset += 1;
+            }
+          }
+          // Offset past all content: place at end of last node or after last child
+          if (lastNode) {
+            range.setStart(lastNode, lastNode.textContent.length);
+          } else {
+            const lastChild = source.lastChild;
+            if (lastChild) range.setStartAfter(lastChild);
+            else range.setStart(source, 0);
+          }
+          range.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(range);
+        };
+        const _debouncedRenderLine = () => {
+          clearTimeout(_renderLineTimer);
+          _renderLineTimer = setTimeout(() => {
+            if (!activeLine) return;
+            const source = activeLine.querySelector('.lp-source');
+            if (!source) return;
+            // Save cursor offset (counts <br> as \n so Enter stays on new line)
+            let offset = 0;
+            const sel = window.getSelection();
+            if (sel.rangeCount) {
+              const range = sel.getRangeAt(0);
+              offset = _getRawOffsetUpTo(source, range.startContainer, range.startOffset);
+            }
+            const raw = _getRawFromSource(source);
+            activeLine.setAttribute('data-raw', raw);
+            source.innerHTML = _renderSourceLine(raw);
+            _wireSourceWikilinks(source);
+            _setCursorOffset(source, offset);
+            _trackCaret();
+            _updateWikiSuggest(source);
+          }, 50);
+        };
+        liveDiv.addEventListener('input', _debouncedRenderLine);
+
         const finishEdit = async () => {
           _hideWikiSuggest();
           liveDiv.removeEventListener('keyup', _onCaretChange);
           liveDiv.removeEventListener('input', _onCaretChange);
           liveDiv.removeEventListener('mouseup', _onCaretChange);
+          liveDiv.removeEventListener('input', _debouncedRenderLine);
           if (activeLine) {
             _deactivateLine(activeLine);
             activeLine = null;
@@ -2670,8 +5430,26 @@ async function _selectNote(id) {
           const sel = window.getSelection();
           if (!sel.rangeCount) return null;
           const range = sel.getRangeAt(0);
-          const rect = range.getBoundingClientRect();
-          if (rect.width === 0 && rect.height === 0) return null;
+          let rect = range.getBoundingClientRect();
+          if (rect.width === 0 && rect.height === 0) {
+            const rects = range.getClientRects();
+            if (rects.length > 0) {
+              rect = rects[0];
+            } else {
+              // Fallback: insert a temporary zero-width space to measure
+              const marker = document.createElement('span');
+              marker.textContent = '\u200b';
+              marker.style.position = 'absolute';
+              marker.style.opacity = '0';
+              try {
+                range.insertNode(marker);
+                rect = marker.getBoundingClientRect();
+                marker.remove();
+                sel.removeAllRanges();
+                sel.addRange(range);
+              } catch (_) { return null; }
+            }
+          }
           return { x: rect.left + rect.width / 2, y: rect.bottom + 4 };
         };
 
@@ -2694,24 +5472,53 @@ async function _selectNote(id) {
           _wikiSuggestIndex = -1;
         };
 
+        const _highlightSuggest = (text, query) => {
+          const q = query.toLowerCase();
+          const t = text.toLowerCase();
+          let idx = t.indexOf(q);
+          if (idx === -1) return _esc(text);
+          const before = text.slice(0, idx);
+          const match = text.slice(idx, idx + query.length);
+          const after = text.slice(idx + query.length);
+          return `${_esc(before)}<mark style="background:transparent;color:var(--accent,var(--red,#4a9eff));font-weight:600;">${_esc(match)}</mark>${_esc(after)}`;
+        };
+
         const _showWikiSuggest = (source, query) => {
           _hideWikiSuggest();
           const coords = _getCursorCoords();
           if (!coords) return;
-          const matches = _notes
-            .map(n => n.title)
-            .filter(t => t.toLowerCase().includes(query.toLowerCase()))
-            .slice(0, 12);
+          const q = query.toLowerCase();
+          const titles = [...new Set(_notes.map(n => n.title))];
+          const startsWith = titles.filter(t => t.toLowerCase().startsWith(q));
+          const wordBoundary = titles.filter(t => {
+            const lower = t.toLowerCase();
+            return !startsWith.includes(t) && new RegExp('\\b' + _escRegExp(q)).test(lower);
+          });
+          const substring = titles.filter(t => {
+            const lower = t.toLowerCase();
+            return !startsWith.includes(t) && !wordBoundary.includes(t) && lower.includes(q);
+          });
+          const matches = [...startsWith, ...wordBoundary, ...substring].slice(0, 12);
           if (!matches.length) return;
           const el = document.createElement('div');
           el.className = 'shard-wiki-suggest';
           el.innerHTML = matches.map((t, i) =>
-            `<div class="shard-wiki-suggest-item${i === 0 ? ' selected' : ''}" data-title="${_esc(t)}">${_esc(t)}</div>`
+            `<div class="shard-wiki-suggest-item${i === 0 ? ' selected' : ''}" data-title="${_esc(t)}">${_highlightSuggest(t, query)}</div>`
           ).join('');
           el.style.position = 'fixed';
           el.style.zIndex = '99999';
-          el.style.left = coords.x + 'px';
-          el.style.top = coords.y + 'px';
+          let left = coords.x;
+          let top = coords.y;
+          const estWidth = 200;
+          const estHeight = 220;
+          if (left + estWidth > window.innerWidth) left = Math.max(4, window.innerWidth - estWidth - 8);
+          // Prefer placing below cursor; if no room, flip above cursor line
+          if (top + estHeight > window.innerHeight) {
+            const above = coords.y - estHeight - 8;
+            top = above > 4 ? above : Math.max(4, window.innerHeight - estHeight - 8);
+          }
+          el.style.left = left + 'px';
+          el.style.top = top + 'px';
           el.style.minWidth = '180px';
           document.body.appendChild(el);
           _wikiSuggestEl = el;
@@ -2725,28 +5532,67 @@ async function _selectNote(id) {
         };
 
         const _insertWikiLink = (source, title) => {
-          const sel = window.getSelection();
-          if (!sel.rangeCount) return;
-          const range = sel.getRangeAt(0);
           const textBefore = _getTextBeforeCursor(source);
-          // Find the opening [[ or [/[
           let openIdx = textBefore.lastIndexOf('[/[');
-          if (openIdx === -1) openIdx = textBefore.lastIndexOf('[[');
+          let isAlt = true;
+          if (openIdx === -1) { openIdx = textBefore.lastIndexOf('[['); isAlt = false; }
           if (openIdx === -1) return;
-          const isAlt = textBefore.lastIndexOf('[/[') > textBefore.lastIndexOf('[[');
-          const prefixLen = isAlt ? 3 : 2;
-          const fullQuery = textBefore.slice(openIdx + prefixLen);
-          // Split at | to preserve display alias
-          const pipeIdx = fullQuery.indexOf('|');
-          const targetPart = pipeIdx >= 0 ? fullQuery.slice(0, pipeIdx) : fullQuery;
-          const displayPart = pipeIdx >= 0 ? fullQuery.slice(pipeIdx) : '';
-          const deleteLen = targetPart.length;
-          // Collapse to end of targetPart
-          range.collapse(false);
-          // Delete target text only (keep | and display name if present)
-          for (let i = 0; i < deleteLen; i++) document.execCommand('delete', false);
-          // Insert selected title
-          document.execCommand('insertText', false, title);
+
+          const useWiki = _shardSettings.filesAndLinks.useWikilinks;
+          const format = _shardSettings.filesAndLinks.linkFormat;
+          const closeBrackets = isAlt ? ']/]' : ']]';
+
+          const fullText = _getRawFromSource(source);
+          const textAfterCursor = fullText.slice(textBefore.length);
+          const alreadyClosed = textAfterCursor.startsWith(closeBrackets);
+
+          // Compute link path based on format
+          const targetNote = _notes.find(n => n.title === title);
+          const currentNote = _notes.find(n => n.id === _selectedNoteId);
+          const targetFolder = targetNote ? (targetNote.folder || '') : '';
+          const currentFolder = currentNote ? (currentNote.folder || '') : '';
+
+          let linkPath = title;
+          if (format !== 'shortest' && targetNote) {
+            if (format === 'absolute') {
+              linkPath = targetFolder ? `${targetFolder}/${title}` : title;
+            } else if (format === 'relative') {
+              if (currentFolder === targetFolder) {
+                linkPath = title;
+              } else if (targetFolder.startsWith(currentFolder + '/')) {
+                linkPath = targetFolder.slice(currentFolder.length + 1) + '/' + title;
+              } else {
+                linkPath = targetFolder ? `${targetFolder}/${title}` : title;
+              }
+            }
+          }
+
+          const beforeLink = fullText.slice(0, openIdx);
+          const afterLink = alreadyClosed ? fullText.slice(textBefore.length + closeBrackets.length)
+                                            : fullText.slice(textBefore.length);
+
+          let newRaw, cursorPos;
+          if (useWiki) {
+            if (linkPath === title) {
+              newRaw = beforeLink + '[[' + title + ']]' + afterLink;
+              cursorPos = beforeLink.length + 2 + title.length + 2;
+            } else {
+              newRaw = beforeLink + '[[' + linkPath + '|' + title + ']]' + afterLink;
+              cursorPos = beforeLink.length + 2 + linkPath.length + 1 + title.length + 2;
+            }
+          } else {
+            let mdPath = linkPath;
+            if (targetNote) {
+              mdPath = targetFolder ? `${targetFolder}/${title}.md` : `${title}.md`;
+            }
+            newRaw = beforeLink + '[' + title + '](' + mdPath + ')' + afterLink;
+            cursorPos = beforeLink.length + 1 + title.length + 2 + mdPath.length + 1;
+          }
+
+          if (activeLine) activeLine.setAttribute('data-raw', newRaw);
+          source.innerHTML = _renderSourceLine(newRaw);
+          _wireSourceWikilinks(source);
+          _setCursorOffset(source, cursorPos);
         };
 
         const _updateWikiSuggest = (source) => {
@@ -2769,32 +5615,109 @@ async function _selectNote(id) {
           const source = activeLine?.querySelector('.lp-source');
           if (!source) return;
 
-          // Enter: insert literal newline
+          // Enter: insert literal newline (smart list continuation when enabled)
           if (e.key === 'Enter' && activeLine) {
             e.preventDefault();
-            document.execCommand('insertText', false, '\n');
+            const lineText = activeLine.dataset.raw || '';
+            let insert = '\n';
+            if (_shardSettings.editor.smartLists) {
+              const listMatch = lineText.match(/^(\s*)([-*+]|\d+\.)\s+(.*)$/);
+              if (listMatch) {
+                const [, indent, marker, content] = listMatch;
+                if (content.trim() === '') {
+                  // Empty list item: remove marker on current line by replacing whole line
+                  const source = activeLine.querySelector('.lp-source');
+                  if (source) {
+                    source.textContent = indent;
+                    // Move cursor to end of indent
+                    const sel = window.getSelection();
+                    const r = document.createRange();
+                    r.setStart(source.firstChild || source, indent.length);
+                    r.collapse(true);
+                    sel.removeAllRanges();
+                    sel.addRange(r);
+                  }
+                  insert = '\n';
+                } else {
+                  let nextMarker = marker;
+                  if (/^\d+\./.test(marker)) {
+                    const num = parseInt(marker, 10);
+                    nextMarker = `${num + 1}.`;
+                  }
+                  insert = `\n${indent}${nextMarker} `;
+                }
+              }
+            }
+            document.execCommand('insertText', false, insert);
+            return;
+          }
+
+          // Tab: indent with tabs or spaces
+          if (e.key === 'Tab' && activeLine) {
+            e.preventDefault();
+            const indent = _shardSettings.editor.indentWithTabs ? '\t' : '  ';
+            document.execCommand('insertText', false, indent);
             return;
           }
 
           // Bracket auto-close
-          if (e.key === '[') {
+          if (e.key === '[' && _shardSettings.editor.autoPairBrackets) {
             e.preventDefault();
-            const textBefore = _getTextBeforeCursor(source);
+            const sel = window.getSelection();
+            if (!sel.rangeCount) return;
+            const range = sel.getRangeAt(0);
             const prev = _getCharBeforeCursor();
             const next = _getCharAfterCursor();
-            if (prev === '[') {
-              if (next === ']') document.execCommand('delete', false);
-              document.execCommand('insertText', false, '[]]');
-              _moveCursorBack(2);
-            } else if (textBefore.endsWith('[/')) {
-              document.execCommand('insertText', false, '[]/]');
-              _moveCursorBack(4);
+            if (_shardSettings.editor.autoPairMarkdown && _shardSettings.filesAndLinks.useWikilinks && prev === '[') {
+              // Turn existing [] or [/ into [[...]]
+              const r = range.cloneRange();
+              if (next === ']' && r.endContainer.nodeType === Node.TEXT_NODE && r.endOffset < r.endContainer.textContent.length) {
+                r.setEnd(r.endContainer, r.endOffset + 1);
+                r.deleteContents();
+              }
+              const insert = document.createTextNode('[]]');
+              r.insertNode(insert);
+              const nr = document.createRange();
+              nr.setStart(insert, 1);
+              nr.collapse(true);
+              sel.removeAllRanges();
+              sel.addRange(nr);
+            } else if (_shardSettings.editor.autoPairMarkdown && _shardSettings.filesAndLinks.useWikilinks && _getTextBeforeCursor(source).endsWith('[/')) {
+              const insert = document.createTextNode('[]/]');
+              range.insertNode(insert);
+              const nr = document.createRange();
+              nr.setStart(insert, 1);
+              nr.collapse(true);
+              sel.removeAllRanges();
+              sel.addRange(nr);
             } else {
-              document.execCommand('insertText', false, '[]');
-              _moveCursorBack(1);
+              const insert = document.createTextNode('[]');
+              range.insertNode(insert);
+              const nr = document.createRange();
+              nr.setStart(insert, 1);
+              nr.collapse(true);
+              sel.removeAllRanges();
+              sel.addRange(nr);
             }
-            _updateWikiSuggest(source);
+            if (_shardSettings.editor.autoPairMarkdown) _updateWikiSuggest(source);
             return;
+          }
+
+          // Close-bracket: if we are inside [[...]], just insert ] and close suggest
+          if (e.key === ']') {
+            const textBefore = _getTextBeforeCursor(source);
+            const lastOpen = Math.max(textBefore.lastIndexOf('[/['), textBefore.lastIndexOf('[['));
+            if (lastOpen !== -1) {
+              const isAlt = textBefore.lastIndexOf('[/[') > textBefore.lastIndexOf('[[');
+              const prefixLen = isAlt ? 3 : 2;
+              const afterOpen = textBefore.slice(lastOpen + prefixLen);
+              const closeIdx = afterOpen.indexOf(isAlt ? ']/]' : ']]');
+              if (closeIdx === -1) {
+                // Inside an open wikilink: let the browser insert ], then close dropdown
+                setTimeout(() => _hideWikiSuggest(), 0);
+                return; // let default ] happen
+              }
+            }
           }
 
           // Wikilink suggestion navigation
@@ -2815,6 +5738,12 @@ async function _selectNote(id) {
               return;
             }
             if (e.key === 'Enter') {
+              e.preventDefault();
+              // Only insert selected item if user explicitly clicked it or used Tab
+              _hideWikiSuggest();
+              return;
+            }
+            if (e.key === 'Tab') {
               e.preventDefault();
               const selected = items[_wikiSuggestIndex];
               if (selected) _insertWikiLink(source, selected.dataset.title);
@@ -2853,9 +5782,11 @@ async function _selectNote(id) {
       } else {
         // Reading mode: use live preview HTML without editing interactions
         const content = note.content || '';
-        bodyEl.innerHTML = `<div class="shard-body-wrap"><div class="shard-reading-view">${_renderLiveView(content)}</div></div>`;
+        const dir = _shardSettings.editor.rtl ? 'rtl' : 'ltr';
+        bodyEl.innerHTML = `<div class="shard-body-wrap" dir="${dir}"><div class="shard-reading-view">${_renderLiveView(content)}</div></div>`;
         const wrap = bodyEl.querySelector('.shard-reading-view');
-        _wireWikilinks(wrap);
+        _wireSourceWikilinks(wrap);
+        _wireReadingViewFolds(wrap);
         wrap.addEventListener('dblclick', () => {
           _previewMode = _editModePref;
           _updateModeButtons();
@@ -2866,17 +5797,20 @@ async function _selectNote(id) {
     updateBody();
     let wcEl = document.getElementById('shard-word-count');
     if (!wcEl) { wcEl = document.createElement('div'); wcEl.id = 'shard-word-count'; wcEl.className = 'shard-word-count'; }
-    if (bodyEl && wcEl.parentElement !== bodyEl) bodyEl.appendChild(wcEl);
+    const panelWrap = preview?.parentElement;
+    if (panelWrap && wcEl.parentElement !== panelWrap) panelWrap.appendChild(wcEl);
+    const wordCount = (note.content || '').split(/\s+/).filter(Boolean).length;
+    wcEl.textContent = `${wordCount} words`;
     _updateModeButtons();
     const viewModes = document.getElementById('shard-view-modes');
     if (viewModes) {
       viewModes.style.display = 'flex';
       viewModes.querySelectorAll('.shard-mode-btn').forEach(btn => {
-        btn.onclick = () => {
+        btn.onclick = async () => {
           const mode = btn.dataset.viewMode;
           if (_previewMode === 'edit' && mode !== 'edit') {
             const sourceDiv = bodyEl.querySelector('.shard-source-view');
-            if (sourceDiv) sourceDiv.blur();
+            if (sourceDiv) await _flushSourceEdit(sourceDiv, note);
           }
           if (mode === 'live' || mode === 'edit') {
             _editModePref = mode;
@@ -2944,18 +5878,47 @@ async function _selectNote(id) {
 
     _renderRightSidebar(note);
 
-    // Background: fetch full note with backlinks if we only had the cached stub
-    if (!note.backlinks_resolved) {
-      fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(id)}`)
-        .then(r => r.ok ? r.json() : null)
-        .then(full => {
-          if (full) {
-            _noteContentCache.set(id, full);
-            _renderRightSidebar(full);
+    // Background: fetch fresh content to detect external edits & resolve backlinks
+    const _originalContent = note.content;
+    // Skip if this note ID was renamed and no longer exists client-side
+    const stillExists = _notes.some(n => n.id === id || n.rel_path === id);
+    if (!stillExists) return;
+    fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(id)}`)
+      .then(r => r.ok ? r.json() : null)
+      .catch(() => null)
+      .then(full => {
+        if (!full) return;
+        _noteContentCache.set(id, full);
+        if (_selectedNoteId !== full.id && _selectedNoteId !== full.rel_path) return;
+        _renderRightSidebar(full);
+        // Only silently refresh if user hasn't locally edited since we started the fetch,
+        // and we're not in edit mode (to avoid stealing focus).
+        const hasActiveLiveEditor = preview.querySelector('.lp-source[contenteditable="true"]');
+        const userEditedSinceFetch = note.content !== _originalContent;
+        if (!hasActiveLiveEditor && !userEditedSinceFetch && _previewMode !== 'edit' && full.content !== note.content) {
+          note.content = full.content;
+          note.title = full.title;
+          if (typeof full.frontmatter === 'string') {
+            note.frontmatter = _parseFrontmatter(full.frontmatter);
+          } else {
+            note.frontmatter = full.frontmatter;
           }
-        })
-        .catch(() => {});
-    }
+          updateBody();
+          _applyMonospaceFont();
+          // Refresh header title if it changed
+          const h1 = preview.querySelector('.shard-preview-header h1');
+          if (h1 && h1.textContent !== note.title) h1.textContent = note.title;
+          const titleEdit = preview.querySelector('.shard-title-edit');
+          if (titleEdit && titleEdit.textContent !== note.title) titleEdit.textContent = note.title;
+          // Refresh word count
+          const wcEl = document.getElementById('shard-word-count');
+          if (wcEl) wcEl.textContent = `${(note.content || '').split(/\s+/).filter(Boolean).length} words`;
+        }
+      })
+      .catch(() => {});
+
+    // Re-apply monospace font to newly created editor/view elements
+    _applyMonospaceFont();
   } catch (e) {
     preview.style.display = 'none';
   }
@@ -3023,7 +5986,12 @@ function _openPropIconMenu(icon, key, preview, note) {
         return `<div class="shard-prop-submenu-item${isActive ? ' active' : ''}" data-type="${_esc(typeKey)}">${icon}<span>${_esc(t)}</span></div>`;
       }).join('');
       const tRect = typeItem.getBoundingClientRect();
-      sub.style.left = (tRect.right + 4) + 'px';
+      let subLeft = tRect.right + 4;
+      const subWidth = 170; // approximate submenu width
+      if (subLeft + subWidth > window.innerWidth) {
+        subLeft = Math.max(4, tRect.left - subWidth - 4);
+      }
+      sub.style.left = subLeft + 'px';
       sub.style.top = tRect.top + 'px';
       document.body.appendChild(sub);
       sub.querySelectorAll('.shard-prop-submenu-item').forEach(it => {
@@ -3301,9 +6269,16 @@ function _wirePropertyEditors(preview, note) {
       });
     });
 
-    // Inline input for adding new tags (with autocomplete)
+    // Click anywhere in the value box to focus the inline input
+    container.addEventListener('click', (e) => {
+      if (e.target.closest('.shard-prop-chip')) return; // ignore chip clicks
+      const inlineInput = container.querySelector('.shard-prop-chip-input');
+      if (inlineInput) { inlineInput.focus(); }
+    });
+
+    // Inline input for adding new chips — only show tag autocomplete for the tags property
     const inlineInput = container.querySelector('.shard-prop-chip-input');
-    if (inlineInput) {
+    if (inlineInput && key.toLowerCase() === 'tags') {
       _wireTagAutocomplete(inlineInput, key, note, preview);
     }
   });
@@ -3400,32 +6375,24 @@ function _renderRightSidebar(note) {
   document.getElementById('shard-right-tabs')?.classList.remove('hidden');
   document.getElementById('shard-right-panes')?.classList.remove('hidden');
 
-  // Helper: render disabled state when a plugin is turned off
-  const _disabled = (panelId) => {
-    const el = document.getElementById('shard-' + panelId + '-panel');
-    if (el) el.innerHTML = '<div style="padding:12px;text-align:center;opacity:0.5;font-size:12px;">Plugin disabled.<br>Enable it in Settings > Core Plugins.</div>';
-  };
-
   switch (_activeRightTab) {
     case 'backlinks':
       if (_pluginManager?.isEnabled('backlinks')) _renderBacklinksPane(note);
-      else _disabled('backlinks');
       break;
     case 'outgoing':
       if (_pluginManager?.isEnabled('outgoing-links')) _renderOutgoingPane(note);
-      else _disabled('outgoing');
       break;
     case 'unlinked':
       if (_pluginManager?.isEnabled('unlinked')) _renderUnlinkedPane(note);
-      else _disabled('unlinked');
       break;
     case 'outline':
       if (_pluginManager?.isEnabled('outline')) _renderOutlinePane(note);
-      else _disabled('outline');
       break;
     case 'orphans':
       if (_pluginManager?.isEnabled('orphans')) _renderOrphansPane(note);
-      else _disabled('orphans');
+      break;
+    case 'local-graph':
+      _renderLocalGraph(note);
       break;
   }
 
@@ -3436,7 +6403,7 @@ function _renderRightSidebar(note) {
 
 function _renderBacklinksPane(note) {
   const bl = document.getElementById('shard-backlinks-panel');
-  if (!bl) return;
+  if (!bl || !note) return;
   // Primary: client-side compute backlinks from all notes' outbound_links
   // (more robust than backend backlinks which can get stale/corrupted)
   const targetRel = (note.rel_path || note.id || '').replace(/\\/g, '/');
@@ -3493,10 +6460,14 @@ function _renderBacklinksPane(note) {
         <span style="opacity:0.5;font-size:11px;flex-shrink:0;">${snippetCount}</span>
       </div>
       <div class="shard-backlink-body" style="display:${isExpanded ? 'block' : 'none'};padding:4px 0 8px 18px;font-size:12px;opacity:0.8;line-height:1.5;">
-        ${(b.snippets || []).map(s => `<div class="shard-backlink-snippet" style="margin-bottom:6px;padding:6px 8px;background:color-mix(in srgb, var(--fg) 4%, transparent);border-radius:6px;cursor:pointer;">${_esc(s)}</div>`).join('')}
+        ${(b.snippets || []).map(s => `<div class="shard-backlink-snippet" style="margin-bottom:6px;padding:6px 8px;background:color-mix(in srgb, var(--fg) 4%, transparent);border-radius:6px;cursor:pointer;">${_highlightBacklinkSnippet(s, targetNames)}</div>`).join('')}
       </div>
     </div>`;
-  }).join('') : '<div style="opacity:0.5;font-size:11px;">No backlinks</div>';
+  }).join('') : `<div class="shard-backlink-item">
+    <div class="shard-backlink-header" style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:12px;opacity:0.5;">
+      <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">No backlinks</span>
+    </div>
+  </div>`;
   bl.innerHTML = headerHtml + listHtml;
   bl.querySelector('.shard-backlinks-toggle')?.addEventListener('click', function () {
     const willExpand = bl.dataset.expanded !== 'all';
@@ -3535,7 +6506,7 @@ function _renderBacklinksPane(note) {
 
 function _renderOutgoingPane(note) {
   const out = document.getElementById('shard-outgoing-panel');
-  if (!out) return;
+  if (!out || !note) return;
   const links = note.outbound_links || [];
   out.innerHTML = `<h4 style="font-size:11px;opacity:0.6;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em;">Outgoing (${links.length})</h4>` +
     (links.length ? links.map(t => {
@@ -3565,7 +6536,7 @@ function _renderNoteTagsPane(note) {
 
 function _renderUnlinkedPane(note) {
   const el = document.getElementById('shard-unlinked-panel');
-  if (!el) return;
+  if (!el || !note) return;
   // Find note titles mentioned in content but not wrapped in [[...]]
   const content = note.content || '';
   const otherNotes = _notes.filter(n => n.id !== note.id);
@@ -3611,7 +6582,7 @@ function _renderUnlinkedPane(note) {
 
 function _renderOutlinePane(note) {
   const el = document.getElementById('shard-outline-panel');
-  if (!el) return;
+  if (!el || !note) return;
   const content = note.content || '';
   const headings = [];
   const regex = /^(#{1,6})\s+(.+)$/gm;
@@ -3640,7 +6611,7 @@ function _renderOutlinePane(note) {
 
 function _renderOrphansPane(note) {
   const el = document.getElementById('shard-orphans-panel');
-  if (!el) return;
+  if (!el || !note) return;
   // File-specific orphans: wikilinks in this note that point to non-existent notes
   const orphanedLinks = new Set();
   const content = note.content || '';
@@ -3701,6 +6672,20 @@ function _renderGraph() {
     mod.renderShardGraph(container, _selectedVaultId);
   }).catch(err => {
     container.innerHTML = `<div class="shard-error">Graph error: ${err.message}</div>`;
+  });
+}
+
+function _renderLocalGraph(note) {
+  const container = document.getElementById('shard-local-graph-canvas');
+  if (!container || !window.vis) return;
+  if (!note) {
+    container.innerHTML = '<div class="shard-graph-loading">Select a note to see its local graph.</div>';
+    return;
+  }
+  import('./shardGraphCanvas.js').then(mod => {
+    mod.renderLocalGraph(container, _selectedVaultId, note.rel_path || note.id);
+  }).catch(err => {
+    container.innerHTML = `<div class="shard-error">Local graph error: ${err.message}</div>`;
   });
 }
 
@@ -3893,15 +6878,102 @@ function _wireResizeHandles() {
 
   setup(leftHandle, 'left');
   setup(rightHandle, 'right');
+
+  // Plugin settings sidebar resize
+  const pluginResize = document.getElementById('shard-plugin-resize');
+  const pluginSidebar = document.getElementById('shard-plugin-settings-sidebar');
+  if (pluginResize && pluginSidebar) {
+    let pStartX = 0;
+    let pStartSize = 0;
+    let pDragging = false;
+    pluginResize.addEventListener('mousedown', (e) => {
+      pDragging = true;
+      pStartX = e.clientX;
+      pStartSize = pluginSidebar.offsetWidth;
+      pluginResize.classList.add('dragging');
+      e.preventDefault();
+    });
+    document.addEventListener('mousemove', (e) => {
+      if (!pDragging) return;
+      const delta = e.clientX - pStartX;
+      const newSize = Math.max(180, Math.min(400, pStartSize + delta));
+      document.documentElement.style.setProperty('--shard-plugin-sidebar-w', newSize + 'px');
+    });
+    document.addEventListener('mouseup', () => {
+      if (!pDragging) return;
+      pDragging = false;
+      pluginResize.classList.remove('dragging');
+    });
+  }
 }
 
 // ── Helpers ────────────────────────────────────────────────
+
+/** Highlight wikilinks / markdown links to targetNames inside a backlink snippet. */
+function _highlightBacklinkSnippet(text, targetNames) {
+  if (!text) return '';
+  const namesRe = targetNames.map(tn => _escRegExp(tn)).join('|');
+  const pattern = new RegExp(
+    '\\[\\[(' + namesRe + ')(#[^\\]|]*)?(\\|[^\\]]*)?\\]\\]|' +
+    '\\[([^\\]]*)\\]\\((' + namesRe + ')(\\.md)?\\)',
+    'g'
+  );
+  let html = '';
+  let lastIndex = 0;
+  let m;
+  while ((m = pattern.exec(text)) !== null) {
+    html += _esc(text.slice(lastIndex, m.index));
+    lastIndex = pattern.lastIndex;
+    if (m[1] !== undefined) {
+      // Wikilink: highlight the whole link
+      const targetName = _esc(m[1]);
+      const heading = _esc(m[2] || '');
+      const pipe = _esc(m[3] || '');
+      html += `<span style="color:var(--accent, var(--red, #4a9eff));font-weight:500;">[[${targetName}${heading}${pipe}]]</span>`;
+    } else {
+      // Markdown link: highlight the display text
+      const display = m[4];
+      const targetName = m[5];
+      const ext = m[6] || '';
+      html += `[<span style="color:var(--accent, var(--red, #4a9eff));font-weight:500;">${_esc(display)}</span>](${_esc(targetName + ext)})`;
+    }
+  }
+  html += _esc(text.slice(lastIndex));
+  return html;
+}
 
 function _esc(s) {
   if (!s) return '';
   const div = document.createElement('div');
   div.textContent = s;
   return div.innerHTML;
+}
+
+function _extractOutboundLinks(content) {
+  const links = new Set();
+  if (!content) return [];
+  // Wikilinks [[target|display]] or [[target]] or [[/[/target|display]/]]
+  const wikiRe = /\[\[([^\]]+)\]\]|\[\/\[([^\]]+)\]\/\]/g;
+  let m;
+  while ((m = wikiRe.exec(content)) !== null) {
+    const raw = m[1] || m[2];
+    const pipeIdx = raw.indexOf('|');
+    const target = pipeIdx >= 0 ? raw.slice(0, pipeIdx).trim() : raw.trim();
+    const hashIdx = target.indexOf('#');
+    const cleanTarget = hashIdx >= 0 ? target.slice(0, hashIdx).trim() : target;
+    if (cleanTarget) links.add(cleanTarget);
+  }
+  // Markdown links [display](target)
+  const mdRe = /\[([^\]]*)\]\(([^)]+)\)/g;
+  while ((m = mdRe.exec(content)) !== null) {
+    const target = m[2].trim();
+    // Skip external URLs
+    if (/^(https?:|file:|ftp:|mailto:|data:)/i.test(target)) continue;
+    const hashIdx = target.indexOf('#');
+    const cleanTarget = hashIdx >= 0 ? target.slice(0, hashIdx).trim() : target;
+    if (cleanTarget) links.add(cleanTarget);
+  }
+  return Array.from(links);
 }
 
 // ── Context menus ────────────────────────────────────────────
@@ -3950,7 +7022,9 @@ function _showContextMenu(x, y, items) {
         item.action();
       });
       if (item.submenu) {
+        let submenuTimeout = null;
         row.addEventListener('mouseenter', () => {
+          clearTimeout(submenuTimeout);
           if (_activeContextSubmenu) _activeContextSubmenu.remove();
           const rect = row.getBoundingClientRect();
           const sub = document.createElement('div');
@@ -3971,6 +7045,15 @@ function _showContextMenu(x, y, items) {
               srow.addEventListener('click', () => { _hideContextMenu(); si.action(); });
             }
             sub.appendChild(srow);
+          });
+          // Close submenu when mouse leaves it (with small delay to allow crossing gap)
+          sub.addEventListener('mouseleave', () => {
+            submenuTimeout = setTimeout(() => { sub.remove(); _activeContextSubmenu = null; }, 150);
+          });
+          row.addEventListener('mouseleave', () => {
+            submenuTimeout = setTimeout(() => {
+              if (!sub.matches(':hover')) { sub.remove(); _activeContextSubmenu = null; }
+            }, 200);
           });
           document.body.appendChild(sub);
           _activeContextSubmenu = sub;
@@ -4014,12 +7097,114 @@ function _buildFolderSubmenu(noteId, currentFolder) {
           body: JSON.stringify({ folder: f }),
         });
         if (!r.ok) throw new Error();
+        const data = await r.json().catch(() => ({}));
+        if (data.new_path && note) {
+          const newId = data.new_path;
+          _syncNoteIdAfterMove(noteId, newId);
+          note.id = newId;
+          note.rel_path = newId;
+        }
       } catch {
         if (note) note.folder = oldFolder;
         _renderFolderTree();
       }
     },
   }));
+}
+
+function _getNoteAbsolutePath(note) {
+  if (!note) return null;
+  const vault = _vaults.find(v => v.id === _selectedVaultId);
+  const vaultPath = vault?.path || '';
+  if (!vaultPath) return null;
+  const rel = note.rel_path || note.id || '';
+  return vaultPath.replace(/\\/g, '/') + '/' + rel.replace(/\\/g, '/');
+}
+
+function _openNoteInDefaultApp(noteId) {
+  const note = _notes.find(n => n.id === noteId);
+  const absPath = _getNoteAbsolutePath(note);
+  if (!absPath) { showToast('Vault path not available'); return; }
+  if (window.electronAPI?.openPath) {
+    window.electronAPI.openPath(absPath).then(r => {
+      if (r?.error) showToast('Could not open: ' + r.error);
+    }).catch(err => {
+      console.error('[shard] shell-open-path failed:', err);
+      showToast('Electron shell not available. If you recently updated main.js, restart Electron.');
+    });
+  } else {
+    showToast('Desktop shell not available in browser');
+  }
+}
+
+function _showNoteInExplorer(noteId) {
+  const note = _notes.find(n => n.id === noteId);
+  const absPath = _getNoteAbsolutePath(note);
+  if (!absPath) { showToast('Vault path not available'); return; }
+  if (window.electronAPI?.showItemInFolder) {
+    window.electronAPI.showItemInFolder(absPath).catch(err => {
+      console.error('[shard] shell-show-item failed:', err);
+      showToast('Electron shell not available. If you recently updated main.js, restart Electron.');
+    });
+  } else {
+    showToast('Desktop shell not available in browser');
+  }
+}
+
+function _showFolderInExplorer(folder) {
+  const vault = _vaults.find(v => v.id === _selectedVaultId);
+  const vaultPath = vault?.path || '';
+  if (!vaultPath) { showToast('Vault path not available'); return; }
+  const folderPath = vaultPath.replace(/\\/g, '/') + '/' + (folder || '').replace(/\\/g, '/');
+  if (window.electronAPI?.showItemInFolder) {
+    window.electronAPI.showItemInFolder(folderPath).catch(err => {
+      console.error('[shard] shell-show-item failed:', err);
+      showToast('Electron shell not available. If you recently updated main.js, restart Electron.');
+    });
+  } else {
+    showToast('Desktop shell not available in browser');
+  }
+}
+
+function _showIconPicker(targetId, x, y, type = 'note') {
+  const existing = document.querySelector('.shard-icon-picker');
+  if (existing) existing.remove();
+  const picker = document.createElement('div');
+  picker.className = 'shard-icon-picker';
+  picker.style.cssText = `position:fixed;left:${x}px;top:${y}px;z-index:6000;background:var(--panel,var(--bg,#1a1a1a));border:1px solid var(--border);border-radius:6px;padding:8px;box-shadow:0 4px 12px rgba(0,0,0,0.3);display:flex;flex-wrap:wrap;gap:6px;max-width:220px;`;
+  const keys = Object.keys(_NOTE_ICON_PACK).filter(k => k !== 'folder');
+  const currentKey = type === 'folder' ? _folderIcons[targetId] : _noteIcons[targetId];
+  const setIcon = type === 'folder' ? _setFolderIcon : _setNoteIcon;
+  keys.forEach(key => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.title = key;
+    btn.style.cssText = 'width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:4px;background:none;color:var(--fg);cursor:pointer;';
+    btn.innerHTML = type === 'folder'
+      ? _getFolderIconSvg('__picker__', key, 16)
+      : _getNoteIconSvg('__picker__', key, 16);
+    if (currentKey === key) btn.style.borderColor = 'var(--accent,var(--red,#4a9eff))';
+    btn.addEventListener('click', () => {
+      setIcon(targetId, key);
+      picker.remove();
+    });
+    picker.appendChild(btn);
+  });
+  // Add "clear" option
+  const clearBtn = document.createElement('button');
+  clearBtn.type = 'button';
+  clearBtn.title = 'Remove icon';
+  clearBtn.style.cssText = 'width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:4px;background:none;color:var(--fg);cursor:pointer;font-size:11px;';
+  clearBtn.textContent = '×';
+  clearBtn.addEventListener('click', () => { setIcon(targetId, null); picker.remove(); });
+  picker.appendChild(clearBtn);
+  document.body.appendChild(picker);
+  // Dismiss on click outside
+  setTimeout(() => {
+    document.addEventListener('click', function dismiss(e) {
+      if (!picker.contains(e.target)) { picker.remove(); document.removeEventListener('click', dismiss); }
+    });
+  }, 0);
 }
 
 function _showNoteMenu(e, note) {
@@ -4066,12 +7251,13 @@ function _showNoteMenu(e, note) {
     { separator: true },
     { label: 'Split right', disabled: true, action: () => {} },
     { label: 'Split down', disabled: true, action: () => {} },
-    { label: 'Open in new window', disabled: true, action: () => {} },
     { label: 'Open in Hover Editor', disabled: true, action: () => {} },
     { label: 'Export to PDF...', disabled: true, action: () => {} },
     { label: 'Merge entire file with...', disabled: true, action: () => {} },
-    { label: 'Open in default app', disabled: true, action: () => {} },
-    { label: 'Show in system explorer', disabled: true, action: () => {} },
+    { label: 'Open in default app', action: () => _openNoteInDefaultApp(note.id) },
+    { label: 'Show in system explorer', action: () => _showNoteInExplorer(note.id) },
+    { separator: true },
+    { label: 'Change icon', action: () => _showIconPicker(note.id, rect.left, rect.bottom + 4, 'note') },
   ]);
 }
 
@@ -4083,7 +7269,6 @@ function _showFileContextMenu(e, noteId) {
   _showContextMenu(e.clientX, e.clientY, [
     { label: 'Open in new tab', action: () => _navigateToNote(noteId, true, true) },
     { label: 'Open to the right', action: () => _navigateToNote(noteId, true, true) },
-    { label: 'Open in new window', disabled: true, action: () => {} },
     { separator: true },
     { label: 'Make a copy', action: () => _duplicateNote(noteId) },
     { label: 'Move file to…', submenu: _buildFolderSubmenu(noteId, note?.folder) },
@@ -4096,43 +7281,173 @@ function _showFileContextMenu(e, noteId) {
     { label: 'Merge entire file with...', disabled: true, action: () => {} },
     { separator: true },
     { label: 'Copy Shard URL', action: () => _copyShardUrl(noteId) },
-    { label: 'Copy formatted Advanced URI', disabled: true, action: () => {} },
+    { label: 'Copy formatted Advanced URI', action: () => {
+      const n = _notes.find(n => n.id === noteId);
+      if (!n) return;
+      const vault = _selectedVaultId || 'main';
+      const uri = `obsidian://open?vault=${encodeURIComponent(vault)}&file=${encodeURIComponent(n.rel_path || n.id)}`;
+      navigator.clipboard?.writeText(uri);
+    }},
     { label: 'Copy path', action: () => {
       const n = _notes.find(n => n.id === noteId);
       if (n) navigator.clipboard?.writeText(n.rel_path || n.id);
     }},
     { separator: true },
-    { label: 'Open in default app', disabled: true, action: () => {} },
-    { label: 'Show in system explorer', disabled: true, action: () => {} },
+    { label: 'Open in default app', action: () => _openNoteInDefaultApp(noteId) },
+    { label: 'Show in system explorer', action: () => _showNoteInExplorer(noteId) },
     { separator: true },
-    { label: 'Change icon', disabled: true, action: () => {} },
-    { label: 'Encrypt note', disabled: true, action: () => {} },
-    { label: `Hide « ${_esc(note?.title || '')} »`, disabled: true, action: () => {} },
+    { label: 'Change icon', action: () => _showIconPicker(noteId, e.clientX, e.clientY, 'note') },
     { separator: true },
     { label: 'Rename...', action: () => _promptRenameNote(noteId) },
     { label: 'Delete', danger: true, action: () => _deleteNote(noteId) },
     { separator: true },
-    { label: 'Manage all fields', disabled: true, action: () => {} },
+    { label: 'Manage all fields', action: () => {
+      const btn = document.querySelector('.shard-prop-add-main');
+      if (btn) btn.click();
+      _navigateToNote(noteId, true);
+    }},
     { label: 'Add field at section...', disabled: true, action: () => {} },
-    { label: 'Add field in frontmatter', disabled: true, action: () => {} },
+    { label: 'Add field in frontmatter', action: () => {
+      const btn = document.querySelector('.shard-prop-add-main');
+      if (btn) btn.click();
+      _navigateToNote(noteId, true);
+    }},
     { label: 'Add missing fields at section...', disabled: true, action: () => {} },
     { label: `Add fileClass to ${_esc(note?.title || '')}`, disabled: true, action: () => {} },
     { label: 'Add command', disabled: true, action: () => {} },
   ]);
 }
 
+async function _deleteFolder(folder) {
+  if (!folder) return;
+  const folderName = folder.split('/').pop() || folder;
+  const confirmed = await styledConfirm(`Delete folder "${_esc(folderName)}" and all its contents?`, { confirmText: 'Delete', cancelText: 'Cancel', danger: true });
+  if (!confirmed) return;
+
+  // Optimistic: remove folder and all notes under it
+  const removedNotes = _notes.filter(n => (n.folder || '') === folder || (n.folder || '').startsWith(folder + '/'));
+  const removedNoteIds = new Set(removedNotes.map(n => n.id));
+  const removedFolders = _folders.filter(f => f === folder || f.startsWith(folder + '/'));
+  const prevSelected = _selectedNoteId;
+
+  _notes = _notes.filter(n => !removedNoteIds.has(n.id));
+  _folders = _folders.filter(f => f !== folder && !f.startsWith(folder + '/'));
+  _openTabs = _openTabs.filter(id => !removedNoteIds.has(id));
+  if (removedNoteIds.has(_selectedNoteId)) {
+    _selectedNoteId = _openTabs.length ? _openTabs[_openTabs.length - 1] : null;
+  }
+  _renderFolderTree();
+  _renderNoteTabs();
+  _renderNoteList();
+  if (_selectedNoteId) {
+    _selectNote(_selectedNoteId);
+  } else {
+    const preview = document.getElementById('shard-preview');
+    if (preview) preview.innerHTML = '<div style="padding:20px;text-align:center;opacity:0.5;">Select a note to view</div>';
+  }
+
+  try {
+    const r = await fetch(`${API_BASE}/api/shard/folders/delete`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+      body: JSON.stringify({ folder_path: folder }),
+    });
+    if (!r.ok) throw new Error();
+  } catch (e) {
+    console.error('[shard] delete folder failed, rolling back', e);
+    // Restore
+    _notes.push(...removedNotes);
+    _notes.sort((a, b) => a.title.toLowerCase().localeCompare(b.title.toLowerCase()));
+    _folders.push(...removedFolders);
+    _folders.sort();
+    _selectedNoteId = prevSelected;
+    _renderFolderTree();
+    _renderNoteTabs();
+    _renderNoteList();
+    if (_selectedNoteId) _selectNote(_selectedNoteId);
+    showToast('Failed to delete folder');
+  }
+}
+
+function _countFolderWords(folder) {
+  const sel = (folder || '').replace(/\\/g, '/');
+  const notesInFolder = sel
+    ? _notes.filter(n => {
+        const f = (n.folder || '').replace(/\\/g, '/');
+        return f === sel || f.startsWith(sel + '/');
+      })
+    : _notes.filter(n => !n.folder);
+  let total = 0;
+  let counted = 0;
+  for (const n of notesInFolder) {
+    const text = n.content || n.body || '';
+    if (text) {
+      const matches = text.match(/\S+/g);
+      total += matches ? matches.length : 0;
+      counted++;
+    }
+  }
+  if (counted === 0 && notesInFolder.length > 0) {
+    showToast('Note content not loaded for word count');
+  } else {
+    showToast(`${total} words across ${counted} note(s) in ${_esc(sel || 'root')}`);
+  }
+}
+
+function _searchInFolder(folder) {
+  const searchInput = document.getElementById('shard-search-input');
+  if (searchInput) {
+    searchInput.value = `path:${folder || ''} `;
+    searchInput.focus();
+    searchInput.dispatchEvent(new Event('input'));
+  }
+}
+
+function _bookmarkFolder(folder) {
+  const notesInFolder = folder
+    ? _notes.filter(n => n.folder === folder || (n.folder || '').startsWith(folder + '/'))
+    : _notes.filter(n => !n.folder);
+  for (const n of notesInFolder) {
+    _bookmarks.add(n.id);
+  }
+  _persistBookmarks();
+  _renderBookmarksPane();
+  _renderFolderTree();
+  showToast(`Bookmarked ${notesInFolder.length} note(s) in ${_esc(folder || 'root')}`);
+}
+
 function _showFolderContextMenu(e, folder) {
   e.preventDefault();
   e.stopPropagation();
+  const folderNotes = folder
+    ? _notes.filter(n => n.folder === folder || (n.folder || '').startsWith(folder + '/'))
+    : _notes.filter(n => !n.folder);
+  const allBookmarked = folderNotes.length > 0 && folderNotes.every(n => _bookmarks.has(n.id));
   _showContextMenu(e.clientX, e.clientY, [
     { label: 'New note', action: () => _createNoteInFolder(folder) },
     { label: 'New folder', action: () => _promptNewFolder(folder) },
+    { label: 'New canvas', disabled: true, action: () => {} },
+    { label: 'New base', disabled: true, action: () => {} },
+    { separator: true },
+    { label: 'Make a copy', disabled: true, action: () => {} },
+    { label: 'Move folder to...', disabled: true, action: () => {} },
+    { label: 'Search in folder', action: () => _searchInFolder(folder) },
+    { label: allBookmarked ? 'Remove bookmark' : 'Bookmark...', action: () => _bookmarkFolder(folder) },
+    { label: 'Count Words', action: () => _countFolderWords(folder) },
+    { separator: true },
+    { label: 'Copy path', action: () => navigator.clipboard?.writeText(folder || '/') },
+    { label: 'Show in system explorer', action: () => _showFolderInExplorer(folder) },
+    { separator: true },
+    { label: 'Change icon', action: () => _showIconPicker(folder, e.clientX, e.clientY, 'folder') },
+    { separator: true },
+    { label: 'Create new note from template', disabled: true, action: () => {} },
+    { separator: true },
+    { label: 'Rename folder', action: () => _promptRenameFolder(folder) },
+    { label: 'Delete', danger: true, action: () => _deleteFolder(folder) },
     { separator: true },
     { label: 'Collapse all', action: () => _collapseAllFolders() },
     { label: 'Expand all', action: () => _expandAllFolders() },
     { separator: true },
-    { label: 'Rename folder', action: () => _promptRenameFolder(folder) },
-    { label: 'Delete folder', disabled: true, action: () => {} },
+    { label: 'Add command', disabled: true, action: () => {} },
   ]);
 }
 
@@ -4149,23 +7464,130 @@ function _showBlankContextMenu(e) {
 }
 
 // Placeholder actions for context menu items needing backend support
+function _syncNoteIdAfterMove(oldId, newId) {
+  if (!oldId || !newId || oldId === newId) return;
+  if (_selectedNoteId === oldId) _selectedNoteId = newId;
+  const tabIdx = _openTabs.indexOf(oldId);
+  if (tabIdx !== -1) _openTabs[tabIdx] = newId;
+  if (_historyStack.includes(oldId)) {
+    _historyStack = _historyStack.map(id => id === oldId ? newId : id);
+  }
+  _noteContentCache.delete(oldId);
+}
+
 async function _doRenameNote(noteId, newName) {
   const note = _notes.find(n => n.id === noteId);
   if (!note || !newName || newName === note.title) return;
+  const oldTitle = note.title;
   let fileName = newName;
   if (!fileName.endsWith('.md')) fileName += '.md';
+  const folder = note.folder || '';
+  const newPath = folder ? `${folder}/${fileName}` : fileName;
+
+  // Save old values for rollback
+  const oldId = note.id;
+  const oldRelPath = note.rel_path;
+
+  // --- Phase 1: Compute link updates in-memory (no saves, no UI changes yet) ---
+  const linkUpdates = [];
+  if (_shardSettings.filesAndLinks.autoUpdateLinks) {
+    const escapeReg = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const oldEsc = escapeReg(oldTitle);
+    const newEsc = newName;
+    const wikiAny = new RegExp('\\[\\[' + oldEsc + '(#[^|\\]]*)?(\\|[^\\]]*)?\\]\\]', 'g');
+    const mdLink = new RegExp('\\[([^\\]]*)\\]\\(' + oldEsc + '(\\.md)?\\)', 'g');
+    for (const otherNote of _notes) {
+      if (otherNote.id === noteId) continue;
+      let content = otherNote.content || '';
+      const originalContent = content;
+      const originalOutbound = otherNote.outbound_links;
+      content = content.replace(wikiAny, (match, heading, pipePart) => `[[${newEsc}${heading || ''}${pipePart || ''}]]`);
+      content = content.replace(mdLink, (match, display, ext) => `[${display}](${newEsc}${ext || ''})`);
+      if (content !== originalContent) {
+        linkUpdates.push({ note: otherNote, originalContent, originalOutbound, newContent: content });
+      }
+    }
+  }
+
+  // --- Phase 1.5: Prompt user if confirmAutoUpdateLinks is enabled ---
+  if (linkUpdates.length && _shardSettings.filesAndLinks.confirmAutoUpdateLinks !== false) {
+    const confirmed = await styledConfirm(
+      `Update ${linkUpdates.length} linking note(s) to use "${newName}"?`,
+      { confirmText: 'Update', cancelText: 'Skip' }
+    );
+    if (!confirmed) {
+      linkUpdates.length = 0; // Clear updates so they won't be applied
+    }
+  }
+
+  // --- Phase 2: Apply ALL optimistic updates at once (title + link content) ---
+  note.id = newPath;
+  note.rel_path = newPath;
+  note.title = newName;
+  for (const update of linkUpdates) {
+    update.note.content = update.newContent;
+    update.note.outbound_links = _extractOutboundLinks(update.newContent);
+  }
+  _syncNoteIdAfterMove(oldId, newPath);
+  _renderFolderTree();
+  _renderNoteList();
+  _updateModeButtons();
+  _updateNavButtons();
+  if (_selectedNoteId === newPath) _selectNote(newPath);
+  // Immediately refresh backlinks pane for the renamed note so it reflects the updated outbound_links
+  if (_selectedNoteId === note.id) {
+    const selectedNote = _notes.find(n => n.id === _selectedNoteId);
+    if (selectedNote) _renderBacklinksPane(selectedNote);
+  }
+
+  // --- Phase 3: Server rename request ---
   try {
     const r = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(noteId)}/rename`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
-      body: JSON.stringify({ folder: fileName }),
+      body: JSON.stringify({ new_path: newPath }),
     });
     if (!r.ok) throw new Error();
-    await _loadNotes();
-    await _loadFolders();
-    _renderFolderTree();
-    if (_selectedNoteId === noteId) _navigateToNote(fileName, true);
+    const data = await r.json().catch(() => ({}));
+    const serverNewId = data.new_path || newPath;
+    if (serverNewId !== newPath) {
+      note.id = serverNewId;
+      note.rel_path = serverNewId;
+      _syncNoteIdAfterMove(newPath, serverNewId);
+    }
+
+    // --- Phase 4: Background saves for updated linking notes ---
+    const saves = linkUpdates.map(u => _saveNoteContent(u.note));
+    if (saves.length) {
+      Promise.all(saves).then(() => {
+        showToast(`Updated ${linkUpdates.length} linking note(s)`);
+      }).catch(err => {
+        console.error('[shard] auto-update background save failed:', err);
+        showToast('Some link updates failed to save');
+      });
+    }
+    console.log('[shard] auto-update links:', { oldTitle, newName, updatedCount: linkUpdates.length });
   } catch (e) {
-    console.error('[shard] rename failed', e);
+    console.error('[shard] rename failed, rolling back', e);
+    // Rollback title change
+    note.id = oldId;
+    note.rel_path = oldRelPath;
+    note.title = oldTitle;
+    _syncNoteIdAfterMove(newPath, oldId);
+    // Rollback content changes in other notes
+    for (const update of linkUpdates) {
+      update.note.content = update.originalContent;
+      update.note.outbound_links = update.originalOutbound;
+    }
+    _renderFolderTree();
+    _renderNoteList();
+    _updateModeButtons();
+    _updateNavButtons();
+    if (_selectedNoteId === oldId) _selectNote(oldId);
+    if (_selectedNoteId === oldId) {
+      const selectedNote = _notes.find(n => n.id === _selectedNoteId);
+      if (selectedNote) _renderBacklinksPane(selectedNote);
+    }
+    showToast('Failed to rename note');
   }
 }
 async function _promptRenameNote(noteId) {
@@ -4176,42 +7598,96 @@ async function _promptRenameNote(noteId) {
   await _doRenameNote(noteId, newName);
 }
 async function _duplicateNote(noteId) {
+  const source = _notes.find(n => n.id === noteId);
+  if (!source) return;
+  const dupName = _findUniqueUntitled(source.title, _notes, '.md');
+  const dupPath = source.folder ? `${source.folder}/${dupName}` : dupName;
+  const optimisticNote = {
+    id: dupPath,
+    rel_path: dupPath,
+    folder: source.folder || '',
+    title: dupName.replace(/\.md$/, ''),
+    content: source.content || '',
+    frontmatter: source.frontmatter || {},
+    tags: source.tags || [],
+    outbound_links: source.outbound_links || [],
+    backlinks: [],
+    last_modified_src: new Date().toISOString(),
+    sync_status: 'synced',
+  };
+  _notes.push(optimisticNote);
+  _notes.sort((a, b) => a.title.toLowerCase().localeCompare(b.title.toLowerCase()));
+  _renderFolderTree();
+  _navigateToNote(dupPath, true, true);
+
   try {
     const r = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(noteId)}/duplicate`, {
       method: 'POST', credentials: 'same-origin',
     });
     if (!r.ok) throw new Error();
     const data = await r.json();
-    await _loadNotes();
-    await _loadFolders();
-    _renderFolderTree();
-    if (data.note_id) _navigateToNote(data.note_id, true, true);
+    if (data.note_id) {
+      _syncNoteIdAfterMove(dupPath, data.note_id);
+      optimisticNote.id = data.note_id;
+      optimisticNote.rel_path = data.note_id;
+      _renderFolderTree();
+      _navigateToNote(data.note_id, true, true);
+    }
   } catch (e) {
     console.error('[shard] duplicate failed', e);
+    const idx = _notes.findIndex(n => n.id === dupPath);
+    if (idx !== -1) _notes.splice(idx, 1);
+    _renderFolderTree();
+    showToast('Failed to duplicate note');
   }
 }
 async function _deleteNote(noteId) {
   const note = _notes.find(n => n.id === noteId);
   if (!note) return;
-  const confirmed = await styledConfirm(`Delete "${_esc(note.title)}"?`, { confirmText: 'Delete', cancelText: 'Cancel', danger: true });
-  if (!confirmed) return;
+  if (_shardSettings.filesAndLinks.confirmDelete) {
+    const confirmed = await styledConfirm(`Delete "${_esc(note.title)}"?`, { confirmText: 'Delete', cancelText: 'Cancel', danger: true });
+    if (!confirmed) return;
+  }
+
+  // Optimistic: remove immediately
+  const noteIdx = _notes.indexOf(note);
+  _notes.splice(noteIdx, 1);
+  const hadTab = _openTabs.includes(noteId);
+  _openTabs = _openTabs.filter(id => id !== noteId);
+  const prevSelected = _selectedNoteId;
+  if (_selectedNoteId === noteId) {
+    _selectedNoteId = _openTabs.length ? _openTabs[_openTabs.length - 1] : null;
+    const preview = document.getElementById('shard-preview');
+    if (preview) {
+      if (_selectedNoteId) {
+        const nextNote = _notes.find(n => n.id === _selectedNoteId);
+        if (nextNote) _selectNote(_selectedNoteId);
+      } else {
+        preview.innerHTML = '<div style="padding:20px;text-align:center;opacity:0.5;">Select a note to view</div>';
+      }
+    }
+    _renderRightSidebar(_selectedNoteId ? _notes.find(n => n.id === _selectedNoteId) : null);
+  }
+  _renderFolderTree();
+  _renderNoteTabs();
+  _renderNoteList();
+
   try {
     const r = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(noteId)}`, {
       method: 'DELETE', credentials: 'same-origin',
     });
     if (!r.ok) throw new Error();
-    await _loadNotes();
-    await _loadFolders();
-    _renderFolderTree();
-    if (_selectedNoteId === noteId) {
-      _selectedNoteId = null;
-      const preview = document.getElementById('shard-preview');
-      if (preview) preview.innerHTML = '<div style="padding:20px;text-align:center;opacity:0.5;">Select a note to view</div>';
-      _renderRightSidebar(null);
-    }
-    _renderNoteTabs();
   } catch (e) {
-    console.error('[shard] delete failed', e);
+    // Rollback
+    console.error('[shard] delete failed, rolling back', e);
+    _notes.splice(noteIdx, 0, note);
+    if (hadTab && !_openTabs.includes(noteId)) _openTabs.push(noteId);
+    _selectedNoteId = prevSelected;
+    _renderFolderTree();
+    _renderNoteTabs();
+    _renderNoteList();
+    if (_selectedNoteId === noteId) _selectNote(noteId);
+    showToast('Failed to delete note');
   }
 }
 function _copyShardUrl(noteId) {
@@ -4224,6 +7700,25 @@ async function _getOrCreateNoteByTitle(title) {
   let note = _notes.find(n => n.title === title);
   if (note) return note;
   const fileName = title.endsWith('.md') ? title : `${title}.md`;
+
+  // Optimistic
+  const optimisticNote = {
+    id: fileName,
+    rel_path: fileName,
+    folder: '',
+    title: title,
+    content: '',
+    frontmatter: {},
+    tags: [],
+    outbound_links: [],
+    backlinks: [],
+    last_modified_src: new Date().toISOString(),
+    sync_status: 'synced',
+  };
+  _notes.push(optimisticNote);
+  _notes.sort((a, b) => a.title.toLowerCase().localeCompare(b.title.toLowerCase()));
+  _renderFolderTree();
+
   try {
     const r = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(fileName)}/edit`, {
       method: 'POST',
@@ -4232,74 +7727,128 @@ async function _getOrCreateNoteByTitle(title) {
       body: JSON.stringify({ content: '' }),
     });
     if (r.ok) {
-      await _loadNotes();
-      await _loadFolders();
-      _renderFolderTree();
-      note = _notes.find(n => n.title === title);
-      return note;
+      const data = await r.json().catch(() => ({}));
+      const newId = data.new_path || (data.result && data.result.path) || fileName;
+      if (newId !== fileName) {
+        _syncNoteIdAfterMove(fileName, newId);
+        optimisticNote.id = newId;
+        optimisticNote.rel_path = newId;
+      }
+      return optimisticNote;
     }
   } catch (e) {
     console.error('[shard] create ghost note failed', e);
   }
+  // Rollback on failure
+  const idx = _notes.findIndex(n => n.id === fileName || n.rel_path === fileName);
+  if (idx !== -1) _notes.splice(idx, 1);
+  _renderFolderTree();
   return null;
+}
+
+async function _refreshFileExplorer() {
+  if (!_selectedVaultId) return;
+  await _loadNotes().catch(() => {});
+  await _loadFolders().catch(() => {});
+  _renderFolderTree();
+  _renderNoteList();
+  if (_selectedNoteId) {
+    _renderRightSidebar(_notes.find(n => n.id === _selectedNoteId) || null);
+  }
 }
 
 async function _createNoteInFolder(folder) {
   const fileName = _findUniqueUntitled('Untitled', _notes, '.md');
+  const title = fileName.replace(/\.md$/, '');
+  const optimisticNote = {
+    id: fileName,
+    rel_path: fileName,
+    folder: folder || '',
+    title: title,
+    content: '',
+    frontmatter: {},
+    tags: [],
+    outbound_links: [],
+    backlinks: [],
+    last_modified_src: new Date().toISOString(),
+    sync_status: 'synced',
+    _optimistic: true,
+  };
+  _notes.push(optimisticNote);
+  _notes.sort((a, b) => a.title.toLowerCase().localeCompare(b.title.toLowerCase()));
+  _renderFolderTree();
+  _navigateToNote(fileName, true, true);
+
   try {
     const r = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(fileName)}/edit`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
       body: JSON.stringify({ content: '' }),
     });
     if (!r.ok) throw new Error();
-    await _loadNotes();
-    await _loadFolders();
-    const note = _notes.find(n => n.id === fileName || n.rel_path === fileName);
-    if (note && folder) {
-      note.folder = folder;
-      _renderFolderTree();
+
+    if (folder) {
       try {
-        await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(note.id)}/move`, {
+        const moveR = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(fileName)}/move`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
           body: JSON.stringify({ folder }),
         });
+        if (moveR.ok) {
+          const data = await moveR.json().catch(() => ({}));
+          if (data.new_path) {
+            _syncNoteIdAfterMove(fileName, data.new_path);
+            optimisticNote.id = data.new_path;
+            optimisticNote.rel_path = data.new_path;
+            optimisticNote.folder = folder;
+          }
+        }
       } catch {}
     }
-    if (note) {
-      _autoRenameNoteId = note.id;
-      _navigateToNote(note.id, true, true);
-    } else {
-      _renderFolderTree();
-    }
+    delete optimisticNote._optimistic;
+    _autoRenameNoteId = optimisticNote.id;
   } catch (e) {
     console.error('[shard] create note failed', e);
+    const idx = _notes.findIndex(n => n.id === fileName || n.rel_path === fileName);
+    if (idx !== -1) _notes.splice(idx, 1);
+    _renderFolderTree();
+    showToast('Failed to create note');
   }
 }
 async function _promptNewFolder(parent) {
   const allFolders = new Set();
   _notes.forEach(n => { if (n.folder) allFolders.add(n.folder); });
+  _folders.forEach(f => allFolders.add(f));
   const base = _findUniqueUntitled('Untitled Folder', Array.from(allFolders).map(f => ({ id: f, rel_path: f })));
   const path = parent ? `${parent}/${base}` : base;
+
+  // Optimistic
+  _folders.push(path);
+  _folders.sort();
+  const _optimisticFolderPath = path;
+  _expandedFolders.add(path);
+  _renderFolderTree();
+  setTimeout(() => _startInlineFolderRename(path), 50);
+
   try {
     const r = await fetch(`${API_BASE}/api/shard/folders`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
       body: JSON.stringify({ path }),
     });
     if (!r.ok) throw new Error();
-    await _loadFolders();
-    _expandedFolders.add(path);
-    _renderFolderTree();
-    // Trigger inline rename
-    setTimeout(() => _startInlineFolderRename(path), 50);
+    const idx2 = _folders.indexOf(_optimisticFolderPath);
+    if (idx2 !== -1) delete _folders[idx2]._optimistic;
   } catch (e) {
     console.error('[shard] create folder failed', e);
+    const idx = _folders.indexOf(path);
+    if (idx !== -1) _folders.splice(idx, 1);
+    _renderFolderTree();
+    showToast('Failed to create folder');
   }
 }
 function _startInlineFolderRename(folderPath) {
   // Find the folder row in the tree and make its label editable
   const tree = document.getElementById('shard-folder-tree');
   if (!tree) return;
-  const row = tree.querySelector(`.shard-tree-row[data-folder="${CSS.escape(folderPath)}"] .shard-tree-label`);
+  const row = tree.querySelector(`.shard-tree-row[data-folder="${CSS.escape(folderPath)}"] .shard-tree-name`);
   if (!row) return;
   const original = row.textContent;
   row.contentEditable = 'true';
@@ -4360,12 +7909,14 @@ function _collectAllFolders() {
   });
 }
 async function _promptRenameFolder(folder) {
-  const newName = await styledPrompt('Rename folder:', { defaultValue: folder, confirmText: 'Rename' });
-  if (!newName || newName === folder) return;
+  const newName = await styledPrompt('Rename folder:', { defaultValue: folder.split('/').pop(), confirmText: 'Rename' });
+  if (!newName || newName === folder.split('/').pop()) return;
   try {
-    const r = await fetch(`${API_BASE}/api/shard/folders/${encodeURIComponent(folder)}/rename`, {
+    const parent = folder.includes('/') ? folder.split('/').slice(0, -1).join('/') : '';
+    const newPath = parent ? `${parent}/${newName}` : newName;
+    const r = await fetch(`${API_BASE}/api/shard/folders/rename`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
-      body: JSON.stringify({ name: newName }),
+      body: JSON.stringify({ old_path: folder, new_path: newPath }),
     });
     if (!r.ok) throw new Error();
     await _loadNotes();
@@ -4431,6 +7982,102 @@ function _openVaultDialog(vaultId) {
   }
 }
 
+// ── Sidebar tab drag-and-drop ───────────────────────────────
+
+function _wireSidebarTabDnD(containerId, settingsKey) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  let draggedTab = null;
+  let lastHoverTarget = null;
+  const isRight = containerId === 'shard-right-tabs';
+  const tabSelector = isRight ? '.shard-right-tab' : '.shard-sidebar-tab';
+
+  function _clearDropIndicators() {
+    container.querySelectorAll(tabSelector).forEach(t => {
+      t.style.borderLeft = '';
+      t.style.borderRight = '';
+    });
+    lastHoverTarget = null;
+  }
+
+  container.addEventListener('dragstart', (e) => {
+    draggedTab = e.target.closest(tabSelector);
+    if (!draggedTab) return;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', draggedTab.dataset.tab);
+    draggedTab.classList.add('dragging');
+  });
+
+  container.addEventListener('dragend', (e) => {
+    if (draggedTab) draggedTab.classList.remove('dragging');
+    draggedTab = null;
+    _clearDropIndicators();
+  });
+
+  container.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (!draggedTab) return;
+    const target = e.target.closest(tabSelector);
+    if (!target || target === draggedTab) {
+      if (lastHoverTarget) _clearDropIndicators();
+      return;
+    }
+    if (target === lastHoverTarget) return;
+    _clearDropIndicators();
+    lastHoverTarget = target;
+    const rect = target.getBoundingClientRect();
+    const midX = rect.left + rect.width / 2;
+    if (e.clientX < midX) target.style.borderLeft = '2px solid var(--accent, var(--red, #4a9eff))';
+    else target.style.borderRight = '2px solid var(--accent, var(--red, #4a9eff))';
+  });
+
+  container.addEventListener('dragleave', (e) => {
+    if (!container.contains(e.relatedTarget)) {
+      _clearDropIndicators();
+    }
+  });
+
+  container.addEventListener('drop', (e) => {
+    e.preventDefault();
+    _clearDropIndicators();
+    if (!draggedTab) return;
+    draggedTab.classList.remove('dragging');
+
+    const target = e.target.closest(tabSelector);
+    if (target && target !== draggedTab) {
+      const rect = target.getBoundingClientRect();
+      const midX = rect.left + rect.width / 2;
+      if (e.clientX < midX) {
+        container.insertBefore(draggedTab, target);
+      } else {
+        container.insertBefore(draggedTab, target.nextElementSibling);
+      }
+    } else if (!target) {
+      // Dropped on container empty space — append to end
+      container.appendChild(draggedTab);
+    }
+
+    const newOrder = Array.from(container.children).map(t => t.dataset.tab);
+    if (!_shardSettings.appearance) _shardSettings.appearance = {};
+    _shardSettings.appearance[settingsKey] = newOrder;
+    _saveShardSettings();
+  });
+}
+
+function _applySidebarOrder(containerId, settingsKey) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  const order = _shardSettings?.appearance?.[settingsKey];
+  if (!order || !order.length) return;
+  const tabs = Array.from(container.children);
+  const tabMap = new Map(tabs.map(t => [t.dataset.tab, t]));
+  for (const tabId of order) {
+    const tab = tabMap.get(tabId);
+    if (tab) container.appendChild(tab);
+  }
+}
+
 // ── Init wiring ──────────────────────────────────────────────
 
 function _init() {
@@ -4447,6 +8094,12 @@ function _init() {
     if (!tab) return;
     _switchRightTab(tab.dataset.tab);
   });
+
+  // Sidebar tab drag-and-drop
+  _wireSidebarTabDnD('shard-left-tabs', 'leftSidebarOrder');
+  _wireSidebarTabDnD('shard-right-tabs', 'rightSidebarOrder');
+  _applySidebarOrder('shard-left-tabs', 'leftSidebarOrder');
+  _applySidebarOrder('shard-right-tabs', 'rightSidebarOrder');
 
   // Search input + clear + case + sort + settings
   const searchInput = document.getElementById('shard-search-input');
@@ -4558,8 +8211,16 @@ function _init() {
 
   // Settings dialog wiring
   _wireShardSettings();
+  _wireSnippetSettings();
+  _injectCssSnippets();
   _loadShardSettings();
+  const dv = _shardSettings.editor.defaultView;
+  _previewMode = dv === 'live' ? 'live' : dv === 'source' ? 'edit' : 'preview';
+  _editModePref = dv === 'source' ? 'edit' : 'live';
+  _sourceModeEnabled = dv === 'source';
   _applyMonospaceFont();
+  _applyReadableLineLength();
+  _renderRibbon();
 
   // ── Plugin System (Phase 4.1 / 4.2) ────────────────────────
   _shardApp = createAppApi({
@@ -4577,15 +8238,21 @@ function _init() {
   const _manifest = (id) => CORE_PLUGINS.find(m => m.id === id);
   _pluginManager.register(_manifest('graph'),          GraphPlugin);
   _pluginManager.register(_manifest('backlinks'),      BacklinksPlugin);
+  _pluginManager.register(_manifest('canvas'),         CanvasPlugin);
+  _pluginManager.register(_manifest('command-palette'), CommandPalettePlugin);
+  _pluginManager.register(_manifest('daily-notes'),    DailyNotesPlugin);
+  _pluginManager.register(_manifest('file-recovery'),  FileRecoveryPlugin);
+  _pluginManager.register(_manifest('note-composer'),  NoteComposerPlugin);
   _pluginManager.register(_manifest('outgoing-links'),  OutgoingLinksPlugin);
+  _pluginManager.register(_manifest('quick-switcher'), QuickSwitcherPlugin);
+  _pluginManager.register(_manifest('templates'),      TemplatesPlugin);
+  _pluginManager.register(_manifest('unique-note-creator'), UniqueNoteCreatorPlugin);
   _pluginManager.register(_manifest('unlinked'),       UnlinkedMentionsPlugin);
   _pluginManager.register(_manifest('outline'),        OutlinePlugin);
   _pluginManager.register(_manifest('orphans'),          OrphansPlugin);
   _pluginManager.register(_manifest('bookmarks'),        BookmarksPlugin);
   _pluginManager.register(_manifest('tags'),           TagsPlugin);
   _pluginManager.register(_manifest('search'),          SearchPlugin);
-  _pluginManager.register(_manifest('daily-notes'),    DailyNotesPlugin);
-  _pluginManager.register(_manifest('templates'),      TemplatesPlugin);
   _pluginManager.register(_manifest('page-preview'),   PagePreviewPlugin);
   _pluginManager.register(_manifest('word-count'),     WordCountPlugin);
   _pluginManager.register(_manifest('random-note'),    RandomNotePlugin);
@@ -4596,40 +8263,106 @@ function _init() {
     if (!settings.enabledPlugins) {
       settings.enabledPlugins = CORE_PLUGINS.map(m => m.id);
     }
-    _pluginManager.loadFromSettings(settings);
-  } catch {}
+    _pluginManager.loadFromSettings(settings).then(() => {
+      _syncPluginTabs();
+    }).catch(() => {
+      _syncPluginTabs();
+    });
+  } catch {
+    _syncPluginTabs();
+  }
 
-  // Sync tab visibility with plugin state
-  _syncPluginTabs();
+  // ── Eager cache restore so openPanel() never blocks on "Loading vaults..." ──
+  _restoreVaultsAndWarmCache();
 }
 
-/** Show/hide tab buttons whose feature is a toggleable plugin */
+function _restoreVaultsAndWarmCache() {
+  try {
+    const cached = localStorage.getItem('shard-vaults');
+    if (cached) {
+      const { vaults } = JSON.parse(cached);
+      if (vaults && vaults.length) {
+        _vaults = vaults;
+        _populateVaultDropdown();
+        let lastVault = null;
+        try { lastVault = localStorage.getItem('shard-last-vault'); } catch {}
+        const target = _vaults.find(v => v.id === lastVault) ? lastVault : _vaults[0].id;
+        if (target) {
+          // Fire off vault selection in background so notes/folders are
+          // restored from cache too — by the time the user opens the panel
+          // everything is already in memory.
+          _selectVault(target);
+        }
+      }
+    }
+  } catch {}
+}
+
+/** Remove / restore tab buttons whose feature is a toggleable plugin */
 function _syncPluginTabs() {
   if (!_pluginManager) return;
-  // Right sidebar tabs
-  document.querySelectorAll('#shard-right-tabs .shard-right-tab').forEach(btn => {
-    const tab = btn.dataset.tab;
-    const map = {
-      backlinks: 'backlinks',
-      outgoing: 'outgoing-links',
-      unlinked: 'unlinked',
-      outline: 'outline',
-      orphans: 'orphans',
-    };
-    const pid = map[tab];
-    if (pid) btn.classList.toggle('hidden', !_pluginManager.isEnabled(pid));
+
+  const _sync = (containerSelector, map) => {
+    const container = document.querySelector(containerSelector);
+    if (!container) return;
+    container.querySelectorAll(':scope > [data-tab]').forEach(btn => {
+      const tab = btn.dataset.tab;
+      const pid = map[tab];
+      if (!pid) return;
+      const enabled = _pluginManager.isEnabled(pid);
+      if (!enabled && btn.parentNode) {
+        _removedTabs.set(tab, btn);
+        btn.remove();
+      }
+    });
+    // Restore any tabs that are now enabled
+    for (const [tab, pid] of Object.entries(map)) {
+      if (!_pluginManager.isEnabled(pid)) continue;
+      const detached = _removedTabs.get(tab);
+      if (!detached) continue;
+      // Find insertion point: keep original order by looking at remaining tabs
+      const tabsInDom = Array.from(container.querySelectorAll(':scope > [data-tab]'));
+      const allTabNames = ['files', 'bookmarks', 'tags', 'graph', 'search'];
+      const rightTabNames = ['backlinks', 'outgoing', 'unlinked', 'outline', 'orphans', 'local-graph'];
+      const order = containerSelector.includes('right') ? rightTabNames : allTabNames;
+      const idx = order.indexOf(tab);
+      let inserted = false;
+      for (let i = idx + 1; i < order.length; i++) {
+        const after = tabsInDom.find(b => b.dataset.tab === order[i]);
+        if (after) {
+          container.insertBefore(detached, after);
+          inserted = true;
+          break;
+        }
+      }
+      if (!inserted) container.appendChild(detached);
+      _removedTabs.delete(tab);
+    }
+  };
+
+  _sync('#shard-right-tabs', {
+    backlinks: 'backlinks',
+    outgoing: 'outgoing-links',
+    unlinked: 'unlinked',
+    outline: 'outline',
+    orphans: 'orphans',
   });
-  // Left sidebar plugin tabs
-  document.querySelectorAll('#shard-left-tabs .shard-sidebar-tab').forEach(btn => {
-    const tab = btn.dataset.tab;
-    const map = {
-      bookmarks: 'bookmarks',
-      tags: 'tags',
-      search: 'search',
-    };
-    const pid = map[tab];
-    if (pid) btn.classList.toggle('hidden', !_pluginManager.isEnabled(pid));
+
+  _sync('#shard-left-tabs', {
+    bookmarks: 'bookmarks',
+    tags: 'tags',
+    search: 'search',
+    graph: 'graph',
   });
+
+  // If active tab was removed, switch to a safe fallback
+  if (!document.querySelector(`#shard-left-tabs [data-tab="${_activeLeftTab}"]`)) {
+    _switchLeftTab('files');
+  }
+  if (!document.querySelector(`#shard-right-tabs [data-tab="${_activeRightTab}"]`)) {
+    const firstRight = document.querySelector('#shard-right-tabs [data-tab]');
+    if (firstRight) _switchRightTab(firstRight.dataset.tab);
+  }
 }
 
 // ── Command Palette / Quick Switcher (Phase 2.5) ───────────
@@ -4696,7 +8429,7 @@ function _showQuickSwitcher() {
       return;
     }
     results.innerHTML = items.slice(0, 20).map((n, i) => `
-      <div class="shard-qs-item" data-note-id="${_esc(n.id)}" data-index="${i}" style="padding:7px 14px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;border-radius:4px;margin:0 4px;">
+      <div class="shard-qs-item" data-note-id="${_esc(n.id)}" data-index="${i}" style="padding:7px 14px;font-size:13px;cursor:pointer;pointer-events:auto;display:flex;align-items:center;gap:8px;border-radius:4px;margin:0 4px;">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
         <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(n.title || n.id)}</span>
         <span style="opacity:0.4;font-size:11px;">${_esc(n.folder || '')}</span>
@@ -4707,7 +8440,10 @@ function _showQuickSwitcher() {
   };
 
   const _updateQsSelection = (container) => {
-    container.querySelectorAll('.shard-qs-item').forEach((el, i) => {
+    const allItems = container.querySelectorAll('.shard-qs-item');
+    if (_quickSwitcherIndex < 0) _quickSwitcherIndex = 0;
+    if (_quickSwitcherIndex >= allItems.length) _quickSwitcherIndex = allItems.length - 1;
+    allItems.forEach((el, i) => {
       el.style.background = i === _quickSwitcherIndex ? 'color-mix(in srgb, var(--accent, var(--red)) 15%, transparent)' : 'transparent';
     });
     const selected = container.querySelector(`.shard-qs-item[data-index="${_quickSwitcherIndex}"]`);
@@ -4776,52 +8512,15 @@ function _showQuickSwitcher() {
 }
 
 function _shardKeyHandler(e) {
-  // Only handle when shard panel is open and no input is focused (unless it's inside shard)
   const modal = document.getElementById('shard-modal');
   if (!modal || modal.classList.contains('hidden')) return;
-  // Don't steal from inputs outside shard
-  const active = document.activeElement;
-  const inShard = active && modal.contains(active);
-  const isInput = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable);
-
-  // Ctrl+O — Quick Switcher
-  if ((e.ctrlKey || e.metaKey) && e.key === 'o') {
+  if (e.key === 'Escape' && _commandPaletteEl) return;
+  if (e.key === 'Escape' && _quickSwitcherEl) return;
+  const hotkeys = _shardSettings.hotkeys || {};
+  for (const [cmdId, combo] of Object.entries(hotkeys)) {
+    if (!combo || !_matchesShardCombo(e, combo)) continue;
     e.preventDefault();
-    _showQuickSwitcher();
-    return;
-  }
-
-  // Ctrl+Alt+E — Cycle view modes
-  if ((e.ctrlKey || e.metaKey) && e.altKey && e.key === 'e') {
-    e.preventDefault();
-    if (_previewMode === 'preview') _previewMode = _editModePref;
-    else _previewMode = 'preview';
-    _updateModeButtons();
-    if (_selectedNoteId) _selectNote(_selectedNoteId);
-    return;
-  }
-
-  // Ctrl+Alt+N — New note
-  if ((e.ctrlKey || e.metaKey) && e.altKey && e.key === 'n') {
-    e.preventDefault();
-    _promptNewNote();
-    return;
-  }
-
-  // Ctrl+Shift+P — Command palette
-  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'p') {
-    e.preventDefault();
-    _showCommandPalette();
-    return;
-  }
-
-  // Escape closes command palette if open
-  if (e.key === 'Escape' && _commandPaletteEl) {
-    return; // Let the palette's own handler deal with it
-  }
-
-  // Escape closes quick switcher if open (handled inside the switcher's own listener)
-  if (e.key === 'Escape' && _quickSwitcherEl) {
+    _runCommandById(cmdId);
     return;
   }
 }
@@ -4846,19 +8545,13 @@ function _showCommandPalette() {
   const input = overlay.querySelector('.shard-cp-input');
   const results = overlay.querySelector('.shard-cp-results');
 
-  const BASE_COMMANDS = [
-    { id: 'new-note', label: 'Shard: New note', action: () => _promptNewNote() },
-    { id: 'toggle-reading', label: 'Shard: Toggle reading view', action: () => { _previewMode = 'preview'; _updateModeButtons(); if (_selectedNoteId) _selectNote(_selectedNoteId); } },
-    { id: 'toggle-live', label: 'Shard: Toggle live preview', action: () => { _editModePref = 'live'; _previewMode = 'live'; _updateModeButtons(); if (_selectedNoteId) _selectNote(_selectedNoteId); } },
-    { id: 'toggle-source', label: 'Shard: Toggle source view', action: () => { _editModePref = 'edit'; _previewMode = 'edit'; _updateModeButtons(); if (_selectedNoteId) _selectNote(_selectedNoteId); } },
-    { id: 'quick-switcher', label: 'Shard: Open quick switcher', action: () => { _hideCommandPalette(); setTimeout(_showQuickSwitcher, 50); } },
-    { id: 'fold-all', label: 'Shard: Fold all headings', action: () => { /* TODO */ } },
-    { id: 'unfold-all', label: 'Shard: Unfold all headings', action: () => { /* TODO */ } },
-    { id: 'graph-view', label: 'Shard: Toggle graph view', action: () => { /* TODO */ } },
-    { id: 'daily-note', label: 'Shard: Open daily note', action: () => { /* TODO */ } },
-  ];
+  const BASE_COMMANDS = SHARD_COMMANDS.filter(c => c.impl !== false).map(c => ({
+    id: c.id,
+    label: c.label,
+    action: () => _runCommandById(c.id),
+  }));
   // Add plugin commands
-  const pluginCmds = _pluginManager ? _pluginManager.getEnabled().flatMap(p =>
+  const pluginCmds = _pluginManager ? Array.from(_pluginManager._instances.values()).flatMap(p =>
     (p._commands || []).map(c => ({ id: c.id, label: c.name || c.id, action: c.callback }))
   ) : [];
   const COMMANDS = [...BASE_COMMANDS, ...pluginCmds];

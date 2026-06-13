@@ -1,16 +1,169 @@
-"""Direct filesystem access for Shard vaults — no watcher, no DB cache."""
+"""Direct filesystem access for Shard vaults — with in-memory index cache."""
 
 from __future__ import annotations
 
 import json
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 _FM_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 _TAG_RE = re.compile(r"#([a-zA-Z0-9_\-/]+)")
 _WIKI_LINK_RE = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
+
+# ── In-memory vault index cache ────────────────────────────
+# Maps vault_path -> {"notes": [...], "folders": [...], "ts": float}
+# Eliminates rglob on every list_notes / list_folders call.
+_VAULT_INDEX: Dict[str, Dict[str, Any]] = {}
+
+CACHE_TTL_SECONDS = 3600  # Rebuild cache if older than 1 hour (watcher invalidates on change)
+
+
+def _build_index(vault_path: str) -> Dict[str, Any]:
+    """Incremental filesystem scan — only re-reads changed .md files."""
+    root = Path(vault_path)
+    if not root.exists() or not root.is_dir():
+        _VAULT_INDEX[vault_path] = {"notes": [], "folders": [], "mtimes": {}, "ts": time.time()}
+        return _VAULT_INDEX[vault_path]
+
+    old_cache = _VAULT_INDEX.get(vault_path, {})
+    old_notes = {n["rel_path"]: n for n in old_cache.get("notes", [])}
+    old_mtimes = old_cache.get("mtimes", {})
+
+    notes = []
+    folders = set()
+    mtimes = {}
+    seen_rels = set()
+
+    # Collect notes from .md files — only re-read if mtime changed
+    for file_path in root.rglob("*.md"):
+        rel = str(file_path.relative_to(root)).replace("\\", "/")
+        parts = Path(rel).parts
+        if any(p.startswith(".") for p in parts):
+            continue
+        seen_rels.add(rel)
+        try:
+            mtime = file_path.stat().st_mtime
+        except (OSError, IOError):
+            continue
+        mtimes[rel] = mtime
+        if rel in old_notes and old_mtimes.get(rel) == mtime:
+            notes.append(old_notes[rel])
+        else:
+            note = _read_note_file(root, rel)
+            if note:
+                notes.append(note)
+
+    # Collect ALL directories (including empty ones) under the vault root
+    _EXCLUDED_DIRS = {".obsidian", ".trash", "Tags"}
+    for dir_path in root.rglob("*"):
+        if not dir_path.is_dir():
+            continue
+        rel = str(dir_path.relative_to(root)).replace("\\", "/")
+        parts = Path(rel).parts
+        if any(p.startswith(".") or p in _EXCLUDED_DIRS for p in parts):
+            continue
+        folders.add(rel)
+
+    notes.sort(key=lambda n: n["title"].lower())
+    folders = sorted(folders)
+    _VAULT_INDEX[vault_path] = {"notes": notes, "folders": folders, "mtimes": mtimes, "ts": time.time()}
+    return _VAULT_INDEX[vault_path]
+
+
+def _get_index(vault_path: str) -> Dict[str, Any]:
+    """Return cached index, rebuilding if missing or stale."""
+    cached = _VAULT_INDEX.get(vault_path)
+    if cached is None or (time.time() - cached["ts"]) > CACHE_TTL_SECONDS:
+        return _build_index(vault_path)
+    return cached
+
+
+def invalidate_cache(vault_path: str) -> None:
+    """Clear the in-memory index for a vault (call after any write)."""
+    _VAULT_INDEX.pop(vault_path, None)
+
+
+def vault_modified_ts(vault_path: str) -> float:
+    """Return the latest mtime among all .md files and directories (cheap check)."""
+    root = Path(vault_path)
+    if not root.exists() or not root.is_dir():
+        return 0.0
+    max_ts = 0.0
+    for p in root.rglob("*"):
+        try:
+            mtime = p.stat().st_mtime
+            if mtime > max_ts:
+                max_ts = mtime
+        except (OSError, IOError):
+            continue
+    return max_ts
+
+
+def update_note_in_cache(vault_path: str, note_id: str, content: str) -> None:
+    """Surgically update a single note's content in the cache."""
+    cached = _VAULT_INDEX.get(vault_path)
+    if not cached:
+        return
+    for note in cached["notes"]:
+        if note["id"] == note_id or note["rel_path"] == note_id:
+            note["content"] = content
+            note["last_modified_src"] = time.time()
+            break
+
+
+def remove_note_from_cache(vault_path: str, note_id: str) -> None:
+    """Remove a note from the cached index."""
+    cached = _VAULT_INDEX.get(vault_path)
+    if not cached:
+        return
+    cached["notes"] = [n for n in cached["notes"] if n["id"] != note_id and n["rel_path"] != note_id]
+    # Rebuild folder list from remaining notes
+    folders = set()
+    for n in cached["notes"]:
+        parent = str(Path(n["rel_path"]).parent)
+        if parent and parent != ".":
+            folders.add(parent)
+    cached["folders"] = sorted(folders)
+
+
+def add_note_to_cache(vault_path: str, note: Dict[str, Any]) -> None:
+    """Insert a newly created note into the cache."""
+    cached = _VAULT_INDEX.get(vault_path)
+    if not cached:
+        return
+    cached["notes"].append(note)
+    cached["notes"].sort(key=lambda n: n["title"].lower())
+    parent = str(Path(note["rel_path"]).parent)
+    if parent and parent != "." and parent not in cached["folders"]:
+        cached["folders"].append(parent)
+        cached["folders"].sort()
+
+
+def rename_note_in_cache(vault_path: str, old_id: str, new_id: str, new_content: Optional[str] = None) -> None:
+    """Update a note's id/path in the cache after a rename or move."""
+    cached = _VAULT_INDEX.get(vault_path)
+    if not cached:
+        return
+    for note in cached["notes"]:
+        if note["id"] == old_id or note["rel_path"] == old_id:
+            note["id"] = new_id
+            note["rel_path"] = new_id
+            folder = str(Path(new_id).parent).replace("\\", "/")
+            note["folder"] = folder if folder != "." else ""
+            note["title"] = Path(new_id).stem
+            if new_content is not None:
+                note["content"] = new_content
+            break
+    # Rebuild folders
+    folders = set()
+    for n in cached["notes"]:
+        parent = str(Path(n["rel_path"]).parent)
+        if parent and parent != ".":
+            folders.add(parent)
+    cached["folders"] = sorted(folders)
 
 
 def _parse_frontmatter(raw: str) -> Tuple[str, str]:
@@ -65,7 +218,7 @@ def _read_note_file(vault_path: Path, rel_path: str) -> Optional[Dict[str, Any]]
     tags = list(dict.fromkeys(tags + inline_tags))  # preserve order, dedupe
 
     title = _extract_title(frontmatter_raw, file_path)
-    folder = str(Path(rel_path).parent) if Path(rel_path).parent != Path(".") else ""
+    folder = str(Path(rel_path).parent).replace("\\", "/") if Path(rel_path).parent != Path(".") else ""
     mtime = file_path.stat().st_mtime
 
     # Extract outbound links from body
@@ -96,22 +249,12 @@ def _read_note_file(vault_path: Path, rel_path: str) -> Optional[Dict[str, Any]]
 
 
 def list_notes(vault_path: str, folder: Optional[str] = None, q: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Walk the vault and return all .md files as note dicts."""
+    """Return all .md files as note dicts — reads from in-memory cache."""
     root = Path(vault_path)
     if not root.exists() or not root.is_dir():
         return []
 
-    notes = []
-    for file_path in root.rglob("*.md"):
-        # Skip hidden / dot-folders
-        rel = str(file_path.relative_to(root)).replace("\\", "/")
-        parts = Path(rel).parts
-        if any(p.startswith(".") for p in parts):
-            continue
-
-        note = _read_note_file(root, rel)
-        if note:
-            notes.append(note)
+    notes = _get_index(vault_path)["notes"].copy()
 
     # Filter by folder
     if folder is not None:
@@ -123,27 +266,16 @@ def list_notes(vault_path: str, folder: Optional[str] = None, q: Optional[str] =
         q_lower = q.lower()
         notes = [n for n in notes if q_lower in (n["title"] + " " + n["content"]).lower()]
 
-    notes.sort(key=lambda n: n["title"].lower())
     return notes
 
 
 def list_folders(vault_path: str) -> List[str]:
-    """Return all folder paths inside the vault."""
+    """Return all folder paths inside the vault — reads from in-memory cache."""
     root = Path(vault_path)
     if not root.exists() or not root.is_dir():
         return []
 
-    folders = set()
-    for file_path in root.rglob("*.md"):
-        rel = str(file_path.relative_to(root)).replace("\\", "/")
-        parts = Path(rel).parts
-        if any(p.startswith(".") for p in parts):
-            continue
-        parent = str(Path(rel).parent)
-        if parent and parent != ".":
-            folders.add(parent)
-
-    return sorted(folders)
+    return _get_index(vault_path)["folders"].copy()
 
 
 def list_tags(vault_path: str) -> List[Dict[str, Any]]:

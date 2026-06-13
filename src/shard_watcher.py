@@ -10,6 +10,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
+from src.shard_fs import invalidate_cache
+
 logger = logging.getLogger(__name__)
 
 # Lightweight frontmatter parse (no heavy deps) --------------------------------
@@ -132,6 +134,29 @@ def _find_file_case_insensitive(path: Path) -> Optional[str]:
     return None
 
 
+# Debounce ----------------------------------------------------------------------
+
+_DEBOUNCE_SECONDS = 0.5
+_debounce_timers: Dict[str, Any] = {}
+
+
+def _debounced_invalidate(vault_path: str) -> None:
+    """Invalidate cache after a short delay, resetting on repeated calls."""
+    key = vault_path
+    existing = _debounce_timers.get(key)
+    if existing:
+        existing.cancel()
+
+    def _do():
+        _debounce_timers.pop(key, None)
+        invalidate_cache(vault_path)
+
+    import threading
+    t = threading.Timer(_DEBOUNCE_SECONDS, _do)
+    _debounce_timers[key] = t
+    t.start()
+
+
 # Watcher -----------------------------------------------------------------------
 
 class ShardVaultWatcher:
@@ -236,18 +261,26 @@ class _ShardEventHandler:
         self.vault_path = vault_path
 
     def on_created(self, event):
+        logger.debug(f"[watcher] created: {event.src_path} is_dir={event.is_directory}")
+        _debounced_invalidate(str(self.vault_path))
         if not event.is_directory and event.src_path.endswith(".md"):
             _sync_file(self.owner, self.vault_path, Path(event.src_path))
 
     def on_modified(self, event):
+        logger.debug(f"[watcher] modified: {event.src_path} is_dir={event.is_directory}")
+        _debounced_invalidate(str(self.vault_path))
         if not event.is_directory and event.src_path.endswith(".md"):
             _sync_file(self.owner, self.vault_path, Path(event.src_path))
 
     def on_deleted(self, event):
+        logger.debug(f"[watcher] deleted: {event.src_path} is_dir={event.is_directory}")
+        _debounced_invalidate(str(self.vault_path))
         if not event.is_directory and event.src_path.endswith(".md"):
             _mark_deleted(self.owner, self.vault_path, Path(event.src_path))
 
     def on_moved(self, event):
+        logger.debug(f"[watcher] moved: {event.src_path} -> {event.dest_path} is_dir={event.is_directory}")
+        _debounced_invalidate(str(self.vault_path))
         if not event.is_directory:
             if event.src_path.endswith(".md"):
                 _mark_deleted(self.owner, self.vault_path, Path(event.src_path))

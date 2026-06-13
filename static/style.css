@@ -1804,15 +1804,29 @@ body.bg-pattern-sparkles {
       color-scheme: dark;
       background-color: var(--select-bg);
       color: var(--select-fg);
+      accent-color: var(--accent, var(--red));
     }
     select option,
     select optgroup {
-      background-color: var(--select-option-bg);
-      color: var(--select-option-fg);
+      background: var(--select-option-bg) !important;
+      color: var(--select-option-fg) !important;
     }
     select option:checked {
-      background-color: var(--select-option-active-bg);
-      color: var(--select-option-fg);
+      background: var(--select-option-active-bg) !important;
+      color: var(--select-option-fg) !important;
+    }
+    select option:hover,
+    select option:focus {
+      background: var(--select-option-active-bg) !important;
+      color: var(--select-option-fg) !important;
+    }
+    select:focus-visible {
+      outline: 2px solid var(--accent, var(--red));
+      outline-offset: -1px;
+    }
+    select:active,
+    select:focus {
+      border-color: var(--accent, var(--red));
     }
     :root.light select { color-scheme: light; }
     .chat-container {
@@ -36849,309 +36863,2433 @@ body.theme-frosted .modal {
   .doc-email-richbody.doc-font-m { font-size: 16px !important; }
 }
 
-/* Hide ALL syntax markers by default in an active source line */
-.lp-source .md-syntax,
-.lp-source .md-bracket,
-.lp-source .md-hash,
-.lp-source .md-bq-mark,
-.lp-source .md-li-marker {
+
+/* ===== SHARD MODAL ===== */
+#shard-modal { z-index: 260; }
+.shard-modal-content {
+  width: min(920px, 95vw);
+  height: min(680px, 88vh);
+  min-height: 480px;
+  max-height: 92vh;
+  font-size: 12px;
+  font-family: var(--font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
+  animation: none;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.shard-modal-body {
+  padding: 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+.shard-3pane {
+  display: grid;
+  grid-template-columns: 40px var(--shard-left-w, 200px) 4px 1fr 4px var(--shard-right-w, 200px);
+  grid-template-rows: 1fr;
+  grid-template-areas: "ribbon left resize-l center resize-r right";
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.shard-3pane.shard-ribbon-hidden {
+  grid-template-columns: 0px var(--shard-left-w, 200px) 4px 1fr 4px var(--shard-right-w, 200px);
+}
+.shard-3pane > .shard-ribbon { grid-area: ribbon; }
+.shard-3pane > .shard-left-pane { grid-area: left; }
+.shard-3pane > .shard-center-pane { grid-area: center; }
+.shard-3pane > .shard-right-pane { grid-area: right; }
+#shard-resize-left { grid-area: resize-l; }
+#shard-resize-right { grid-area: resize-r; }
+
+/* ── Ribbon ── */
+.shard-ribbon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 0;
+  background: var(--panel, var(--bg));
+  border-right: 1px solid var(--border);
+  border-radius: 8px 0 0 8px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+}
+.shard-ribbon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--fg);
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+.shard-ribbon-btn:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.shard-ribbon-btn:active {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 15%, transparent);
+}
+.shard-ribbon-btn.dragging {
+  opacity: 0.3;
+  cursor: grabbing;
+}
+
+/* Ribbon context menu */
+.shard-ribbon-menu {
+  position: fixed;
+  z-index: 400;
+  background: var(--bg-raised, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+  padding: 6px;
+  min-width: 200px;
+  font-size: 12px;
+  user-select: none;
+}
+.shard-ribbon-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+  color: var(--fg);
+  transition: background 0.1s;
+}
+.shard-ribbon-menu-item:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.shard-ribbon-menu-item .shard-ribbon-menu-icon {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.7;
+}
+.shard-ribbon-menu-item .shard-ribbon-menu-action {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  cursor: pointer;
+  opacity: 0.5;
+  transition: opacity 0.15s, background 0.15s;
+  margin-left: auto;
+  border: 1px solid currentColor;
+  color: var(--fg);
+  background: transparent;
+  padding: 0;
+}
+.shard-ribbon-menu-item .shard-ribbon-menu-action:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.shard-ribbon-menu-item .shard-ribbon-menu-action.remove:hover {
+  color: var(--color-error, #ff6b6b);
+  border-color: var(--color-error, #ff6b6b);
+}
+.shard-ribbon-menu-item .shard-ribbon-menu-action.add:hover {
+  color: var(--color-success, #51cf66);
+  border-color: var(--color-success, #51cf66);
+}
+.shard-ribbon-menu-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+/* Ribbon config dialog */
+.shard-ribbon-config-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 350;
+  background: rgba(0,0,0,0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+}
+.shard-ribbon-config-overlay.hidden { display: none; }
+.shard-ribbon-config-dialog {
+  background: var(--bg-raised, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+  width: 420px;
+  max-width: 90vw;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.shard-ribbon-config-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.shard-ribbon-config-header h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.shard-ribbon-config-header .close-btn {
+  background: transparent;
+  border: none;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 16px;
+  opacity: 0.5;
+  padding: 2px;
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.15s, background 0.15s;
+}
+.shard-ribbon-config-header .close-btn:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.shard-ribbon-config-body {
+  padding: 12px 16px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+.shard-ribbon-config-desc {
+  font-size: 12px;
+  opacity: 0.7;
+  margin-bottom: 12px;
+  line-height: 1.4;
+}
+.shard-ribbon-config-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.5;
+  margin: 12px 0 8px;
+}
+.shard-ribbon-config-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.shard-ribbon-config-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: grab;
+  transition: background 0.1s;
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+}
+.shard-ribbon-config-item:hover {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+.shard-ribbon-config-item.dragging {
+  opacity: 0.5;
+}
+.shard-ribbon-config-item .item-icon {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.7;
+}
+.shard-ribbon-config-item .item-title {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 500;
+}
+.shard-ribbon-config-item .item-action {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  cursor: pointer;
+  opacity: 0.5;
+  transition: opacity 0.15s;
+  border: 1.5px solid currentColor;
+  color: var(--fg);
+  background: transparent;
+  padding: 0;
+}
+.shard-ribbon-config-item .item-action:hover {
+  opacity: 1;
+}
+.shard-ribbon-config-item .item-action.remove:hover {
+  color: var(--color-error, #ff6b6b);
+  border-color: var(--color-error, #ff6b6b);
+}
+.shard-ribbon-config-item .item-action.add:hover {
+  color: var(--color-success, #51cf66);
+  border-color: var(--color-success, #51cf66);
+}
+.shard-ribbon-config-item .item-drag {
+  flex-shrink: 0;
+  opacity: 0.3;
+  cursor: grab;
+}
+.shard-ribbon-config-footer {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-end;
+}
+.shard-ribbon-config-footer button {
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.shard-ribbon-config-footer button:hover {
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+  border-color: var(--red);
+  color: var(--red);
+}
+
+.shard-sidebar-pane[data-pane="graph"] {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+#shard-graph-canvas,
+#shard-local-graph-canvas,
+#shard-main-graph-canvas {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  position: relative;
+  flex: 1;
+  pointer-events: auto;
+}
+/* vis-network wrapper must fill container */
+#shard-graph-canvas > div:not(.shard-graph-toolbar):not(.shard-graph-settings-panel):not(.shard-graph-tooltip),
+#shard-local-graph-canvas > div:not(.shard-graph-toolbar):not(.shard-graph-settings-panel):not(.shard-graph-tooltip),
+#shard-main-graph-canvas > div:not(.shard-graph-toolbar):not(.shard-graph-settings-panel):not(.shard-graph-tooltip) {
+  width: 100% !important;
+  height: 100% !important;
+  pointer-events: auto !important;
+}
+/* Local graph pane should not scroll — canvas fills it exactly */
+#shard-local-graph-panel {
+  overflow: hidden !important;
+}
+.shard-graph-loading,
+.shard-graph-error {
+  padding: 12px;
+  text-align: center;
+  opacity: 0.6;
+  font-size: 12px;
+}
+
+/* Graph toolbar (fit + settings buttons) */
+.shard-graph-toolbar {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  gap: 6px;
+  z-index: 100;
+  pointer-events: none;
+}
+.shard-graph-toolbtn {
+  pointer-events: auto;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-raised, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.15s;
+}
+.shard-graph-toolbtn:hover { opacity: 1; }
+
+/* Graph settings panel — card aesthetic */
+.shard-graph-settings-panel {
+  position: absolute;
+  top: 44px;
+  right: 10px;
+  width: 280px;
+  max-height: calc(100% - 60px);
+  overflow-y: auto;
+  background: var(--bg-raised, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+  z-index: 200;
+  padding: 0;
+  font-size: 12px;
+  scrollbar-width: thin;
+  pointer-events: auto;
+}
+.shard-graph-settings-panel.hidden { display: none; }
+
+.shard-graph-settings-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 600;
+  font-size: 13px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  letter-spacing: 0.2px;
+}
+.shard-graph-settings-close {
+  background: transparent;
+  border: none;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.5;
+  padding: 2px;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  transition: opacity 0.15s, background 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.shard-graph-settings-close:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+
+.shard-graph-settings-body {
+  padding: 10px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Search */
+.shard-graph-settings-search {
+  margin-bottom: 8px;
+}
+.shard-graph-settings-search input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  padding: 5px 10px;
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.15s;
+  box-sizing: border-box;
+}
+.shard-graph-settings-search input:focus {
+  border-color: var(--red);
+}
+
+/* Section divider */
+.shard-graph-settings-section {
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+}
+.shard-graph-settings-section:first-of-type {
+  border-top: none;
+  padding-top: 0;
+}
+
+.shard-graph-section-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.45;
+  margin-bottom: 8px;
+  padding-left: 2px;
+}
+
+/* Row */
+.shard-graph-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 2px;
+  min-height: 28px;
+}
+.shard-graph-row + .shard-graph-row {
+  border-top: 1px solid color-mix(in srgb, var(--border) 25%, transparent);
+}
+
+.shard-graph-row-label {
+  flex-shrink: 0;
+  opacity: 0.9;
+  font-size: 12px;
+  font-weight: 500;
+  width: 100px;
+  padding-right: 8px;
+  line-height: 1.3;
+}
+
+/* Slider wrap */
+.shard-graph-slider-wrap {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.shard-graph-slider-wrap input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 18px;
+  background: transparent;
+  border-radius: 2px;
+  cursor: pointer;
+}
+.shard-graph-slider-wrap input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+}
+.shard-graph-slider-wrap input[type="range"]::-moz-range-track {
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+}
+.shard-graph-slider-wrap input[type="range"]::-moz-range-progress {
+  height: 4px;
+  background: var(--red);
+  border-radius: 2px;
+}
+.shard-graph-slider-wrap input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--red);
+  border: none;
+  cursor: pointer;
+  margin-top: -5px;
+}
+.shard-graph-slider-wrap input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--red);
+  border: none;
+  cursor: pointer;
+}
+
+.shard-graph-slider-val {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg);
+  opacity: 0.65;
+  min-width: 32px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Toggles */
+.shard-graph-row .admin-switch {
+  flex-shrink: 0;
+}
+
+/* Animate button */
+.shard-graph-animate-btn {
+  width: 100%;
+  margin-top: 8px;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 500;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.shard-graph-animate-btn:hover {
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+  border-color: var(--red);
+  color: var(--red);
+}
+
+/* Floating node tooltip (Obsidian-style) */
+.shard-graph-tooltip {
+  position: absolute;
+  z-index: 30;
+  pointer-events: none;
+  background: var(--bg-raised, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--fg);
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.shard-graph-tooltip.visible {
+  opacity: 1;
+}
+
+.shard-ribbon-sep {
+  width: 20px;
+  height: 1px;
+  background: var(--border);
+  margin: 2px 0;
+  flex-shrink: 0;
+}
+.shard-left-pane {
+  border: 1px solid var(--border);
+  background: var(--panel, var(--bg));
+  border-radius: 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+.shard-left-header { display: none; }
+.shard-center-pane {
+  padding: 10px 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+.shard-right-pane {
+  border: 1px solid var(--border);
+  background: var(--panel, var(--bg));
+  border-radius: 8px;
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  position: relative;
+}
+.shard-right-placeholder {
+  padding: 20px;
+  text-align: center;
+  opacity: 0.5;
+  font-size: 12px;
+  flex: 1;
+}
+.shard-right-placeholder.hidden { display: none; }
+/* Right sidebar tabs */
+.shard-right-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  padding: 0;
+  gap: 2px;
+  flex-shrink: 0;
+  order: -1;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.shard-right-tab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0.5;
+  transition: opacity 0.15s, background 0.15s;
+  user-select: none;
+  -webkit-user-select: none;
+  outline: none;
+  flex-shrink: 0;
+}
+.shard-right-tab:hover { opacity: 0.8; background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.shard-right-tab.active {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.shard-right-tab.dragging { opacity: 0.3; cursor: grabbing; }
+.shard-right-tab svg { flex-shrink: 0; }
+.shard-right-tab span { display: none; }
+/* Context menu */
+.shard-context-menu {
+  position: fixed;
+  z-index: 9999;
+  background: var(--bg-raised, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  min-width: 180px;
+  padding: 4px 0;
+  font-size: 12px;
+  user-select: none;
+}
+.shard-context-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: background 0.1s;
+  gap: 12px;
+}
+.shard-context-menu-item:hover { background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 15%, transparent); }
+.shard-context-menu-item.disabled {
+  opacity: 0.4;
+  cursor: default;
+  pointer-events: none;
+}
+.shard-context-menu-item.danger {
+  color: #ff6b6b;
+}
+.shard-context-menu-item.danger:hover {
+  background: color-mix(in srgb, #ff6b6b 15%, transparent);
+}
+.shard-context-menu-separator {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 8px;
+}
+.shard-context-menu-submenu {
+  position: fixed;
+  z-index: 10000;
+  background: var(--bg-raised, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  min-width: 160px;
+  padding: 4px 0;
+  font-size: 12px;
+}
+/* Icon-only right tabs always */
+.shard-right-tab svg { margin: 0 auto; }
+/* Right sidebar panes */
+.shard-right-panes {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+}
+.shard-right-pane-content { display: flex; flex-direction: column; flex: 1; }
+.shard-right-pane-content.hidden { display: none; }
+#shard-right-panes .shard-sidebar-pane {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.shard-folder-tree {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  min-height: 0;
+  user-select: none;
+}
+.shard-folder-tree ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+/* Progressive indent for nested folders/notes */
+.shard-folder-tree li > ul {
+  padding-left: 10px;
+}
+.shard-folder-tree li {
+  position: relative;
+  margin: 0;
+  padding: 0;
+}
+/* Root items: no tree lines, minimal indent */
+.shard-folder-tree li.shard-tree-root > .shard-tree-row.root {
+  margin-left: 4px;
+}
+/* Sub items: tree lines and indent */
+.shard-folder-tree li.shard-tree-sub > .shard-tree-row.sub {
+  margin-left: 22px;
+}
+/* vertical tree guide line — only for sub items */
+.shard-folder-tree li.shard-tree-sub::before {
+  content: '';
+  position: absolute;
+  left: 12px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: color-mix(in srgb, var(--border) 60%, transparent);
+  pointer-events: none;
+}
+/* horizontal connector — only for sub items */
+.shard-folder-tree li.shard-tree-sub > .shard-tree-row.sub::before {
+  content: '';
+  position: absolute;
+  left: -9px;
+  top: 14px;
+  width: 9px;
+  height: 1px;
+  background: color-mix(in srgb, var(--border) 60%, transparent);
+  pointer-events: none;
+}
+.shard-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.15s;
+  position: relative;
+}
+.shard-tree-row:hover {
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+.shard-tree-row.selected {
+  background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 10%, transparent);
+}
+.shard-tree-row.drag-over {
+  background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 20%, transparent);
+  outline: 1px dashed var(--accent, var(--red, #4a9eff));
+}
+/* Grabbing cursor only during active drag */
+.shard-folder-tree.shard-dragging .shard-tree-row[data-note-id],
+.shard-folder-tree.shard-dragging .shard-tree-row[data-folder] {
+  cursor: grabbing;
+}
+/* Visual feedback when dragging over empty tree space (root drop target) */
+.shard-folder-tree.shard-root-drag-over {
+  outline: 2px dashed var(--accent, var(--red, #4a9eff));
+}
+/* CSS arrow chevron */
+.shard-tree-arrow {
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid var(--fg);
+  opacity: 0.5;
+  transition: transform 0.15s;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.shard-tree-arrow.expanded {
+  transform: rotate(90deg);
+}
+.shard-tree-arrow.leaf {
+  border: none;
+  width: 5px;
+}
+/* Animated expand/collapse for folder subtrees */
+.shard-folder-tree li > ul {
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: max-height 0.2s ease, opacity 0.15s ease;
+}
+.shard-folder-tree li.expanded > ul {
+  max-height: 5000px;
+  opacity: 1;
+  overflow: visible;
+}
+.shard-tree-file-icon,
+.shard-tree-folder-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-left: 2px;
+}
+.shard-tree-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Resize handles */
+.shard-resize-handle-h {
+  width: 4px;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+.shard-resize-handle-h:hover,
+.shard-resize-handle-h.dragging {
+  background: var(--accent, var(--red, #4a9eff));
+}
+.shard-tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: 0;
+  overflow-x: auto;
+  min-width: 0;
+  scrollbar-width: none;
+  align-items: flex-end;
+  min-height: 32px;
+  flex-shrink: 0;
+  border-bottom: none;
+  padding-bottom: 0;
+}
+.shard-tabs::-webkit-scrollbar { display: none; }
+.shard-tab {
+  background: transparent;
+  border: none;
+  color: var(--fg);
+  padding: 6px 10px 4px;
+  border-radius: 6px 6px 0 0;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.4;
+  opacity: 0.55;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  margin-bottom: 0;
+  width: 120px;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.shard-tab.active {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  opacity: 1;
+}
+.shard-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+  margin: 0 -2px 0 auto;
+  opacity: 0.7;
+}
+.shard-tab-close:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.shard-tab-new {
+  background: transparent;
+  border: none;
+  color: var(--fg);
+  padding: 6px 8px 4px;
+  border-radius: 6px 6px 0 0;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  opacity: 0.4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-bottom: 0;
+}
+.shard-tab-new:hover {
+  opacity: 0.8;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+.shard-vault-perm-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 6px 8px;
+  line-height: 1;
+  transition: background 0.15s, border-color 0.15s;
+}
+.shard-vault-perm-btn:hover {
+  border-color: var(--accent, var(--red, #4a9eff));
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+.shard-note-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  padding: 4px 0;
+  min-height: 0;
+  min-width: 0;
+  flex-shrink: 0;
+  position: relative;
+}
+.shard-nav-btns {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+  z-index: 1;
+}
+.shard-nav-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 3px 8px;
+  line-height: 1;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.5;
+  transition: opacity 0.15s, background 0.15s;
+}
+.shard-nav-btn:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+.shard-nav-btn:disabled {
+  opacity: 0.2;
+  cursor: default;
+}
+.shard-breadcrumb {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-size: 12px;
+  opacity: 0.7;
+  overflow: hidden;
+  white-space: nowrap;
+  min-width: 0;
+}
+.shard-breadcrumb > * {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shard-breadcrumb-sep {
+  flex-shrink: 0;
+  min-width: auto;
+  overflow: visible;
+  opacity: 0.4;
+}
+.shard-breadcrumb-part {
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: background 0.15s;
+  max-width: 200px;
+}
+.shard-breadcrumb-part:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.shard-breadcrumb-current {
+  font-weight: 500;
+  opacity: 1;
+  min-width: 20px;
+  max-width: 300px;
+}
+
+/* Properties collapse */
+.shard-properties-inline.collapsed .shard-prop-grid,
+.shard-properties-inline.collapsed .shard-prop-add-main {
   display: none;
 }
-/* When a token is active, reveal its syntax markers */
-.lp-source .md-h1.active .md-hash,
-.lp-source .md-h2.active .md-hash,
-.lp-source .md-h3.active .md-hash,
-.lp-source .md-h4.active .md-hash,
-.lp-source .md-h5.active .md-hash,
-.lp-source .md-h6.active .md-hash,
-.lp-source .md-bq.active .md-bq-mark,
-.lp-source .md-li-marker.active,
-.lp-source .md-bold.active .md-syntax,
-.lp-source .md-italic.active .md-syntax,
-.lp-source .md-strike.active .md-syntax,
-.lp-source .md-code.active .md-syntax,
-.lp-source .md-wikilink.active .md-bracket,
-.lp-source .md-link.active .md-syntax {
-  display: inline;
+.shard-prop-chevron {
+  display: inline-block;
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid currentColor;
+  margin-left: 6px;
+  vertical-align: middle;
+  transition: transform 0.2s;
+  opacity: 0;
+  cursor: pointer;
 }
-/* Source token wrappers must visually match clean equivalents when syntax is hidden */
-.lp-source .md-h1 { font-size: 2em; font-weight: 700; display: block; margin: 0; line-height: inherit; }
-.lp-source .md-h2 { font-size: 1.6em; font-weight: 600; display: block; margin: 0; line-height: inherit; }
-.lp-source .md-h3 { font-size: 1.3em; font-weight: 600; display: block; margin: 0; line-height: inherit; }
-.lp-source .md-h4 { font-size: 1.15em; font-weight: 600; display: block; margin: 0; line-height: inherit; }
-.lp-source .md-h5 { font-size: 1em; font-weight: 600; display: block; margin: 0; line-height: inherit; }
-.lp-source .md-h6 { font-size: 0.9em; font-weight: 600; display: block; margin: 0; line-height: inherit; }
-.lp-source .md-bold { font-weight: bold; }
-.lp-source .md-italic { font-style: italic; }
-.lp-source .md-strike { text-decoration: line-through; opacity: 0.75; }
-.lp-source .md-code {
-  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+.shard-properties-inline:hover .shard-prop-chevron {
+  opacity: 0.5;
+}
+.shard-properties-inline.collapsed .shard-prop-chevron {
+  transform: rotate(-90deg);
+}
+.shard-prop-header {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+}
+.shard-search-row {
+  margin-bottom: 8px;
+}
+.shard-search-row input {
+  width: 100%;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--input-bg, var(--panel));
+  color: var(--fg);
+  font-size: 12px;
+}
+.shard-panel-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.shard-panel-wrap.hidden {
+  display: none;
+}
+.shard-note-list {
+  width: 240px;
+  min-width: 180px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow-y: auto;
+  padding: 6px;
+}
+.shard-note-item {
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.shard-note-item:hover {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+.shard-note-item.active {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.shard-pane-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.shard-pane-content.hidden {
+  display: none;
+}
+.shard-preview {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  font-size: 14px;
+  line-height: 1.6;
+  padding: 0 4px 4px;
+  color: var(--fg);
+}
+.shard-preview-header,
+.shard-preview-body {
+  color: var(--fg);
+}
+.shard-preview-body {
+  flex: 1 1 auto;
+  min-height: 80px;
+  font-size: var(--shard-font-size, 16px);
+}
+.shard-preview-header {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+.shard-preview-header h1 {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.shard-preview-body h1,
+.shard-preview-body h2,
+.shard-preview-body h3,
+.shard-preview-body h4 {
+  margin: 18px 0 10px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.shard-preview-body h1 { font-size: 22px; overflow-wrap: anywhere; }
+.shard-preview-body h2 { font-size: 18px; overflow-wrap: anywhere; }
+.shard-preview-body h3 { font-size: 15px; overflow-wrap: anywhere; }
+.shard-preview-body h4 { overflow-wrap: anywhere; }
+.shard-preview-body p {
+  margin: 0 0 10px;
+  overflow-wrap: anywhere;
+}
+.shard-preview-body ul,
+.shard-preview-body ol {
+  margin: 0 0 10px;
+  padding-left: 22px;
+}
+.shard-preview-body li {
+  margin-bottom: 4px;
+  overflow-wrap: anywhere;
+}
+.shard-preview-body code {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  padding: 2px 5px;
+  border-radius: 4px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.shard-preview-body pre {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  padding: 10px;
+  border-radius: 6px;
+  overflow-x: auto;
+  font-size: 12px;
+}
+/* ── Left sidebar tabs ── */
+.shard-sidebar-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.shard-sidebar-tab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0.5;
+  transition: opacity 0.15s, background 0.15s;
+  user-select: none;
+  -webkit-user-select: none;
+  outline: none;
+  flex-shrink: 0;
+}
+.shard-sidebar-tab:hover { opacity: 0.8; background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.shard-sidebar-tab.active { opacity: 1; background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.shard-sidebar-tab svg { flex-shrink: 0; }
+.shard-sidebar-tab.dragging { opacity: 0.3; cursor: grabbing; }
+/* Panes */
+.shard-sidebar-panes {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+}
+.shard-sidebar-pane {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+.shard-sidebar-pane.hidden { display: none; }
+/* Left sidebar tabs: always icon-only */
+.shard-sidebar-tab span { display: none; }
+.shard-sidebar-tab svg { margin: 0 auto; }
+
+/* Search toolbar */
+.shard-search-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 0 6px;
+  position: relative;
+}
+.shard-search-field {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+.shard-search-field svg { flex-shrink: 0; opacity: 0.5; }
+.shard-search-field input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+  min-width: 0;
+}
+.shard-search-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0.5;
+  padding: 0;
+  margin: 0;
+}
+.shard-search-clear:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 10%, transparent); }
+.shard-search-clear.hidden { display: none; }
+.shard-search-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+  margin: 0;
+  opacity: 0.6;
+  transition: opacity 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+.shard-search-toggle:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.shard-search-toggle.active {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 15%, transparent);
+  border-color: var(--accent, var(--red, #4a9eff));
+}
+/* Sort dropdown */
+.shard-search-sort-dropdown {
+  position: absolute;
+  top: 36px;
+  right: 36px;
+  background: var(--bg-raised, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  z-index: 100;
+  min-width: 180px;
+  padding: 4px;
+}
+.shard-search-sort-item {
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.shard-search-sort-item:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.shard-search-sort-item.active { background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 12%, transparent); }
+/* Settings panel */
+.shard-search-settings {
+  position: absolute;
+  top: 36px;
+  right: 4px;
+  background: var(--bg-raised, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  z-index: 100;
+  min-width: 220px;
+  padding: 8px 10px;
+}
+.shard-search-setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+  font-size: 12px;
+  cursor: pointer;
+}
+.shard-toggle {
+  position: relative;
+  display: inline-block;
+  width: 32px;
+  height: 18px;
+}
+.shard-toggle input { opacity: 0; width: 0; height: 0; margin: 0; }
+.shard-toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background: var(--border);
+  border-radius: 18px;
+  transition: background 0.2s;
+}
+.shard-toggle-slider::before {
+  content: '';
+  position: absolute;
+  height: 14px;
+  width: 14px;
+  left: 2px;
+  bottom: 2px;
+  background: var(--fg);
+  border-radius: 50%;
+  transition: transform 0.2s;
+}
+.shard-toggle input:checked + .shard-toggle-slider { background: var(--accent, var(--red, #4a9eff)); }
+.shard-toggle input:checked + .shard-toggle-slider::before { transform: translateX(14px); }
+/* Explain bar */
+.shard-search-explain {
+  font-size: 11px;
+  opacity: 0.5;
+  padding: 0 0 4px;
+  min-height: 16px;
+}
+.shard-search-explain.hidden { display: none; }
+/* Empty search state — popover below search bar */
+.shard-search-empty {
+  position: absolute;
+  top: 36px;
+  left: 4px;
+  right: 4px;
+  z-index: 100;
+  background: var(--bg-raised, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  padding: 10px 12px;
+  max-height: 380px;
+  overflow-y: auto;
+}
+.shard-search-empty.hidden { display: none; }
+.shard-search-empty-section { margin-bottom: 10px; }
+.shard-search-empty-section:last-child { margin-bottom: 0; }
+.shard-search-empty-title {
+  font-size: 11px;
+  opacity: 0.5;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.shard-search-empty-item {
+  padding: 5px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: default;
+  transition: background 0.1s;
+}
+.shard-search-empty-item:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.shard-search-empty-item code {
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  font-size: 11px;
   background: color-mix(in srgb, var(--fg) 8%, transparent);
   padding: 1px 4px;
   border-radius: 3px;
-  font-size: 0.92em;
+  margin-right: 4px;
 }
-.lp-source .md-bq {
-  border-left: 3px solid color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 50%, transparent);
-  padding-left: 12px;
-  margin: 4px 0;
-  display: block;
-}
-.lp-source .md-hr {
-  display: block;
-  border-bottom: 1px solid color-mix(in srgb, var(--fg) 20%, transparent);
-  margin: 8px 0;
-}
-.lp-source .md-link-text,
-.lp-source .wikilink-source {
-  color: var(--accent, var(--red, #4a9eff));
-  text-decoration: underline;
-}
-/* Live Preview: element-level syntax reveal */
-.lp-wl {
-  display: inline;
-}
-.lp-wl .lp-raw {
-  display: none;
-  color: var(--fg);
-  outline: none;
-  cursor: text;
-  border-bottom: 1px dashed var(--accent, var(--red, #4a9eff));
-}
-.lp-wl.active .lp-rendered {
-  display: none;
-}
-.lp-wl.active .lp-raw {
-  display: inline;
-}
-
-/* Brief outline flash on a note card when it's the target of a
-   #note-<id> link click from chat — same pattern as the cookbook
-   task flash, just scoped to .note-card. */
-.note-card-flash {
-  animation: note-card-flash-anim 1.6s ease-out;
-}
-@keyframes note-card-flash-anim {
-  0%   { box-shadow: 0 0 0 2px var(--accent, var(--red)); }
-  100% { box-shadow: 0 0 0 2px transparent; }
-}
-/* ── ask_user: multiple-choice question card ─────────────────────────────
-   The agent posed a question and ended its turn. The user clicks an option,
-   types a free-text "Other" answer, or dismisses (×) to just type in the
-   composer. Reuses theme vars (and .modal-close for the ×) so it reads as
-   part of the conversation, not a modal. */
-.ask-user-card {
-  /* Left-align like an assistant message (.msg-ai), not centered. */
-  align-self: flex-start;
-  margin: 10px auto 10px 8px;
-  width: 85%;
-  max-width: 680px;
-  padding: 12px 16px 14px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--fg) 4%, var(--panel));
-}
-/* Focused only programmatically (tabIndex -1) to move SR/keyboard position; no
-   visible outline on the whole card box. */
-.ask-user-card:focus { outline: none; }
-.ask-user-head {
+.shard-search-history-item {
+  padding: 5px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.1s;
   display: flex;
-  justify-content: flex-end;
-  margin-bottom: 8px;
+  align-items: center;
+  gap: 6px;
 }
-.ask-user-close { font-size: 15px; }
-.ask-user-question {
-  margin: -2px 0 10px;
-  font-size: 14px;
+.shard-search-history-item:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.shard-search-history-item svg { opacity: 0.5; flex-shrink: 0; }
+/* Results */
+.shard-search-results {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+/* Collapsible file result */
+.shard-search-file {
+  margin-bottom: 2px;
+}
+.shard-search-file-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
   font-weight: 500;
-  line-height: 1.4;
-  color: var(--fg);
+  transition: background 0.1s;
+  user-select: none;
 }
-.ask-user-options {
+.shard-search-file-header:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.shard-search-file-header .shard-search-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  font-size: 10px;
+  opacity: 0.5;
+  transition: transform 0.15s;
+  flex-shrink: 0;
+}
+.shard-search-file-header.collapsed .shard-search-chevron { transform: rotate(-90deg); }
+.shard-search-file-header .shard-search-file-count {
+  margin-left: auto;
+  font-size: 11px;
+  opacity: 0.5;
+  font-weight: 400;
+}
+.shard-search-matches {
+  padding-left: 24px;
+}
+.shard-search-match {
+  padding: 3px 6px 3px 0;
+  font-size: 11px;
+  line-height: 1.5;
+  opacity: 0.7;
+  border-left: 2px solid transparent;
+  padding-left: 8px;
+  margin-left: -2px;
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s;
+}
+.shard-search-match:hover {
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  border-left-color: var(--accent, var(--red, #4a9eff));
+}
+.shard-search-match mark {
+  background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 30%, transparent);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+.shard-search-match.raw {
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  white-space: pre-wrap;
+  opacity: 0.85;
+}
+/* Fallback simple result (used when not grouped) */
+.shard-search-result {
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.1s;
+  border: 1px solid color-mix(in srgb, var(--fg) 8%, transparent);
+  margin-bottom: 4px;
+}
+.shard-search-result:hover {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  border-color: color-mix(in srgb, var(--fg) 16%, transparent);
+}
+.shard-search-result-title { font-weight: 500; margin-bottom: 2px; }
+.shard-search-result-snippet { font-size: 11px; opacity: 0.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Bookmarks */
+.shard-bookmarks-list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+.shard-bookmark-item {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.1s;
 }
-.ask-user-option {
+.shard-bookmark-item:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
+/* Tags cloud */
+.shard-tags-cloud {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
   display: flex;
   flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 6px;
+  padding: 4px 2px;
+}
+.shard-tag-chip {
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  width: 100%;
-  /* Match the height of the free-text input below (.styled-prompt-input). */
-  min-height: 39px;
-  text-align: left;
-  padding: 9px 12px;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.shard-tag-chip:hover { background: color-mix(in srgb, var(--fg) 15%, transparent); }
+.shard-tag-chip .shard-tag-count { opacity: 0.6; font-size: 10px; }
+
+.shard-status-bar {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.shard-word-count {
+  text-align: right;
+  padding: 4px 4px 4px 0;
+  font-size: 10px;
+  opacity: 0.45;
+  pointer-events: none;
+  user-select: none;
+  font-family: inherit;
+}
+
+/* ===== Pane Workspace ===== */
+.shard-pane-workspace {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.shard-pane-workspace.split-h {
+  flex-direction: row;
+}
+.shard-pane-workspace.split-v {
+  flex-direction: column;
+}
+.shard-editor-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  position: relative;
+}
+.shard-editor-pane + .shard-editor-pane {
+  border-left: 1px solid var(--border);
+}
+.shard-pane-workspace.split-v .shard-editor-pane + .shard-editor-pane {
+  border-left: none;
+  border-top: 1px solid var(--border);
+}
+/* Drop zones */
+.shard-drop-zones {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: none;
+  pointer-events: none;
+}
+.shard-editor-pane.drag-over .shard-drop-zones {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-rows: 1fr 1fr 1fr;
+  gap: 2px;
+  padding: 2px;
+}
+.shard-drop-zone {
+  pointer-events: auto;
+  border-radius: 6px;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.shard-drop-zone.drag-active {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 12%, transparent);
+}
+.shard-drop-zone-center {
+  z-index: 1;
+}
+/* Sidebar panel drop zones */
+.shard-sidebar-drop-zones {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: none;
+  pointer-events: none;
+}
+.shard-left-pane.drag-over-sidebar .shard-sidebar-drop-zones,
+.shard-right-pane.drag-over-sidebar .shard-sidebar-drop-zones {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-rows: 1fr 1fr 1fr;
+  gap: 2px;
+  padding: 2px;
+}
+.shard-sidebar-drop-zone {
+  pointer-events: auto;
+  border-radius: 6px;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.shard-sidebar-drop-zone.drag-active {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 12%, transparent);
+}
+/* Tab drag styling */
+.shard-tab[draggable="true"] {
+  cursor: grab;
+}
+.shard-tab.dragging {
+  opacity: 0.3;
+}
+
+/* Shard-style vault selector */
+.shard-vault-selector-wrap,
+.shard-vault-dropdown-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  align-self: center;
+}
+.shard-vault-selector-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-raised, var(--bg));
+  cursor: pointer;
+  font-size: 12px;
+  transition: border-color 0.15s, background 0.15s;
+  user-select: none;
+}
+.shard-vault-selector-trigger:hover {
+  border-color: var(--accent, var(--red, #4a9eff));
+}
+.shard-vault-selector-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  flex: 1;
+  min-width: 0;
+}
+.shard-vault-selector-arrow {
+  font-size: 10px;
+  opacity: 0.6;
+  flex-shrink: 0;
+  transition: transform 0.15s;
+}
+.shard-vault-selector-wrap.open .shard-vault-selector-arrow,
+.shard-vault-dropdown-wrap.open .shard-vault-dropdown-arrow {
+  transform: rotate(180deg);
+}
+.shard-vault-dropdown-menu {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 200;
+  background: var(--bg-raised, var(--bg));
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--panel);
-  color: var(--fg);
-  font-size: 13px;
-  cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+  padding: 4px;
+  max-height: 200px;
+  overflow-y: auto;
 }
-.ask-user-option:hover:not(:disabled) {
-  border-color: var(--accent, var(--red));
-  background: color-mix(in srgb, var(--accent, var(--red)) 10%, var(--panel));
-}
-.ask-user-option:disabled { cursor: default; }
-.ask-user-option-label { font-weight: 500; }
-.ask-user-option-desc { opacity: 0.65; font-size: 12px; }
-/* Free-text "Other" row: input + send, on one line. */
-.ask-user-other {
-  display: flex;
-  gap: 8px;
-  margin-top: 10px;
-}
-/* Reuses .styled-prompt-input; override its full-width + top margin so it
-   sits inline in the flex row next to the send button. */
-.ask-user-other-input { flex: 1; min-width: 0; width: auto; margin-top: 0; }
-/* Reuses .confirm-btn .confirm-btn-primary; flex-row deltas + height match to
-   the input beside it (.confirm-btn won't stretch on its own). */
-.ask-user-other-send { flex-shrink: 0; white-space: nowrap; min-height: 39px; }
-.ask-user-other-send:disabled { opacity: 0.5; cursor: default; }
-
-/* ── Workspace picker ───────────────────────────────────────────── */
-/* Layout (width/flex column/max-height) inherited from base .modal-content. */
-/* Editable path/address bar: reuses .styled-prompt-input for border/bg/radius/
-   focus ring (set in the element's class list). Overrides only the deltas:
-   mono font, and full-bleed via flex stretch with no horizontal margin (the
-   modal-content's 10px padding is the gutter) instead of the base width:100%,
-   which overflowed against the overflow:auto scrollbar. */
-.workspace-cur {
-  align-self: stretch;
-  width: auto;
-  min-width: 0;
-  margin: 4px 0 8px;
-  font-family: var(--mono, monospace);
-  font-size: 12px;
-}
-/* flex/overflow inherited from base .modal-body; only the padding differs. */
-.workspace-body { padding: 6px 0; }
-.workspace-row {
-  padding: 7px 18px;
-  cursor: pointer;
-  font-size: 13px;
+.shard-vault-dropdown-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 2px 10px;
+  font-size: 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
 }
-.workspace-row > span {
+.shard-vault-dropdown-item:hover {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+.shard-vault-dropdown-item.selected {
+  background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 12%, transparent);
+}
+.shard-vault-dropdown-item .vault-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shard-vault-dropdown-item .vault-menu-btn {
+  background: none;
+  border: none;
+  color: var(--fg);
+  opacity: 0;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: opacity 0.15s, color 0.15s, background 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.shard-vault-dropdown-item:hover .vault-menu-btn {
+  opacity: 0.5;
+}
+.shard-vault-dropdown-item .vault-menu-btn:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.shard-vault-dropdown-add {
+  border-top: 1px solid var(--border);
+  margin-top: 2px;
+  padding-top: 4px;
+  color: var(--accent, var(--red, #4a9eff));
+  font-weight: 500;
+}
+.shard-vault-dropdown-add:hover {
+  background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 8%, transparent);
+}
+.shard-vault-dialog {
+  position: absolute;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.35);
+}
+.shard-vault-dialog.hidden {
+  display: none;
+}
+.shard-vault-dialog-card {
+  background: var(--bg-raised, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  width: min(360px, 90vw);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+}
+/* Reset all buttons inside the Shard modal body — a global .modal-body button
+   { margin-top:6px } rule pushes every button down. Shard buttons should sit
+   flush with their adjacent inputs. inline-flex+align-items:center fixes the
+   ~1px baseline drift Windows Chrome adds to <button> elements in flex rows. */
+.modal-body.shard-modal-body button,
+.modal-body.shard-modal-body input[type="button"] {
+  margin-top: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.shard-vault-edit-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 0;
+  line-height: 0;
+  opacity: 0.7;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  vertical-align: middle;
+  transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+}
+.shard-vault-edit-btn:hover {
+  border-color: var(--accent, var(--red, #4a9eff));
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  opacity: 1;
+}
+
+/* Loading Overlay */
+.shard-loading-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.35);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  z-index: 60;
+  backdrop-filter: blur(2px);
+  transition: opacity 0.2s ease;
+}
+.shard-loading-overlay.hidden {
+  display: none;
+}
+.shard-loading-spinner {
+  width: 28px;
+  height: 28px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent, var(--red, #4a9eff));
+  border-radius: 50%;
+  animation: shard-spin 0.8s linear infinite;
+}
+.shard-loading-text {
+  font-size: 12px;
+  color: var(--fg);
+  opacity: 0.8;
+}
+@keyframes shard-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Add Vault Overlay */
+.shard-add-vault-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  backdrop-filter: blur(2px);
+}
+.shard-add-vault-overlay.hidden {
+  display: none;
+}
+.shard-add-vault-card {
+  background: var(--bg-raised, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  width: 90%;
+  max-width: 360px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+}
+.shard-vault-path-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 3px;
+  align-items: center;
+}
+.shard-vault-path-row input,
+.shard-vault-path-row button {
+  box-sizing: border-box;
+  height: 34px;
+  line-height: 1;
+}
+.shard-vault-path-row input {
+  padding: 6px 10px;
+  font-size: 13px;
+  border-radius: 6px;
+  max-width: 260px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+}
+.shard-vault-path-row button {
+  padding: 0 14px;
+  font-size: 12px;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Fullscreen snap state */
+#shard-modal.shard-fullscreen .shard-modal-content {
+  width: 100vw;
+  max-width: 100vw;
+  height: 100vh;
+  max-height: 100vh;
+  border-radius: 0;
+}
+
+/* Badges */
+.shard-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+.shard-badge.read {
+  background: color-mix(in srgb, var(--green, #69db7c) 18%, transparent);
+  color: var(--green, #69db7c);
+}
+.shard-badge.write {
+  background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 18%, transparent);
+  color: var(--accent, var(--red, #4a9eff));
+}
+.shard-badge.none {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: var(--fg);
+  opacity: 0.5;
+}
+
+/* Tab content panes */
+.shard-tab-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.shard-tab-content.hidden {
+  display: none;
+}
+
+/* Permissions */
+.shard-permissions-wrap {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.shard-permissions-table {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.shard-perm-header {
+  display: grid;
+  grid-template-columns: 70px 1fr 60px 50px 30px;
+  gap: 6px;
+  padding: 4px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  opacity: 0.6;
+  border-bottom: 1px solid var(--border);
+}
+.shard-perm-row {
+  display: grid;
+  grid-template-columns: 70px 1fr 60px 50px 30px;
+  gap: 6px;
+  padding: 6px 8px;
+  align-items: center;
+  border-radius: 6px;
+  font-size: 11px;
+}
+.shard-perm-row:hover {
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+.shard-perm-pattern {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shard-perm-level.read {
+  color: var(--green, #69db7c);
+}
+.shard-perm-level.write {
+  color: var(--accent, var(--red, #4a9eff));
+}
+.shard-perm-level.none {
+  color: var(--red, #ff6b6b);
+}
+.shard-perm-del {
+  background: none;
+  border: none;
+  color: var(--fg);
+  opacity: 0.4;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0;
+  line-height: 1;
+}
+.shard-perm-del:hover {
+  opacity: 1;
+  color: var(--red, #ff6b6b);
+}
+
+/* Regular links in note content use the accent color, not browser blue */
+.shard-preview-body a {
+  color: var(--accent, var(--red, #ff6b6b));
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent, var(--red)) 50%, transparent);
+}
+.shard-preview-body a:hover {
+  text-decoration-color: var(--accent, var(--red));
+}
+
+/* Wikilinks */
+.shard-preview a.wikilink {
+  color: var(--accent, var(--red, #4a9eff));
+  text-decoration: underline;
+  text-decoration-style: solid;
+  cursor: pointer;
+}
+.shard-preview a.wikilink.ghost {
+  color: var(--accent, var(--red, #4a9eff));
+  opacity: 0.6;
+  text-decoration: underline;
+  text-decoration-style: dashed;
+}
+
+/* Embeds */
+.shard-embed {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 8px 0;
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+  font-size: 12px;
+}
+.shard-embed-error {
+  color: var(--red, #ff6b6b);
+  font-size: 11px;
+  opacity: 0.7;
+  padding: 4px 0;
+}
+
+/* Callouts */
+.shard-callout {
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 8px 0;
+  border-left: 3px solid var(--border);
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+.shard-callout-title {
+  font-weight: 600;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+.shard-callout-icon {
+  margin-right: 4px;
+}
+.shard-callout-body {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.shard-callout.callout-info    { border-left-color: #3b82f6; background: color-mix(in srgb, #3b82f6 6%, transparent); }
+.shard-callout.callout-warning { border-left-color: #f59e0b; background: color-mix(in srgb, #f59e0b 6%, transparent); }
+.shard-callout.callout-danger  { border-left-color: #ef4444; background: color-mix(in srgb, #ef4444 6%, transparent); }
+.shard-callout.callout-tip     { border-left-color: #22c55e; background: color-mix(in srgb, #22c55e 6%, transparent); }
+.shard-callout.callout-note    { border-left-color: #8b5cf6; background: color-mix(in srgb, #8b5cf6 6%, transparent); }
+.shard-callout.callout-quote   { border-left-color: #6b7280; background: color-mix(in srgb, #6b7280 6%, transparent); }
+.shard-callout.callout-example { border-left-color: #06b6d4; background: color-mix(in srgb, #06b6d4 6%, transparent); }
+
+/* Preview mode toggle */
+.shard-mode-toggle {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg);
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0.6;
+}
+.shard-mode-toggle.active {
+  background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 12%, transparent);
+  border-color: var(--accent, var(--red, #4a9eff));
+  opacity: 1;
+}
+.shard-mode-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  margin-left: auto;
+  position: relative;
+  z-index: 2;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  cursor: pointer;
+  opacity: 0.7;
+  transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+  flex-shrink: 0;
+}
+.shard-mode-icon:hover {
+  border-color: var(--accent, var(--red, #4a9eff));
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  opacity: 1;
+}
+.shard-mode-tooltip {
+  position: fixed;
+  z-index: 300;
+  background: var(--panel, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+  display: none;
+  max-width: 220px;
+}
+
+/* ===== View Mode Buttons ===== */
+.shard-view-modes {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin-left: auto;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  flex-shrink: 0;
+}
+.shard-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: all 0.15s;
+  white-space: nowrap;
+  line-height: 1;
+  width: 28px;
+  height: 28px;
+}
+.shard-mode-btn:hover {
+  opacity: 0.9;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+.shard-mode-btn.active {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  color: var(--accent, var(--red, #4a9eff));
+}
+.shard-mode-btn svg {
+  flex-shrink: 0;
+}
+
+.shard-mode-tooltip .shard-tooltip-line {
+  white-space: nowrap;
+}
+.shard-edit-textarea {
+  width: 100%;
+  min-height: 300px;
+  background: transparent;
+  color: var(--fg);
+  border: none;
+  border-left: 2px solid color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 30%, transparent);
+  border-radius: 0;
+  padding: 4px 4px 4px 12px;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.6;
+  resize: vertical;
+  outline: none;
+}
+
+/* Source mode textarea styled like rendered content */
+.shard-source-textarea {
+  width: 100%;
+  min-height: 300px;
+  background: transparent;
+  color: var(--fg);
+  border: none;
+  padding: 0 4px;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.6;
+  resize: vertical;
+  outline: none;
+}
+
+/* Source mode: contentEditable styled text div */
+.shard-source-view,
+.shard-live-view {
+  width: 100%;
+  min-height: 300px;
+  color: var(--fg);
+  padding: 8px 0;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  outline: none;
+  cursor: text;
+}
+.shard-reading-view {
+  padding: 8px 0;
+  color: var(--fg);
+  width: 100%;
+  overflow-wrap: anywhere;
+  word-wrap: break-word;
+}
+.shard-source-view .md-bracket {
+  opacity: 0.5;
+}
+.shard-live-view .md-bracket {
+  opacity: 1;
+}
+.shard-source-view a.wikilink-source,
+.shard-live-view a.wikilink-source {
+  color: var(--accent, var(--red, #4a9eff));
+  text-decoration: underline;
+  text-decoration-style: solid;
+  cursor: pointer;
+}
+
+/* Rich markdown formatting in source / live preview */
+.shard-source-view .md-hash,
+.shard-source-view .md-syntax,
+.shard-source-view .md-li-marker,
+.shard-source-view .md-bq-mark,
+.shard-source-view .md-link-url {
+  opacity: 0.45;
+}
+/* Live Preview: dual-mode per-line editing */
+.shard-live-view .lp-line,
+.shard-source-view .lp-line,
+.shard-reading-view .lp-line {
+  position: relative;
+  margin-bottom: 0.35em;
+}
+/* Fold toggles in reading view */
+.shard-reading-view .shard-fold-toggle {
+  display: inline-block;
+  cursor: pointer;
+  margin-right: 6px;
+  opacity: 0.6;
+  font-size: 0.8em;
+  user-select: none;
+  transition: opacity 0.15s;
+}
+.shard-reading-view .shard-fold-toggle:hover {
+  opacity: 1;
+}
+.shard-live-view .lp-line {
+  cursor: text;
+}
+.shard-reading-view .lp-line {
+  cursor: default;
+}
+/* Wikilink suggestion dropdown */
+.shard-wiki-suggest {
+  background: var(--panel, var(--bg, #1a1a1a));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+  font-size: 13px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.shard-wiki-suggest-item {
+  padding: 6px 10px;
+  cursor: pointer;
+  color: var(--fg);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.workspace-row-icon { flex-shrink: 0; opacity: 0.75; }
-.workspace-row:hover {
-  background: color-mix(in srgb, var(--border) 20%, transparent);
+.shard-wiki-suggest-item:hover,
+.shard-wiki-suggest-item.selected {
+  background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 12%, transparent);
 }
-.workspace-up { opacity: 0.7; }
-.workspace-empty { padding: 14px 18px; opacity: 0.5; font-size: 13px; }
-.workspace-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 10px 18px;
-  border-top: 1px solid var(--border);
-}
-.workspace-note { margin: 0 0 8px; font-size: 11px; line-height: 1.4; }
 
-/* Real-time Diagnostics Log Terminal UI Styles */
-.settings-system-logs-svg {
-  vertical-align: -2px;
-  margin-right: 5px;
-  opacity: 0.6;
-}
-.settings-system-logs-toggle-sub {
-  margin-bottom: 12px;
-}
-.settings-system-logs-col {
-  gap: 10px;
-}
-.settings-system-logs-controls {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  align-items: center;
-}
-.settings-system-logs-search {
-  padding: 6px 8px;
-  background: var(--bg);
-  border: 1px solid var(--border);
+/* Token-level inline editing: no dark background fill on active line */
+.shard-live-view .lp-line.active {
   border-radius: 4px;
-  color: var(--fg);
-  font-family: inherit;
-  font-size: 11px;
-  flex: 1;
-  min-width: 140px;
 }
-.settings-system-logs-select {
-  padding: 5px 8px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  color: var(--fg);
-  font-family: inherit;
-  font-size: 11px;
-  min-width: 90px;
+/* Source layer is always visible in Live Preview (no clean layer) */
+.shard-live-view .lp-source {
+  display: block;
+  outline: none;
+  cursor: text;
 }
-#log-refresh-btn {
-  height: 27px;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0 8px;
-}
-.settings-system-logs-refresh-svg {
-  pointer-events: none;
-}
-.settings-system-logs-autopoll-container {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  user-select: none;
-  margin-left: auto;
-}
-#log-console-container {
-  background: #13151a;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 12px;
-  font-family: Consolas, 'Fira Code', Monaco, 'Courier New', monospace;
-  font-size: 11px;
-  height: 280px;
-  max-height: 280px;
-  overflow-y: auto;
-  white-space: pre-wrap;
-  word-break: break-all;
-  color: #d1d4e0;
-  box-shadow: inset 0 2px 8px rgba(0,0,0,0.5);
-}
-.settings-system-logs-placeholder {
-  color: var(--color-text-dim, #7f8c8d);
-  font-style: italic;
-  font-family: inherit;
-}
-.log-line {
-  margin-bottom: 3px;
-  line-height: 1.4;
-  font-size: 11px;
-  font-family: inherit;
-}
-.log-line-info {
-  color: var(--green, #50fa7b);
-}
-.log-line-warning {
-  color: var(--warn, #f0ad4e);
-}
-.log-line-error {
-  color: var(--red, #e06c75);
-}
-.log-line-debug {
-  color: var(--color-muted, #888);
-}
-.log-line-default {
-  color: var(--fg, #9cdef2);
+
 }
 

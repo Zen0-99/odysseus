@@ -1,5 +1,33 @@
-const { app, BrowserWindow, globalShortcut, ipcMain, shell } = require('electron');
+/*
+ * =============================================================================
+ * ELECTRON MAIN PROCESS — CRITICAL FOR OS INTEGRATION
+ * =============================================================================
+ * WARNING: This file provides essential desktop-shell integration for Odysseus.
+ *          Upstream discussions about removing OS-native wrappers MUST preserve
+ *          the IPC handlers below (shell-open-path, shell-show-item) because
+ *          the web app relies on them for "Open in default app" and
+ *          "Show in system explorer" context-menu actions.
+ *          If this wrapper is removed, those features must be re-implemented
+ *          via an alternative native bridge (e.g. Tauri, custom protocol).
+ * =============================================================================
+ */
+
+const { app, BrowserWindow, dialog, globalShortcut, ipcMain, shell } = require('electron');
 const path = require('path');
+
+// Silence harmless Chromium DevTools CONSOLE warnings (e.g. Autofill.enable
+// not implemented) by raising Chromium's log level to FATAL only.
+// Must be called BEFORE app.whenReady().
+app.commandLine.appendSwitch('log-level', '3');
+// Also filter stderr as a backup for any messages that slip through.
+const originalStderrWrite = process.stderr.write.bind(process.stderr);
+process.stderr.write = function(chunk, encoding, callback) {
+  const str = typeof chunk === 'string' ? chunk : (chunk && chunk.toString) ? chunk.toString() : '';
+  if (str.includes('Autofill.enable') || str.includes('Autofill.setAddresses') || str.includes("wasn't found")) {
+    return true;
+  }
+  return originalStderrWrite(chunk, encoding, callback);
+};
 
 // Derive the Odysseus server port from the same env vars the server uses.
 // Priority: ODYSSEUS_ELECTRON_URL (explicit override) > APP_PORT > ODYSSEUS_PORT > 7000.
@@ -52,6 +80,12 @@ function createWindow() {
   mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
     if (!mainWindow.isVisible()) mainWindow.show();
     mainWindow.webContents.executeJavaScript(`
+      document.documentElement.style.margin = '0';
+      document.documentElement.style.padding = '0';
+      document.documentElement.style.background = '#1a1a1a';
+      document.body.style.margin = '0';
+      document.body.style.padding = '0';
+      document.body.style.background = '#1a1a1a';
       document.body.innerHTML = \`
         <div style="
           display:flex;flex-direction:column;align-items:center;justify-content:center;
@@ -65,9 +99,6 @@ function createWindow() {
           </p>
           <p style="margin-top:20px;color:#888;font-size:13px;">
             Start the server first, then press <strong>Ctrl+R</strong> to retry.
-          </p>
-          <p style="margin-top:12px;color:#888;font-size:12px;">
-            To use a different URL, set <code>ODYSSEUS_ELECTRON_URL</code> before launching Electron.
           </p>
         </div>
       \`;
@@ -91,11 +122,27 @@ function createWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
+
+  // Notify renderer of fullscreen state changes so the custom title bar can be hidden
+  mainWindow.on('enter-full-screen', () => {
+    mainWindow.webContents.send('window-fullscreen', true);
+  });
+  mainWindow.on('leave-full-screen', () => {
+    mainWindow.webContents.send('window-fullscreen', false);
+  });
 }
 
 // ── IPC window controls ──
 ipcMain.on('window-minimize', () => {
   if (mainWindow) mainWindow.minimize();
+});
+
+ipcMain.handle('select-directory', async () => {
+  if (!mainWindow) return { canceled: true };
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openDirectory'],
+  });
+  return result;
 });
 
 ipcMain.on('window-maximize', () => {
@@ -109,6 +156,20 @@ ipcMain.on('window-maximize', () => {
 
 ipcMain.on('window-close', () => {
   if (mainWindow) mainWindow.close();
+});
+
+// ── IPC shell integration ──
+// See header warning: these handlers are REQUIRED by the web app's context
+// menu items "Open in default app" and "Show in system explorer".
+ipcMain.handle('shell-open-path', async (_, filePath) => {
+  const result = await shell.openPath(filePath);
+  // Returns empty string on success, error message on failure
+  return { error: result || null };
+});
+
+ipcMain.handle('shell-show-item', async (_, filePath) => {
+  shell.showItemInFolder(filePath);
+  return { ok: true };
 });
 
 app.whenReady().then(() => {

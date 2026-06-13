@@ -460,6 +460,8 @@
       <div class="modal-body shard-modal-body">
         <!-- 3-pane layout -->
         <div class="shard-3pane">
+          <!-- Ribbon -->
+          <div class="shard-ribbon" id="shard-ribbon-bar"></div>
           <!-- Left pane: Vault selector + Tabbed sidebar -->
           <div class="shard-left-pane">
             <div class="shard-left-header"></div>
@@ -580,14 +582,14 @@
             <!-- Pane workspace -->
             <div class="shard-pane-workspace" id="shard-pane-workspace">
               <div class="shard-editor-pane" data-pane-id="0" id="shard-editor-pane-0">
-                <div class="shard-tabs"></div>
+                <div class="shard-tabs" id="shard-note-tabs"></div>
                 <div class="shard-pane-content" data-shard-content="note">
                   <div class="shard-note-toolbar">
                     <div class="shard-nav-btns">
-                      <button class="shard-nav-btn shard-back-btn" title="Back">&#8592;</button>
-                      <button class="shard-nav-btn shard-forward-btn" title="Forward">&#8594;</button>
+                      <button class="shard-nav-btn shard-back-btn" id="shard-back-btn" title="Back">&#8592;</button>
+                      <button class="shard-nav-btn shard-forward-btn" id="shard-forward-btn" title="Forward">&#8594;</button>
                     </div>
-                    <div class="shard-breadcrumb"></div>
+                    <div class="shard-breadcrumb" id="shard-breadcrumb"></div>
                     <div class="shard-view-modes" id="shard-view-modes">
                       <button class="shard-mode-btn" data-view-mode="preview" title="Reading view" id="shard-mode-read">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
@@ -617,6 +619,10 @@
                   <div class="shard-panel-wrap">
                     <div class="shard-preview" id="shard-preview"></div>
                   </div>
+                </div>
+                <!-- Graph view (shown as a tab) -->
+                <div class="shard-pane-content hidden" data-shard-content="graph" style="display:flex;flex-direction:column;flex:1;min-height:0;">
+                  <div id="shard-main-graph-canvas" style="width:100%;height:100%;position:relative;flex:1;min-height:0;"></div>
                 </div>
                 <div class="shard-drop-zones">
                   <div class="shard-drop-zone" data-zone="top" style="grid-column:1 / -1; grid-row:1">Top</div>
@@ -694,6 +700,10 @@
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 22V12h6v10"/><path d="M12 2v10"/><path d="M2 10h20"/></svg>
                 <span>Orphans</span>
               </div>
+              <div class="shard-right-tab" data-tab="local-graph" title="Local graph" draggable="true" role="button" tabindex="0">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+                <span>Local Graph</span>
+              </div>
             </div>
             <div class="shard-right-panes" id="shard-right-panes">
               <div class="shard-right-pane-content" data-pane="backlinks" id="shard-backlinks-panel"></div>
@@ -701,6 +711,9 @@
               <div class="shard-right-pane-content hidden" data-pane="unlinked" id="shard-unlinked-panel"></div>
               <div class="shard-right-pane-content hidden" data-pane="outline" id="shard-outline-panel"></div>
               <div class="shard-right-pane-content hidden" data-pane="orphans" id="shard-orphans-panel"></div>
+              <div class="shard-right-pane-content hidden" data-pane="local-graph" id="shard-local-graph-panel">
+                <div id="shard-local-graph-canvas" class="shard-local-graph-canvas"></div>
+              </div>
             </div>
             <!-- Sidebar drop zones -->
             <div class="shard-sidebar-drop-zones" data-sidebar-drop="right">
@@ -776,31 +789,29 @@
         <!-- Shard Settings Dialog (in-panel) -->
         <div id="shard-settings-dialog" class="shard-settings-dialog hidden">
           <div class="shard-settings-dialog-card">
+            <div class="shard-settings-resize-grip"></div>
             <div class="shard-settings-header" id="shard-settings-header">
               <h5 style="margin:0;font-size:14px;">Settings</h5>
               <button type="button" class="close-btn" id="shard-settings-close" aria-label="Close settings">&#x2716;</button>
             </div>
             <div class="shard-settings-layout">
               <div class="shard-settings-nav">
-                <div class="shard-settings-nav-cat">Options</div>
                 <button type="button" class="shard-settings-nav-item active" data-settings-section="editor"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg><span>Editor</span></button>
                 <button type="button" class="shard-settings-nav-item" data-settings-section="files"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span>Files and links</span></button>
                 <button type="button" class="shard-settings-nav-item" data-settings-section="appearance"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a7 7 0 0 0 0 20 4 4 0 0 1 0-8 4 4 0 0 0 0-8"/><circle cx="8" cy="9" r="1.5" fill="currentColor"/><circle cx="15" cy="14" r="1.5" fill="currentColor"/><circle cx="9" cy="15" r="1.5" fill="currentColor"/></svg><span>Appearance</span></button>
+                <button type="button" class="shard-settings-nav-item" data-settings-section="snippets"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg><span>Snippets</span></button>
                 <button type="button" class="shard-settings-nav-item" data-settings-section="hotkeys"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01"/><path d="M10 8h.01"/><path d="M14 8h.01"/><path d="M18 8h.01"/><path d="M8 12h.01"/><path d="M12 12h.01"/><path d="M16 12h.01"/><path d="M7 16h10"/></svg><span>Hotkeys</span></button>
                 <button type="button" class="shard-settings-nav-item shard-settings-nav-disabled" data-settings-section="interface" disabled><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg><span>Interface</span></button>
-                <button type="button" class="shard-settings-nav-item shard-settings-nav-disabled" data-settings-section="sync" disabled><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg><span>Sync</span></button>
                 <button type="button" class="shard-settings-nav-item shard-settings-nav-disabled" data-settings-section="templates" disabled><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg><span>Templates</span></button>
                 <button type="button" class="shard-settings-nav-item shard-settings-nav-disabled" data-settings-section="graph" disabled><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg><span>Graph view</span></button>
                 <button type="button" class="shard-settings-nav-item shard-settings-nav-disabled" data-settings-section="privacy" disabled><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><span>Privacy</span></button>
                 <button type="button" class="shard-settings-nav-item shard-settings-nav-disabled" data-settings-section="general" disabled><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg><span>General</span></button>
 
                 <div class="shard-settings-nav-divider"></div>
-                <div class="shard-settings-nav-cat">Plugins</div>
                 <button type="button" class="shard-settings-nav-item" data-settings-section="plugins"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg><span>Core plugins</span></button>
                 <button type="button" class="shard-settings-nav-item shard-settings-nav-disabled" data-settings-section="community-plugins" disabled><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span>Community plugins</span></button>
 
                 <div class="shard-settings-nav-divider"></div>
-                <div class="shard-settings-nav-cat">About</div>
                 <button type="button" class="shard-settings-nav-item shard-settings-nav-disabled" data-settings-section="about" disabled><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><span>About</span></button>
               </div>
               <div class="shard-settings-content">
@@ -814,6 +825,27 @@
                         <span class="shard-settings-desc">The default view that a new Markdown tab gets opened in.</span>
                       </div>
                       <select id="shard-set-default-view" class="shard-settings-select"><option value="reading">Reading view</option><option value="live">Live preview</option><option value="source">Source mode</option></select>
+                    </div>
+                    <div class="shard-settings-row">
+                      <div class="shard-settings-info">
+                        <span>Always focus new tabs</span>
+                        <span class="shard-settings-desc">When you open a link in a new tab, switch to it immediately.</span>
+                      </div>
+                      <label class="admin-switch"><input type="checkbox" id="shard-set-always-focus"><span class="admin-slider"></span></label>
+                    </div>
+                    <div class="shard-settings-row">
+                      <div class="shard-settings-info">
+                        <span>Show editing mode in status bar</span>
+                        <span class="shard-settings-desc">Show the editing mode toggle in the status bar.</span>
+                      </div>
+                      <label class="admin-switch"><input type="checkbox" id="shard-set-show-edit-mode"><span class="admin-slider"></span></label>
+                    </div>
+                    <div class="shard-settings-row">
+                      <div class="shard-settings-info">
+                        <span>Properties in document</span>
+                        <span class="shard-settings-desc">Choose how properties are displayed at the top of notes. Select "source" to show properties as raw YAML.</span>
+                      </div>
+                      <select id="shard-set-properties" class="shard-settings-select"><option value="visible">Visible</option><option value="hidden">Hidden</option><option value="source">Source</option></select>
                     </div>
                     <div class="shard-settings-row">
                       <div class="shard-settings-info">
@@ -850,6 +882,20 @@
                       </div>
                       <label class="admin-switch"><input type="checkbox" id="shard-set-line-numbers"><span class="admin-slider"></span></label>
                     </div>
+                    <div class="shard-settings-row">
+                      <div class="shard-settings-info">
+                        <span>Indentation guides</span>
+                        <span class="shard-settings-desc">Show vertical relationship lines between list items.</span>
+                      </div>
+                      <label class="admin-switch"><input type="checkbox" id="shard-set-indent-guides"><span class="admin-slider"></span></label>
+                    </div>
+                    <div class="shard-settings-row">
+                      <div class="shard-settings-info">
+                        <span>Right-to-left (RTL)</span>
+                        <span class="shard-settings-desc">Sets the default text direction of notes to right-to-left.</span>
+                      </div>
+                      <label class="admin-switch"><input type="checkbox" id="shard-set-rtl"><span class="admin-slider"></span></label>
+                    </div>
                   </div>
                   <div class="shard-settings-group">
                     <h6 class="shard-settings-group-title">Behavior</h6>
@@ -881,6 +927,27 @@
                       </div>
                       <label class="admin-switch"><input type="checkbox" id="shard-set-indent-tabs"><span class="admin-slider"></span></label>
                     </div>
+                    <div class="shard-settings-row">
+                      <div class="shard-settings-info">
+                        <span>Indent visual width</span>
+                        <span class="shard-settings-desc">Number of spaces a tab character will render as.</span>
+                      </div>
+                      <input type="number" id="shard-set-indent-width" class="shard-settings-input" style="width:60px;" min="1" max="12" value="4">
+                    </div>
+                    <div class="shard-settings-row">
+                      <div class="shard-settings-info">
+                        <span>Spellcheck</span>
+                        <span class="shard-settings-desc">Turn on the spellchecker.</span>
+                      </div>
+                      <label class="admin-switch"><input type="checkbox" id="shard-set-spellcheck"><span class="admin-slider"></span></label>
+                    </div>
+                    <div class="shard-settings-row">
+                      <div class="shard-settings-info">
+                        <span>Convert pasted HTML to Markdown</span>
+                        <span class="shard-settings-desc">Automatically convert HTML to Markdown when pasting from web pages.</span>
+                      </div>
+                      <label class="admin-switch"><input type="checkbox" id="shard-set-convert-html"><span class="admin-slider"></span></label>
+                    </div>
                     <div class="shard-settings-row shard-settings-disabled" title="Coming soon">
                       <div class="shard-settings-info">
                         <span>Vim key bindings</span>
@@ -901,12 +968,49 @@
                       </div>
                       <select id="shard-set-new-note-loc" class="shard-settings-select"><option value="vault-root">Vault folder</option><option value="same-folder">Same folder as current file</option><option value="folder">In the folder specified below</option></select>
                     </div>
-                    <div class="shard-settings-row shard-settings-disabled" title="Coming soon">
+                    <div class="shard-settings-row">
                       <div class="shard-settings-info">
                         <span>New note folder</span>
-                        <span class="shard-settings-desc">The folder where new notes are created.</span>
+                        <span class="shard-settings-desc">The folder where new notes are created (when location is "In the folder specified below").</span>
                       </div>
-                      <input type="text" id="shard-set-new-note-folder" class="shard-settings-input" placeholder="Folder path" disabled>
+                      <input type="text" id="shard-set-new-note-folder" class="shard-settings-input" placeholder="Folder path">
+                    </div>
+                    <div class="shard-settings-row">
+                      <div class="shard-settings-info">
+                        <span>Default file to open</span>
+                        <span class="shard-settings-desc">Choose which file to open when the app starts.</span>
+                      </div>
+                      <select id="shard-set-default-file-open" class="shard-settings-select">
+                        <option value="last-opened">Last opened</option>
+                        <option value="new-note">New note</option>
+                        <option value="specific-file">Specific file</option>
+                        <option value="daily-note">Daily note</option>
+                        <option value="none">None</option>
+                      </select>
+                    </div>
+                    <div class="shard-settings-row hidden" id="shard-specific-file-row">
+                      <div class="shard-settings-info">
+                        <span>Startup file</span>
+                        <span class="shard-settings-desc">The note to open on startup.</span>
+                      </div>
+                      <select id="shard-set-specific-file" class="shard-settings-select"></select>
+                    </div>
+                  </div>
+                  <div class="shard-settings-group">
+                    <h6 class="shard-settings-group-title">Attachments</h6>
+                    <div class="shard-settings-row">
+                      <div class="shard-settings-info">
+                        <span>New attachment location</span>
+                        <span class="shard-settings-desc">Choose where new attachments are saved.</span>
+                      </div>
+                      <select id="shard-set-new-attach-loc" class="shard-settings-select"><option value="vault-root">Vault folder</option><option value="same-folder">Same folder as current file</option><option value="folder">In the folder specified below</option><option value="subfolder">In subfolder under current folder</option></select>
+                    </div>
+                    <div class="shard-settings-row">
+                      <div class="shard-settings-info">
+                        <span>Attachment folder</span>
+                        <span class="shard-settings-desc">The folder where attachments are saved (when location requires one).</span>
+                      </div>
+                      <input type="text" id="shard-set-new-attach-folder" class="shard-settings-input" placeholder="Folder path (e.g. Attachments)">
                     </div>
                   </div>
                   <div class="shard-settings-group">
@@ -932,6 +1036,13 @@
                       </div>
                       <label class="admin-switch"><input type="checkbox" id="shard-set-auto-links" checked><span class="admin-slider"></span></label>
                     </div>
+                    <div class="shard-settings-row">
+                      <div class="shard-settings-info">
+                        <span>Confirm auto-update links</span>
+                        <span class="shard-settings-desc">Prompt before updating links in other notes.</span>
+                      </div>
+                      <label class="admin-switch"><input type="checkbox" id="shard-set-confirm-auto-links" checked><span class="admin-slider"></span></label>
+                    </div>
                   </div>
                   <div class="shard-settings-group">
                     <h6 class="shard-settings-group-title">Safety</h6>
@@ -949,29 +1060,32 @@
                       </div>
                       <button type="button" class="admin-btn-sm" disabled>Manage...</button>
                     </div>
+                    <div class="shard-settings-row">
+                      <div class="shard-settings-info">
+                        <span>Detect all file extensions</span>
+                        <span class="shard-settings-desc">Show files with any extension even if they cannot be opened natively.</span>
+                      </div>
+                      <label class="admin-switch"><input type="checkbox" id="shard-set-detect-ext"><span class="admin-slider"></span></label>
+                    </div>
+                    <div class="shard-settings-row shard-settings-disabled" title="Coming soon">
+                      <div class="shard-settings-info">
+                        <span>Delete attachments when deleting files</span>
+                        <span class="shard-settings-desc">Automatically remove attachments linked to the deleted file if they're not used elsewhere.</span>
+                      </div>
+                      <select class="shard-settings-select" disabled><option>Ask each time</option></select>
+                    </div>
+                    <div class="shard-settings-row shard-settings-disabled" title="Coming soon">
+                      <div class="shard-settings-info">
+                        <span>Deleted files</span>
+                        <span class="shard-settings-desc">What happens to a file after you delete it.</span>
+                      </div>
+                      <select class="shard-settings-select" disabled><option>Move to system trash</option></select>
+                    </div>
                   </div>
                 </div>
                 <!-- Appearance -->
                 <div class="shard-settings-section hidden" data-settings-pane="appearance">
                   <div class="shard-settings-group">
-                    <h6 class="shard-settings-group-title">Display</h6>
-                    <div class="shard-settings-row">
-                      <div class="shard-settings-info">
-                        <span>Font size</span>
-                        <span class="shard-settings-desc">The base font size for the editor.</span>
-                      </div>
-                      <div style="display:flex;align-items:center;gap:8px;">
-                        <input type="range" id="shard-set-font-size" min="10" max="32" value="16" style="width:120px;">
-                        <span id="shard-set-font-size-val" style="font-size:12px;min-width:24px;">16</span>
-                      </div>
-                    </div>
-                    <div class="shard-settings-row">
-                      <div class="shard-settings-info">
-                        <span>Quick font size adjustment</span>
-                        <span class="shard-settings-desc">Allow changing font size with Ctrl/Cmd + scroll.</span>
-                      </div>
-                      <label class="admin-switch"><input type="checkbox" id="shard-set-quick-font" checked><span class="admin-slider"></span></label>
-                    </div>
                     <div class="shard-settings-row">
                       <div class="shard-settings-info">
                         <span>Show inline title</span>
@@ -986,22 +1100,304 @@
                       </div>
                       <label class="admin-switch"><input type="checkbox" id="shard-set-monospace-font"><span class="admin-slider"></span></label>
                     </div>
-                    <div class="shard-settings-row shard-settings-disabled" title="Coming soon">
+                    <div class="shard-settings-row">
                       <div class="shard-settings-info">
-                        <span>CSS snippets</span>
-                        <span class="shard-settings-desc">Custom CSS snippets for the editor.</span>
+                        <span>Show tab title bar</span>
+                        <span class="shard-settings-desc">Display the header at the top of every tab.</span>
                       </div>
-                      <button type="button" class="admin-btn-sm" disabled>Manage...</button>
+                      <label class="admin-switch"><input type="checkbox" id="shard-set-tab-title-bar"><span class="admin-slider"></span></label>
+                    </div>
+                    <div class="shard-settings-row">
+                      <div class="shard-settings-info">
+                        <span>Show ribbon</span>
+                        <span class="shard-settings-desc">Show the left ribbon bar with quick actions.</span>
+                      </div>
+                      <label class="admin-switch"><input type="checkbox" id="shard-set-show-ribbon" checked><span class="admin-slider"></span></label>
+                    </div>
+                    <div class="shard-settings-row">
+                      <div class="shard-settings-info">
+                        <span>Ribbon menu configuration</span>
+                        <span class="shard-settings-desc">Configure what commands appear in the ribbon menu.</span>
+                      </div>
+                      <button type="button" class="admin-btn-sm" id="shard-set-ribbon-config-btn">Manage</button>
+                    </div>
+                    <div class="shard-settings-row">
+                      <div class="shard-settings-info">
+                        <span>Show backlinks at the bottom of notes</span>
+                        <span class="shard-settings-desc">Make backlinks visible in new tabs by default.</span>
+                      </div>
+                      <label class="admin-switch"><input type="checkbox" id="shard-set-backlinks-bottom"><span class="admin-slider"></span></label>
+                    </div>
+                  </div>
+                </div>
+                <!-- Snippets -->
+                <div class="shard-settings-section hidden" data-settings-pane="snippets">
+                  <div class="shard-settings-group">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                      <h6 class="shard-settings-group-title" style="margin:0;">CSS Snippets</h6>
+                      <button type="button" class="admin-btn-sm" id="shard-snippet-add">+ New snippet</button>
+                    </div>
+                    <div id="shard-snippets-list" style="display:flex;flex-direction:column;gap:6px;"></div>
+                  </div>
+                  <div id="shard-snippet-editor" class="shard-settings-group hidden">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                      <h6 class="shard-settings-group-title" style="margin:0;">Edit Snippet</h6>
+                      <button type="button" class="admin-btn-sm" id="shard-snippet-back">&larr; Back</button>
+                    </div>
+                    <input type="text" id="shard-snippet-name" class="shard-settings-input" placeholder="Snippet name" style="margin-bottom:8px;">
+                    <textarea id="shard-snippet-content" class="shard-settings-input" placeholder="/* Your CSS here */" style="height:200px;font-family:monospace;font-size:12px;resize:vertical;"></textarea>
+                    <div style="display:flex;gap:8px;margin-top:10px;">
+                      <button type="button" class="admin-btn" id="shard-snippet-save">Save</button>
+                      <button type="button" class="admin-btn" id="shard-snippet-delete" style="color:var(--color-error);">Delete</button>
                     </div>
                   </div>
                 </div>
                 <!-- Core Plugins -->
                 <div class="shard-settings-section hidden" data-settings-pane="plugins">
-                  <div id="shard-settings-plugins-list" style="display:flex;flex-direction:column;gap:6px;"></div>
+                  <div class="shard-plugin-settings-layout" style="display:flex;gap:0;height:100%;overflow:hidden;">
+                    <!-- Left: plugin list -->
+                    <div class="shard-plugin-settings-sidebar" id="shard-plugin-settings-sidebar" style="width:var(--shard-plugin-sidebar-w,220px);min-width:180px;flex-shrink:0;border-right:1px solid var(--border);overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:2px;">
+                      <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 4px 8px;">
+                        <span style="font-size:11px;opacity:0.5;font-weight:500;">CORE PLUGINS</span>
+                        <span id="shard-plugins-count" style="font-size:11px;opacity:0.5;"></span>
+                      </div>
+                      <input type="text" id="shard-plugin-search" class="shard-settings-input" placeholder="Search..." style="margin-bottom:8px;font-size:12px;padding:4px 8px;">
+                      <div id="shard-settings-plugins-list" style="display:flex;flex-direction:column;gap:2px;"></div>
+                    </div>
+                    <div class="shard-resize-handle-h" id="shard-plugin-resize" style="width:4px;cursor:col-resize;background:transparent;transition:background 0.2s;flex-shrink:0;"></div>
+                    <!-- Right: plugin settings -->
+                    <div class="shard-plugin-settings-content" style="flex:1;overflow-y:auto;padding:12px 16px;min-width:0;">
+                      <!-- Backlinks -->
+                      <div class="shard-plugin-settings-pane" data-plugin-pane="backlinks">
+                        <h3 class="shard-plugin-title">Backlinks</h3>
+                        <div class="shard-settings-row">
+                          <div class="shard-settings-info">
+                            <span>Show backlinks at the bottom of notes</span>
+                            <span class="shard-settings-desc">Make backlinks visible in new tabs by default.</span>
+                          </div>
+                          <label class="admin-switch"><input type="checkbox" id="shard-plugin-set-backlinks-bottom"><span class="admin-slider"></span></label>
+                        </div>
+                      </div>
+                      <!-- Canvas -->
+                      <div class="shard-plugin-settings-pane hidden" data-plugin-pane="canvas">
+                        <h3 class="shard-plugin-title">Canvas</h3>
+                        <div class="shard-settings-row shard-settings-disabled" title="Canvas plugin coming soon">
+                          <div class="shard-settings-info">
+                            <span>Default location for new canvas files</span>
+                            <span class="shard-settings-desc">Where newly created canvas files are placed.</span>
+                          </div>
+                          <select class="shard-settings-select" disabled><option>Vault folder</option></select>
+                        </div>
+                        <div class="shard-settings-row shard-settings-disabled" title="Coming soon">
+                          <div class="shard-settings-info">
+                            <span>Default mouse wheel behaviour</span>
+                          </div>
+                          <select class="shard-settings-select" disabled><option>Pan</option></select>
+                        </div>
+                        <div class="shard-settings-row shard-settings-disabled" title="Coming soon">
+                          <div class="shard-settings-info">
+                            <span>Default Ctrl + Drag behaviour</span>
+                          </div>
+                          <select class="shard-settings-select" disabled><option>Show menu</option></select>
+                        </div>
+                        <div class="shard-settings-row shard-settings-disabled" title="Coming soon">
+                          <div class="shard-settings-info">
+                            <span>Show card names</span>
+                          </div>
+                          <select class="shard-settings-select" disabled><option>Always</option></select>
+                        </div>
+                        <div class="shard-settings-row shard-settings-disabled" title="Coming soon">
+                          <div class="shard-settings-info">
+                            <span>Snap to grid</span>
+                            <span class="shard-settings-desc">Snap cards to the background grid when moving and resizing.</span>
+                          </div>
+                          <label class="admin-switch"><input type="checkbox" disabled><span class="admin-slider"></span></label>
+                        </div>
+                        <div class="shard-settings-row shard-settings-disabled" title="Coming soon">
+                          <div class="shard-settings-info">
+                            <span>Snap to objects</span>
+                            <span class="shard-settings-desc">Snap cards to nearby objects when moving and resizing.</span>
+                          </div>
+                          <label class="admin-switch"><input type="checkbox" disabled><span class="admin-slider"></span></label>
+                        </div>
+                        <div class="shard-settings-row shard-settings-disabled" title="Coming soon">
+                          <div class="shard-settings-info">
+                            <span>Zoom threshold for hiding card content</span>
+                            <span class="shard-settings-desc">Lower values will increase performance but hide card content sooner when zooming out.</span>
+                          </div>
+                          <input type="range" class="shard-settings-input" disabled style="width:100px;">
+                        </div>
+                      </div>
+                      <!-- Command palette -->
+                      <div class="shard-plugin-settings-pane hidden" data-plugin-pane="command-palette">
+                        <h3 class="shard-plugin-title">Command palette</h3>
+                        <div class="shard-settings-row" style="align-items:flex-start;">
+                          <div class="shard-settings-info" style="flex:1">
+                            <span>Pinned commands</span>
+                            <span class="shard-settings-desc">Commands that appear at the top of the command palette.</span>
+                          </div>
+                          <div style="flex:1;max-width:400px;">
+                            <input type="text" id="shard-plugin-set-cmd-search" class="shard-settings-input" placeholder="Select a command..." style="margin-bottom:6px;width:100%;">
+                            <div id="shard-plugin-cmd-pinned-list" style="display:flex;flex-direction:column;gap:4px;"></div>
+                          </div>
+                        </div>
+                      </div>
+                      <!-- Daily notes -->
+                      <div class="shard-plugin-settings-pane hidden" data-plugin-pane="daily-notes">
+                        <h3 class="shard-plugin-title">Daily notes</h3>
+                        <div class="shard-settings-row">
+                          <div class="shard-settings-info">
+                            <span>Date format</span>
+                            <span class="shard-settings-desc">Choose how daily notes are named in your vault.</span>
+                          </div>
+                          <input type="text" id="shard-plugin-set-dn-date-format" class="shard-settings-input" value="YYYY-MM-DD" style="width:140px;">
+                        </div>
+                        <div class="shard-settings-row">
+                          <div class="shard-settings-info">
+                            <span>New file location</span>
+                            <span class="shard-settings-desc">New daily notes will be placed here.</span>
+                          </div>
+                          <input type="text" id="shard-plugin-set-dn-location" class="shard-settings-input" placeholder="Example: folder 1/folder 2" style="width:180px;">
+                        </div>
+                        <div class="shard-settings-row">
+                          <div class="shard-settings-info">
+                            <span>Template file location</span>
+                            <span class="shard-settings-desc">Choose the file to use as a template.</span>
+                          </div>
+                          <input type="text" id="shard-plugin-set-dn-template" class="shard-settings-input" placeholder="Example: folder/note" style="width:180px;">
+                        </div>
+                      </div>
+                      <!-- File recovery -->
+                      <div class="shard-plugin-settings-pane hidden" data-plugin-pane="file-recovery">
+                        <h3 class="shard-plugin-title">File recovery</h3>
+                        <div class="shard-settings-row shard-settings-disabled" title="File recovery coming soon">
+                          <div class="shard-settings-info">
+                            <span>Snapshot interval</span>
+                            <span class="shard-settings-desc">Minimal interval in minutes between two snapshots.</span>
+                          </div>
+                          <input type="number" class="shard-settings-input" disabled value="5" style="width:60px;">
+                        </div>
+                        <div class="shard-settings-row shard-settings-disabled" title="Coming soon">
+                          <div class="shard-settings-info">
+                            <span>History length</span>
+                            <span class="shard-settings-desc">Number of days the snapshots are kept for.</span>
+                          </div>
+                          <input type="number" class="shard-settings-input" disabled value="7" style="width:60px;">
+                        </div>
+                        <div class="shard-settings-row shard-settings-disabled" title="Coming soon">
+                          <div class="shard-settings-info">
+                            <span>Snapshots</span>
+                            <span class="shard-settings-desc">View and restore saved snapshots.</span>
+                          </div>
+                          <button type="button" class="admin-btn-sm" disabled>View</button>
+                        </div>
+                        <div class="shard-settings-row shard-settings-disabled" title="Coming soon">
+                          <div class="shard-settings-info">
+                            <span>Clear history</span>
+                            <span class="shard-settings-desc">Delete all snapshots.</span>
+                          </div>
+                          <button type="button" class="admin-btn-sm" disabled style="color:var(--color-error);">Clear</button>
+                        </div>
+                      </div>
+                      <!-- Note composer -->
+                      <div class="shard-plugin-settings-pane hidden" data-plugin-pane="note-composer">
+                        <h3 class="shard-plugin-title">Note composer</h3>
+                        <div class="shard-settings-row shard-settings-disabled" title="Note composer coming soon">
+                          <div class="shard-settings-info">
+                            <span>Text after extraction</span>
+                            <span class="shard-settings-desc">What to show in place of the selected text after extracting it.</span>
+                          </div>
+                          <select class="shard-settings-select" disabled><option>Link to new file</option></select>
+                        </div>
+                        <div class="shard-settings-row shard-settings-disabled" title="Coming soon">
+                          <div class="shard-settings-info">
+                            <span>Template file location</span>
+                            <span class="shard-settings-desc">Template file to use when merging or extracting.</span>
+                          </div>
+                          <input type="text" class="shard-settings-input" disabled placeholder="Example: folder/note" style="width:180px;">
+                        </div>
+                        <div class="shard-settings-row shard-settings-disabled" title="Coming soon">
+                          <div class="shard-settings-info">
+                            <span>Confirm file merge</span>
+                            <span class="shard-settings-desc">Prompt before merging two files.</span>
+                          </div>
+                          <label class="admin-switch"><input type="checkbox" checked disabled><span class="admin-slider"></span></label>
+                        </div>
+                      </div>
+                      <!-- Quick switcher -->
+                      <div class="shard-plugin-settings-pane hidden" data-plugin-pane="quick-switcher">
+                        <h3 class="shard-plugin-title">Quick switcher</h3>
+                        <div class="shard-settings-row">
+                          <div class="shard-settings-info">
+                            <span>Show existing only</span>
+                            <span class="shard-settings-desc">Only show results from existing files. Links to files that are not yet created will be hidden.</span>
+                          </div>
+                          <label class="admin-switch"><input type="checkbox" id="shard-plugin-set-qs-existing"><span class="admin-slider"></span></label>
+                        </div>
+                        <div class="shard-settings-row">
+                          <div class="shard-settings-info">
+                            <span>Show attachments</span>
+                            <span class="shard-settings-desc">Show attachment files like images, videos, and PDFs.</span>
+                          </div>
+                          <label class="admin-switch"><input type="checkbox" id="shard-plugin-set-qs-attachments"><span class="admin-slider"></span></label>
+                        </div>
+                      </div>
+                      <!-- Templates -->
+                      <div class="shard-plugin-settings-pane hidden" data-plugin-pane="templates">
+                        <h3 class="shard-plugin-title">Templates</h3>
+                        <div class="shard-settings-row">
+                          <div class="shard-settings-info">
+                            <span>Template folder location</span>
+                            <span class="shard-settings-desc">Files in this folder will be available as templates.</span>
+                          </div>
+                          <input type="text" id="shard-plugin-set-tmpl-folder" class="shard-settings-input" placeholder="99 - Meta/Templates" style="width:180px;">
+                        </div>
+                        <div class="shard-settings-row">
+                          <div class="shard-settings-info">
+                            <span>Date format</span>
+                            <span class="shard-settings-desc">{{date}} in the template file will be replaced with this value.</span>
+                          </div>
+                          <input type="text" id="shard-plugin-set-tmpl-date" class="shard-settings-input" value="DD-MM-YYYY" style="width:120px;">
+                        </div>
+                        <div class="shard-settings-row">
+                          <div class="shard-settings-info">
+                            <span>Time format</span>
+                            <span class="shard-settings-desc">{{time}} in the template file will be replaced with this value.</span>
+                          </div>
+                          <input type="text" id="shard-plugin-set-tmpl-time" class="shard-settings-input" value="HH:mm" style="width:80px;">
+                        </div>
+                      </div>
+                      <!-- Unique note creator -->
+                      <div class="shard-plugin-settings-pane hidden" data-plugin-pane="unique-note-creator">
+                        <h3 class="shard-plugin-title">Unique note creator</h3>
+                        <div class="shard-settings-row shard-settings-disabled" title="Unique note creator coming soon">
+                          <div class="shard-settings-info">
+                            <span>New file location</span>
+                            <span class="shard-settings-desc">The folder path to create the new unique note in.</span>
+                          </div>
+                          <input type="text" class="shard-settings-input" disabled placeholder="Example: folder 1/folder 2" style="width:180px;">
+                        </div>
+                        <div class="shard-settings-row shard-settings-disabled" title="Coming soon">
+                          <div class="shard-settings-info">
+                            <span>Template file location</span>
+                            <span class="shard-settings-desc">The file path to use as template.</span>
+                          </div>
+                          <input type="text" class="shard-settings-input" disabled placeholder="Example: folder1/note" style="width:180px;">
+                        </div>
+                        <div class="shard-settings-row shard-settings-disabled" title="Coming soon">
+                          <div class="shard-settings-info">
+                            <span>Unique prefix format</span>
+                            <span class="shard-settings-desc">For more syntax, refer to format reference.</span>
+                          </div>
+                          <input type="text" class="shard-settings-input" disabled value="YYYYMMDDHHmm" style="width:140px;">
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
                 <!-- Hotkeys -->
                 <div class="shard-settings-section hidden" data-settings-pane="hotkeys">
-                  <div style="padding:12px;text-align:center;opacity:0.5;font-size:13px;">Hotkey customization coming soon.</div>
+                  <div id="shard-hotkeys-container"></div>
                 </div>
                 <!-- General -->
                 <div class="shard-settings-section hidden" data-settings-pane="general">

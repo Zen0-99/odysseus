@@ -50,17 +50,18 @@ export class Plugin {
   }
 
   addRibbonIcon(iconSvg, title, callback) {
+    // Register in global ribbon registry so user can toggle visibility
+    const ribbonId = `plugin-${this.manifest.id}-${Date.now()}`;
+    if (typeof _registerRibbonItem === 'function') {
+      _registerRibbonItem(ribbonId, title, iconSvg, callback, this.manifest.id);
+    }
+    // Trigger re-render so the new item appears
     const ribbon = document.getElementById('shard-ribbon-bar');
-    if (!ribbon) return;
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'shard-ribbon-btn';
-    btn.title = title;
-    btn.innerHTML = iconSvg;
-    btn.addEventListener('click', callback);
-    ribbon.appendChild(btn);
-    this._domListeners.push({ el: btn, type: 'click', cb: callback });
-    return btn;
+    if (ribbon && typeof _renderRibbon === 'function') {
+      _renderRibbon();
+    }
+    // Return a stub element reference
+    return { id: ribbonId };
   }
 
   addCommand(id, name, callback, hotkey) {
@@ -216,20 +217,26 @@ export class PluginManager {
 /* ── Core Plugin Manifests ──────────────────────────────────── */
 
 export const CORE_PLUGINS = [
-  { id: 'graph',          name: 'Graph',          description: 'Visual graph of vault links',      minAppVersion: '0.1.0' },
-  { id: 'backlinks',      name: 'Backlinks',      description: 'Backlinks panel',                   minAppVersion: '0.1.0' },
-  { id: 'outgoing-links', name: 'Outgoing Links', description: 'Outgoing links panel',              minAppVersion: '0.1.0' },
-  { id: 'unlinked',       name: 'Unlinked Mentions', description: 'Unlinked mentions panel',         minAppVersion: '0.1.0' },
-  { id: 'outline',        name: 'Outline',        description: 'Heading outline panel',             minAppVersion: '0.1.0' },
-  { id: 'orphans',        name: 'Orphans',        description: 'Orphan links panel',                minAppVersion: '0.1.0' },
-  { id: 'bookmarks',      name: 'Bookmarks',      description: 'Bookmarked notes & folders',        minAppVersion: '0.1.0' },
-  { id: 'tags',           name: 'Tags',           description: 'Tag browser',                       minAppVersion: '0.1.0' },
-  { id: 'search',         name: 'Search',         description: 'Full-text search sidebar',          minAppVersion: '0.1.0' },
-  { id: 'daily-notes',    name: 'Daily Notes',    description: 'Daily note creation & navigation',  minAppVersion: '0.1.0' },
-  { id: 'templates',      name: 'Templates',      description: 'Note template insertion',           minAppVersion: '0.1.0' },
-  { id: 'word-count',     name: 'Word Count',     description: 'Status bar word count',             minAppVersion: '0.1.0' },
-  { id: 'page-preview',   name: 'Page Preview',   description: 'Hover preview on wikilinks',        minAppVersion: '0.1.0' },
-  { id: 'random-note',    name: 'Random Note',    description: 'Open a random note',                minAppVersion: '0.1.0' },
+  { id: 'backlinks',      name: 'Backlinks',      description: 'Backlinks panel',                   minAppVersion: '0.1.0', hasSettings: true },
+  { id: 'canvas',         name: 'Canvas',         description: 'Visual canvas for notes',          minAppVersion: '0.1.0', hasSettings: true },
+  { id: 'command-palette', name: 'Command palette', description: 'Quick command access',             minAppVersion: '0.1.0', hasSettings: true },
+  { id: 'daily-notes',    name: 'Daily notes',    description: 'Daily note creation & navigation',  minAppVersion: '0.1.0', hasSettings: true },
+  { id: 'file-recovery',  name: 'File recovery',  description: 'Snapshot-based file recovery',      minAppVersion: '0.1.0', hasSettings: true },
+  { id: 'graph',          name: 'Graph',          description: 'Visual graph of vault links',      minAppVersion: '0.1.0', hasSettings: false },
+  { id: 'note-composer',  name: 'Note composer',  description: 'Extract and merge notes',          minAppVersion: '0.1.0', hasSettings: true },
+  { id: 'outgoing-links', name: 'Outgoing Links', description: 'Outgoing links panel',              minAppVersion: '0.1.0', hasSettings: false },
+  { id: 'quick-switcher', name: 'Quick switcher', description: 'Quick file switcher',               minAppVersion: '0.1.0', hasSettings: true },
+  { id: 'templates',      name: 'Templates',      description: 'Note template insertion',           minAppVersion: '0.1.0', hasSettings: true },
+  { id: 'unique-note-creator', name: 'Unique note creator', description: 'Create notes with unique names', minAppVersion: '0.1.0', hasSettings: true },
+  { id: 'unlinked',       name: 'Unlinked Mentions', description: 'Unlinked mentions panel',         minAppVersion: '0.1.0', hasSettings: false },
+  { id: 'outline',        name: 'Outline',        description: 'Heading outline panel',             minAppVersion: '0.1.0', hasSettings: false },
+  { id: 'orphans',        name: 'Orphans',        description: 'Orphan links panel',                minAppVersion: '0.1.0', hasSettings: false },
+  { id: 'bookmarks',      name: 'Bookmarks',      description: 'Bookmarked notes & folders',        minAppVersion: '0.1.0', hasSettings: false },
+  { id: 'tags',           name: 'Tags',           description: 'Tag browser',                       minAppVersion: '0.1.0', hasSettings: false },
+  { id: 'search',         name: 'Search',         description: 'Full-text search sidebar',          minAppVersion: '0.1.0', hasSettings: false },
+  { id: 'word-count',     name: 'Word Count',     description: 'Status bar word count',             minAppVersion: '0.1.0', hasSettings: false },
+  { id: 'page-preview',   name: 'Page Preview',   description: 'Hover preview on wikilinks',        minAppVersion: '0.1.0', hasSettings: false },
+  { id: 'random-note',    name: 'Random Note',    description: 'Open a random note',                minAppVersion: '0.1.0', hasSettings: false },
 ];
 
 /* ── Core Plugin Classes ──────────────────────────────────── */
@@ -251,6 +258,42 @@ export const OutgoingLinksPlugin  = _makeSidebarPlugin('outgoing');
 export const UnlinkedMentionsPlugin = _makeSidebarPlugin('unlinked');
 export const OutlinePlugin        = _makeSidebarPlugin('outline');
 export const OrphansPlugin        = _makeSidebarPlugin('orphans');
+
+export class CanvasPlugin extends Plugin {
+  async onload() {
+    // Canvas visual note editor — stub for future implementation
+  }
+}
+
+export class CommandPalettePlugin extends Plugin {
+  async onload() {
+    // Command palette — core feature already in shardPanel.js
+  }
+}
+
+export class FileRecoveryPlugin extends Plugin {
+  async onload() {
+    // Snapshot-based file recovery — stub for future implementation
+  }
+}
+
+export class NoteComposerPlugin extends Plugin {
+  async onload() {
+    // Note extraction and merging — stub for future implementation
+  }
+}
+
+export class QuickSwitcherPlugin extends Plugin {
+  async onload() {
+    // Quick file switcher — core feature already in shardPanel.js
+  }
+}
+
+export class UniqueNoteCreatorPlugin extends Plugin {
+  async onload() {
+    // Unique note naming — stub for future implementation
+  }
+}
 
 export class BookmarksPlugin extends Plugin {
   async onload() {
@@ -295,14 +338,12 @@ export class PagePreviewPlugin extends Plugin {
 
 export class WordCountPlugin extends Plugin {
   async onload() {
-    this._statusItem = this.addStatusBarItem();
-    if (!this._statusItem) return;
-
     const update = () => {
       const note = this.app.workspace.getActiveFile();
       const text = note ? (note.content || '') : '';
       const count = text.split(/\s+/).filter(Boolean).length;
-      this._statusItem.textContent = `${count} words`;
+      const wcEl = document.getElementById('shard-word-count');
+      if (wcEl) wcEl.textContent = `${count} words`;
     };
 
     // Update when note changes
@@ -312,9 +353,6 @@ export class WordCountPlugin extends Plugin {
   }
 
   async onunload() {
-    if (this._statusItem) {
-      try { this._statusItem.remove(); } catch {}
-    }
     super.onunload();
   }
 
