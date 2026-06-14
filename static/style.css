@@ -37200,7 +37200,7 @@ body.theme-frosted .modal {
   flex: 1;
   pointer-events: auto;
 }
-/* vis-network wrapper must fill container */
+/* force-graph canvas wrapper must fill container */
 #shard-graph-canvas > div:not(.shard-graph-toolbar):not(.shard-graph-settings-panel):not(.shard-graph-tooltip),
 #shard-local-graph-canvas > div:not(.shard-graph-toolbar):not(.shard-graph-settings-panel):not(.shard-graph-tooltip),
 #shard-main-graph-canvas > div:not(.shard-graph-toolbar):not(.shard-graph-settings-panel):not(.shard-graph-tooltip) {
@@ -39624,6 +39624,24 @@ body.theme-frosted .modal {
 .shard-settings-input:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+.shard-settings-select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--fg);
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  min-width: 140px;
+  max-width: 240px;
+  width: 100%;
+  box-sizing: border-box;
+  cursor: pointer;
+}
+.shard-settings-select:focus {
+  outline: none;
+  border-color: var(--accent, var(--red, #4a9eff));
 }
 
 /* Settings range slider — match app theme */

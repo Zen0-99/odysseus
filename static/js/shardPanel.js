@@ -3371,14 +3371,12 @@ function _openShardSettings() {
   if (getEl('shard-set-convert-html')) getEl('shard-set-convert-html').checked = set.editor.convertPastedHtml;
   if (getEl('shard-set-default-file-open')) getEl('shard-set-default-file-open').value = set.filesAndLinks.defaultFileToOpen;
   const specificFileRow = document.getElementById('shard-specific-file-row');
-  const specificFileSelect = document.getElementById('shard-set-specific-file');
-  if (specificFileRow && specificFileSelect) {
+  const specificFileInput = document.getElementById('shard-set-specific-file');
+  if (specificFileRow && specificFileInput) {
     specificFileRow.classList.toggle('hidden', set.filesAndLinks.defaultFileToOpen !== 'specific-file');
-    const notes = [..._notes].sort((a, b) => (a.title || '').localeCompare(b.title || ''));
-    specificFileSelect.innerHTML = notes.map(n => `<option value="${_esc(n.id)}">${_esc(n.title || n.id)}</option>`).join('');
-    if (set.filesAndLinks.defaultSpecificFile) {
-      specificFileSelect.value = set.filesAndLinks.defaultSpecificFile;
-    }
+    const selectedNote = _notes.find(n => n.id === set.filesAndLinks.defaultSpecificFile);
+    specificFileInput.value = selectedNote ? (selectedNote.title || selectedNote.id) : '';
+    specificFileInput.dataset.noteId = set.filesAndLinks.defaultSpecificFile || '';
   }
   if (getEl('shard-set-detect-ext')) getEl('shard-set-detect-ext').checked = set.filesAndLinks.detectAllFileExtensions;
   if (getEl('shard-set-tab-title-bar')) getEl('shard-set-tab-title-bar').checked = set.appearance.showTabTitleBar;
@@ -3502,11 +3500,50 @@ function _wireShardSettings() {
       _saveShardSettings();
     });
   }
-  const specificFileSelect = document.getElementById('shard-set-specific-file');
-  if (specificFileSelect) {
-    specificFileSelect.addEventListener('change', () => {
-      _shardSettings.filesAndLinks.defaultSpecificFile = specificFileSelect.value;
-      _saveShardSettings();
+  const specificFileInput = document.getElementById('shard-set-specific-file');
+  const specificFileSuggestions = document.getElementById('shard-specific-file-suggestions');
+  if (specificFileInput && specificFileSuggestions) {
+    const _showSuggestions = (query) => {
+      const q = query.toLowerCase().trim();
+      const notes = [..._notes].sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+      const matches = q ? notes.filter(n => (n.title || n.id).toLowerCase().includes(q)) : notes;
+      if (!matches.length) {
+        specificFileSuggestions.classList.add('hidden');
+        return;
+      }
+      specificFileSuggestions.innerHTML = matches.map(n =>
+        `<div class="shard-note-menu-item" data-note-id="${_esc(n.id)}"><span>${_esc(n.title || n.id)}</span></div>`
+      ).join('');
+      specificFileSuggestions.classList.remove('hidden');
+      specificFileSuggestions.querySelectorAll('.shard-note-menu-item').forEach(item => {
+        item.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const noteId = item.dataset.noteId;
+          const note = _notes.find(n => n.id === noteId);
+          specificFileInput.value = note ? (note.title || note.id) : noteId;
+          specificFileInput.dataset.noteId = noteId;
+          _shardSettings.filesAndLinks.defaultSpecificFile = noteId;
+          _saveShardSettings();
+          specificFileSuggestions.classList.add('hidden');
+        });
+      });
+    };
+    specificFileInput.addEventListener('input', () => {
+      _showSuggestions(specificFileInput.value);
+    });
+    specificFileInput.addEventListener('focus', () => {
+      _showSuggestions(specificFileInput.value);
+    });
+    specificFileInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        specificFileSuggestions.classList.add('hidden');
+      }
+    });
+    // Close suggestions on outside click
+    document.addEventListener('click', (e) => {
+      if (!specificFileInput.contains(e.target) && !specificFileSuggestions.contains(e.target)) {
+        specificFileSuggestions.classList.add('hidden');
+      }
     });
   }
   const lineNumToggle = document.getElementById('shard-set-line-numbers');

@@ -203,7 +203,7 @@
   <link id="katex-css" rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.css" media="print">
   <script async src="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.js"></script>
   <script id="mermaid-script" async src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script async src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/dist/vis-network.min.js"></script>
+  <script async src="https://cdn.jsdelivr.net/npm/force-graph@1.44.2/dist/force-graph.min.js"></script>
   <script nonce="{{CSP_NONCE}}">
     (function(){
       var k = document.getElementById('katex-css');
@@ -993,7 +993,10 @@
                         <span>Startup file</span>
                         <span class="shard-settings-desc">The note to open on startup.</span>
                       </div>
-                      <select id="shard-set-specific-file" class="shard-settings-select"></select>
+                      <div style="position:relative;min-width:140px;max-width:240px;width:100%;">
+                        <input type="text" id="shard-set-specific-file" class="shard-settings-input" placeholder="Type note name..." autocomplete="off">
+                        <div class="shard-note-menu-dropdown hidden" id="shard-specific-file-suggestions" style="left:0;right:auto;top:calc(100% + 2px);max-height:200px;overflow-y:auto;"></div>
+                      </div>
                     </div>
                   </div>
                   <div class="shard-settings-group">
