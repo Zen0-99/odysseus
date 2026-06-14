@@ -3331,92 +3331,6 @@ function _renderPluginSettings(query = '') {
   });
 }
 
-function _enhanceShardSelects() {
-  const dialog = document.getElementById('shard-settings-dialog');
-  if (!dialog) return;
-  dialog.querySelectorAll('.shard-settings-select').forEach(select => {
-    const existing = select.closest('.shard-custom-select');
-    if (existing) {
-      // Just sync the trigger text for already-enhanced selects
-      const trigger = existing.querySelector('.shard-custom-select-trigger');
-      if (trigger) {
-        const selected = select.options[select.selectedIndex];
-        trigger.textContent = selected ? selected.text : '';
-      }
-      existing.querySelectorAll('.shard-custom-select-option').forEach(opt => {
-        opt.classList.toggle('selected', opt.dataset.value === select.value);
-      });
-      return;
-    }
-    const wrapper = document.createElement('div');
-    wrapper.className = 'shard-custom-select';
-    select.parentNode.insertBefore(wrapper, select);
-    wrapper.appendChild(select);
-
-    const trigger = document.createElement('button');
-    trigger.type = 'button';
-    trigger.className = 'shard-custom-select-trigger';
-    wrapper.appendChild(trigger);
-
-    const dropdown = document.createElement('div');
-    dropdown.className = 'shard-custom-select-dropdown';
-    wrapper.appendChild(dropdown);
-
-    const _sync = () => {
-      const selected = select.options[select.selectedIndex];
-      trigger.textContent = selected ? selected.text : '';
-      dropdown.querySelectorAll('.shard-custom-select-option').forEach(opt => {
-        opt.classList.toggle('selected', opt.dataset.value === select.value);
-      });
-    };
-
-    const _build = () => {
-      dropdown.innerHTML = '';
-      Array.from(select.options).forEach(opt => {
-        const div = document.createElement('div');
-        div.className = 'shard-custom-select-option';
-        div.textContent = opt.text;
-        div.dataset.value = opt.value;
-        div.tabIndex = 0;
-        div.addEventListener('click', () => {
-          select.value = opt.value;
-          _sync();
-          select.dispatchEvent(new Event('change', { bubbles: true }));
-          wrapper.classList.remove('open');
-        });
-        div.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            div.click();
-          }
-        });
-        dropdown.appendChild(div);
-      });
-      _sync();
-    };
-
-    trigger.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const wasOpen = wrapper.classList.contains('open');
-      dialog.querySelectorAll('.shard-custom-select.open').forEach(w => w.classList.remove('open'));
-      if (!wasOpen) wrapper.classList.add('open');
-    });
-
-    _build();
-    // Rebuild when options change (e.g. specific-file select)
-    const observer = new MutationObserver(_build);
-    observer.observe(select, { childList: true });
-  });
-
-  // Close on outside click (attach once)
-  if (!dialog.dataset.shardSelectsWired) {
-    dialog.dataset.shardSelectsWired = '1';
-    const closeAll = () => dialog.querySelectorAll('.shard-custom-select.open').forEach(w => w.classList.remove('open'));
-    document.addEventListener('click', closeAll);
-    dialog.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAll(); });
-  }
-}
-
 function _openShardSettings() {
   _loadShardSettings();
   const dialog = document.getElementById('shard-settings-dialog');
@@ -3486,7 +3400,6 @@ function _openShardSettings() {
   _applyMonospaceFont();
   _applyReadableLineLength();
   _switchSettingsPane('editor');
-  _enhanceShardSelects();
 }
 
 function _closeShardSettings() {

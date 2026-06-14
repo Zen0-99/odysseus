@@ -39291,5 +39291,513 @@ body.theme-frosted .modal {
   cursor: text;
 }
 
+/* ===== Shard Settings Dialog (in-panel) ===== */
+.shard-settings-cog {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  cursor: pointer;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin-left: 6px;
+  flex-shrink: 0;
+  opacity: 0.6;
+  transition: opacity 0.15s, border-color 0.15s, background 0.15s;
+}
+.shard-settings-cog:hover {
+  opacity: 1;
+  border-color: var(--accent, var(--red, #4a9eff));
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+.shard-settings-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.35);
+}
+.shard-settings-dialog.hidden {
+  display: none;
+}
+.shard-settings-dialog-card {
+  background: var(--bg-raised, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  width: min(680px, 90vw);
+  height: min(560px, 75vh);
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+  overflow: hidden;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+}
+.shard-settings-resize-grip {
+  position: absolute;
+  right: 0;
+  top: 48px;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+  z-index: 20;
+}
+
+.shard-settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  cursor: grab;
+  user-select: none;
+}
+.shard-settings-layout {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.shard-settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px;
+  border-right: 1px solid var(--border);
+  flex-shrink: 0;
+  overflow-y: auto;
+  min-width: 160px;
+  max-width: 220px;
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+}
+.shard-settings-nav-item {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border: none;
+  background: none;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.1s;
+  text-align: left;
+  white-space: nowrap;
+  width: 100%;
+  box-sizing: border-box;
+  user-select: none;
+}
+.shard-settings-nav-item svg {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  opacity: 0.7;
+}
+.shard-settings-nav-item:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: var(--fg);
+}
+.shard-settings-nav-item.active {
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+  color: var(--red);
+}
+.shard-settings-nav-item.active svg {
+  opacity: 1;
+}
+.shard-settings-nav-item[data-disabled],
+.shard-settings-nav-item.shard-settings-nav-disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* Force left alignment in settings nav */
+.shard-settings-nav-item,
+.shard-settings-nav-item span {
+  text-align: left !important;
+  justify-content: flex-start !important;
+}
+.shard-settings-nav-cat {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.35;
+  padding: 4px 12px 2px;
+  white-space: nowrap;
+  text-align: left;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+/* Divider between nav sections */
+.shard-settings-nav-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 8px 12px;
+  flex-shrink: 0;
+}
+
+
+/* Monospace font mode for Shard — vault content only
+   Use ID selectors for key containers so specificity (a=2) beats
+   the UI-chrome pane overrides (a=1) that come later in the file. */
+#shard-modal.shard-monospace-font #shard-preview,
+#shard-modal.shard-monospace-font #shard-preview *,
+#shard-modal.shard-monospace-font #shard-folder-tree,
+#shard-modal.shard-monospace-font #shard-folder-tree *,
+#shard-modal.shard-monospace-font #shard-note-list,
+#shard-modal.shard-monospace-font #shard-note-list *,
+#shard-modal.shard-monospace-font #shard-right-pane .shard-right-pane-content,
+#shard-modal.shard-monospace-font #shard-right-pane .shard-right-pane-content *,
+#shard-modal.shard-monospace-font #shard-main-panel .shard-panel-wrap,
+#shard-modal.shard-monospace-font #shard-main-panel .shard-panel-wrap *,
+#shard-modal.shard-monospace-font #shard-main-panel .shard-live-view,
+#shard-modal.shard-monospace-font #shard-main-panel .shard-live-view *,
+#shard-modal.shard-monospace-font #shard-main-panel .shard-source-view,
+#shard-modal.shard-monospace-font #shard-main-panel .shard-source-view *,
+#shard-modal.shard-monospace-font #shard-main-panel .shard-reading-view,
+#shard-modal.shard-monospace-font #shard-main-panel .shard-reading-view * {
+  font-family: 'Fira Code', 'Consolas', monospace !important;
+}
+
+/* UI chrome stays sans-serif (override must come AFTER the * rule above) */
+#shard-modal.shard-monospace-font .shard-ribbon,
+#shard-modal.shard-monospace-font .shard-ribbon *,
+#shard-modal.shard-monospace-font .shard-left-pane,
+#shard-modal.shard-monospace-font .shard-left-pane *,
+#shard-modal.shard-monospace-font .shard-right-pane,
+#shard-modal.shard-monospace-font .shard-right-pane *,
+#shard-modal.shard-monospace-font .shard-tabs,
+#shard-modal.shard-monospace-font .shard-tabs *,
+#shard-modal.shard-monospace-font .shard-note-toolbar,
+#shard-modal.shard-monospace-font .shard-note-toolbar *,
+#shard-modal.shard-monospace-font .shard-vault-dropdown-current,
+#shard-modal.shard-monospace-font .shard-vault-dropdown-menu,
+#shard-modal.shard-monospace-font .shard-vault-dropdown-current *,
+#shard-modal.shard-monospace-font .shard-vault-dropdown-menu *,
+#shard-modal.shard-monospace-font .shard-settings-dialog,
+#shard-modal.shard-monospace-font .shard-settings-dialog *,
+#shard-modal.shard-monospace-font .shard-settings-header,
+#shard-modal.shard-monospace-font .shard-settings-header *,
+#shard-modal.shard-monospace-font .shard-settings-nav,
+#shard-modal.shard-monospace-font .shard-settings-nav *,
+#shard-modal.shard-monospace-font .shard-settings-content,
+#shard-modal.shard-monospace-font .shard-settings-content *,
+#shard-modal.shard-monospace-font .shard-context-menu,
+#shard-modal.shard-monospace-font .shard-context-menu *,
+#shard-modal.shard-monospace-font .shard-ribbon-menu,
+#shard-modal.shard-monospace-font .shard-ribbon-menu *,
+#shard-modal.shard-monospace-font .shard-ribbon-config-dialog,
+#shard-modal.shard-monospace-font .shard-ribbon-config-dialog *,
+#shard-modal.shard-monospace-font .shard-graph-toolbar,
+#shard-modal.shard-monospace-font .shard-graph-toolbar *,
+#shard-modal.shard-monospace-font .shard-graph-settings-panel,
+#shard-modal.shard-monospace-font .shard-graph-settings-panel *,
+#shard-modal.shard-monospace-font .shard-graph-tooltip,
+#shard-modal.shard-monospace-font .shard-plugin-settings-sidebar,
+#shard-modal.shard-monospace-font .shard-plugin-settings-sidebar *,
+#shard-modal.shard-monospace-font .shard-plugin-settings-content,
+#shard-modal.shard-monospace-font .shard-plugin-settings-content *,
+#shard-modal.shard-monospace-font #shard-header,
+#shard-modal.shard-monospace-font #shard-header * {
+  font-family: var(--font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif) !important;
+}
+
+/* Code blocks inside the editor keep their monospace font even in reading/live view */
+#shard-modal.shard-monospace-font .shard-source-view .md-code,
+#shard-modal.shard-monospace-font .shard-source-view .md-code-block,
+#shard-modal.shard-monospace-font .shard-live-view .md-code,
+#shard-modal.shard-monospace-font .shard-live-view .md-code-block,
+#shard-modal.shard-monospace-font .shard-reading-view .md-code,
+#shard-modal.shard-monospace-font .shard-reading-view .md-code-block {
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace !important;
+}
+/* Settings dialog scrollbars at full opacity */
+.shard-settings-content::-webkit-scrollbar,
+.shard-settings-nav::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.shard-settings-content::-webkit-scrollbar-track,
+.shard-settings-nav::-webkit-scrollbar-track {
+  background: transparent;
+}
+.shard-settings-content::-webkit-scrollbar-thumb,
+.shard-settings-nav::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--fg) 25%, transparent);
+  border-radius: 5px;
+}
+.shard-settings-content::-webkit-scrollbar-thumb:hover,
+.shard-settings-nav::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--fg) 40%, transparent);
+}
+
+.shard-settings-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 16px;
+}
+.shard-settings-section.hidden {
+  display: none;
+}
+.shard-settings-group {
+  margin-bottom: 16px;
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.shard-settings-group:last-child {
+  margin-bottom: 0;
+}
+.shard-settings-group-title {
+  margin: 0 0 10px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  opacity: 0.45;
+  font-weight: 600;
+}
+.shard-settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 35%, transparent);
+  font-size: 12.5px;
+}
+.shard-settings-row:first-child {
+  padding-top: 4px;
+}
+.shard-settings-row:last-child {
+  border-bottom: none;
+  padding-bottom: 4px;
+}
+.shard-settings-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+.shard-settings-info > span:first-child {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.shard-settings-desc {
+  font-size: 11px;
+  opacity: 0.5;
+  line-height: 1.3;
+}
+.shard-settings-input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--fg);
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  min-width: 140px;
+  max-width: 240px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.shard-settings-input:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Settings range slider — match app theme */
+.shard-settings-content input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  background: transparent;
+  border-radius: 2px;
+}
+.shard-settings-content input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+}
+.shard-settings-content input[type="range"]::-moz-range-track {
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+}
+.shard-settings-content input[type="range"]::-moz-range-progress {
+  height: 4px;
+  background: var(--red);
+  border-radius: 2px;
+}
+.shard-settings-content input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--red);
+  border: none;
+  cursor: pointer;
+  margin-top: -5px;
+}
+.shard-settings-content input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--red);
+  border: none;
+  cursor: pointer;
+}
+.shard-settings-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.shard-settings-disabled .admin-slider {
+  opacity: 0.4;
+}
+.shard-plugin-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+}
+.shard-plugin-toggle-row .shard-plugin-info {
+  flex: 1;
+  min-width: 0;
+}
+.shard-plugin-toggle-row .shard-plugin-name {
+  font-size: 13px;
+  font-weight: 500;
+}
+.shard-plugin-toggle-row .shard-plugin-desc {
+  font-size: 11px;
+  opacity: 0.6;
+}
+.shard-plugin-cog {
+  background: none;
+  border: none;
+  color: var(--fg);
+  opacity: 0.5;
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: opacity 0.1s, background 0.1s;
+  flex-shrink: 0;
+}
+.shard-plugin-cog:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.shard-plugin-settings-sidebar-item {
+  transition: background 0.08s;
+}
+.shard-plugin-settings-sidebar-item:hover {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+.shard-plugin-settings-sidebar-item.active {
+  background: color-mix(in srgb, var(--red) 15%, transparent);
+  color: var(--red);
+}
+.shard-plugin-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0 0 12px 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  color: var(--fg);
+}
+#shard-plugin-resize:hover,
+#shard-plugin-resize.dragging {
+  background: var(--accent, var(--red, #4a9eff));
+}
+/* Note menu dropdown */
+.shard-note-menu-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 300;
+  background: var(--bg-raised, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+  min-width: 200px;
+  padding: 4px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+.shard-note-menu-dropdown.hidden { display: none; }
+.shard-note-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--fg);
+  transition: background 0.1s;
+  white-space: nowrap;
+}
+.shard-note-menu-item:hover:not(.shard-note-menu-disabled) {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.shard-note-menu-disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.shard-note-menu-danger {
+  color: var(--red, #ff6b6b);
+}
+.shard-note-menu-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+.shard-note-menu-check {
+  position: relative;
+}
+.shard-note-menu-checkmark {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.shard-note-menu-check.is-checked .shard-note-menu-checkmark::after {
+  content: '';
+  width: 6px;
+  height: 10px;
+  border-right: 2px solid var(--accent, var(--red, #4a9eff));
+  border-bottom: 2px solid var(--accent, var(--red, #4a9eff));
+  transform: rotate(45deg) translate(-1px, -1px);
 }
 
