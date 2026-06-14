@@ -691,6 +691,11 @@ app.include_router(setup_compare_routes(session_manager))
 from routes.prefs_routes import setup_prefs_routes
 app.include_router(setup_prefs_routes())
 
+# Plugins
+from routes.plugin_routes import setup_plugin_routes
+app.include_router(setup_plugin_routes())
+logger.info("Plugin routes initialized")
+
 # Backup (export/import user data)
 from routes.backup_routes import setup_backup_routes
 app.include_router(setup_backup_routes(memory_manager, preset_manager, skills_manager))
@@ -1117,10 +1122,24 @@ async def _startup_event():
     from src.cookbook_serve_lifecycle import cookbook_serve_lifecycle_loop
     _startup_tasks.append(asyncio.create_task(cookbook_serve_lifecycle_loop()))
 
+    # Plugin backend startup hooks
+    try:
+        from src.plugin_runtime import startup_all
+        startup_all()
+        logger.info("Plugin startup hooks complete")
+    except Exception as e:
+        logger.warning(f"Plugin startup hooks failed (non-critical): {type(e).__name__}: {e}")
+
     logger.info("Application startup complete")
 
 async def _shutdown_event():
     logger.info("Application shutting down...")
+    # Plugin backend shutdown hooks
+    try:
+        from src.plugin_runtime import shutdown_all
+        shutdown_all()
+    except Exception as e:
+        logger.warning(f"Plugin shutdown hooks failed (non-critical): {type(e).__name__}: {e}")
     if upload_cleanup_task:
         upload_cleanup_task.cancel()
         try:
