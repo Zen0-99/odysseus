@@ -13,6 +13,7 @@
        browser-default styling that didn't match the Odysseus theme. -->
   <meta name="format-detection" content="telephone=no, date=no, address=no, email=no">
   <link rel="apple-touch-icon" href="/static/icon-192.png">
+  <script nonce="{{CSP_NONCE}}">window.__cspNonce__="{{CSP_NONCE}}";</script>
   <script nonce="{{CSP_NONCE}}">
   window._odysseusLoadTime = Date.now();
   (function(){
@@ -673,6 +674,9 @@
     <button class="icon-rail-btn" id="rail-notes" title="Notes"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5"/><path d="M8 17.5 15.5 10l2.5 2.5L10.5 20H8z"/></svg></button>
     <button class="icon-rail-btn" id="rail-tasks" title="Tasks"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M9 16l2 2 4-4"/></svg></button>
     <button class="icon-rail-btn" id="rail-theme" title="Theme"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 0 0 20 5 5 0 0 0 5-5 3 3 0 0 0-3-3h-2a3 3 0 0 1-3-3 5 5 0 0 1 5-5"/></svg></button>
+    <button class="icon-rail-btn admin-only" id="rail-plugins" title="Plugins"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="7" rx="2"/><rect x="2" y="14" width="20" height="7" rx="2"/></svg></button>
+    <div class="rail-separator" id="plugin-rail-separator" style="display:none;"></div>
+    <div id="plugin-rail-buttons" style="display:flex;flex-direction:column;gap:4px;"></div>
     <div style="flex:1"></div>
     <!-- Static: bottom -->
     <button class="icon-rail-btn" id="rail-settings" title="Settings"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
@@ -915,6 +919,15 @@
           </svg>
           <span class="grow">Theme</span>
         </div>
+        <div class="list-item admin-only" id="tool-plugins-btn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+            style="flex-shrink:0;opacity:0.5;">
+            <rect x="2" y="3" width="20" height="7" rx="2"/>
+            <rect x="2" y="14" width="20" height="7" rx="2"/>
+          </svg>
+          <span class="grow">Plugins</span>
+        </div>
       </div>
     </div>
     <div class="sidebar-user-bar" id="sidebar-user-bar">
@@ -981,6 +994,8 @@
       }).catch(function(){});
     })();
     </script>
+    <!-- Plugin panels -->
+    <div id="plugin-panels" style="display:none;flex:1;flex-direction:column;overflow:hidden;position:relative;"></div>
     <div id="chat-history" class="chat-history" role="log" aria-live="polite"></div>
 
     <!-- Attachments strip -->
@@ -2319,6 +2334,98 @@
     </div>
   </div>
 
+  <!-- Plugins Modal -->
+  <div id="plugins-modal" class="modal hidden">
+    <div class="modal-content" role="dialog" aria-label="Plugins" style="width:900px;max-width:95vw;height:80vh;display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--border);padding:0;">
+      <div class="modal-header" style="padding:10px 16px;">
+        <h4><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><rect x="2" y="3" width="20" height="7" rx="2"/><rect x="2" y="14" width="20" height="7" rx="2"/></svg>Plugins</h4>
+        <button class="close-btn" id="close-plugins-modal" aria-label="Close plugins">&#x2716;</button>
+      </div>
+      <div style="display:flex;flex:1;overflow:hidden;">
+        <!-- Left panel -->
+        <div style="flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0;background:var(--bg);">
+          <div style="padding:10px 16px 8px;display:flex;gap:8px;align-items:center;position:relative;">
+            <input type="text" id="plugin-repo-url" placeholder="Paste GitHub repo URL or filter..." style="flex:1;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg,var(--panel));color:var(--fg);font-size:13px;" autocomplete="off" />
+            <button id="plugin-discover-btn" class="plugin-icon-btn" title="Search" style="width:32px;height:32px;border-radius:6px;display:flex;align-items:center;justify-content:center;cursor:pointer;border:1.5px solid var(--border);background:transparent;color:var(--fg);transition:all .15s;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            </button>
+            <div id="plugin-search-dropdown" class="hidden" style="position:absolute;top:calc(100% - 2px);left:16px;right:54px;z-index:9999;background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:8px 0;box-shadow:0 4px 12px rgba(0,0,0,0.15);">
+              <div id="plugin-search-recent" style="padding:0 10px;"></div>
+              <div style="border-top:1px solid var(--border);margin-top:6px;padding:6px 10px 0;">
+                <div style="font-size:10px;opacity:0.5;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.5px;">Filter by</div>
+                <div class="plugin-filter-syntax" data-prefix="tag:" style="padding:4px 6px;border-radius:4px;cursor:pointer;font-size:12px;opacity:0.85;">tag:</div>
+                <div class="plugin-filter-syntax" data-prefix="name:" style="padding:4px 6px;border-radius:4px;cursor:pointer;font-size:12px;opacity:0.85;">name:</div>
+                <div class="plugin-filter-syntax" data-prefix="desc:" style="padding:4px 6px;border-radius:4px;cursor:pointer;font-size:12px;opacity:0.85;">desc:</div>
+              </div>
+            </div>
+          </div>
+          <div id="plugin-tabs" style="display:flex;gap:0;border-bottom:1px solid var(--border);align-items:center;padding:4px 16px;">
+            <button class="admin-tab active" data-plugin-tab="discover">Discover</button>
+            <button class="admin-tab" data-plugin-tab="installed">Installed</button>
+            <button class="admin-tab" data-plugin-tab="favourites">Favorites</button>
+            <div style="margin-left:auto;display:flex;gap:4px;">
+              <button id="plugin-sort-btn" class="plugin-icon-btn" title="Sort" style="width:32px;height:32px;border-radius:6px;display:flex;align-items:center;justify-content:center;cursor:pointer;border:1.5px solid var(--border);background:transparent;color:var(--fg);transition:all .15s;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="14" y2="12"/><line x1="4" y1="18" x2="8" y2="18"/></svg>
+              </button>
+              <button id="plugin-refresh-btn" class="plugin-icon-btn" title="Refresh" style="width:32px;height:32px;border-radius:6px;display:flex;align-items:center;justify-content:center;cursor:pointer;border:1.5px solid var(--border);background:transparent;color:var(--fg);transition:all .15s;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.12-9.36L1 10"/></svg>
+              </button>
+            </div>
+          </div>
+          <div id="plugin-panel-discover" style="flex:1;overflow:auto;padding:10px 16px;">
+            <div id="plugin-discover-loading" style="display:none;text-align:center;padding:16px;opacity:0.6;">Loading...</div>
+            <div id="plugin-discover-grid" style="display:flex;flex-direction:column;gap:6px;"></div>
+            <div id="plugin-discover-empty" style="text-align:center;padding:16px;opacity:0.5;">Paste a repo URL and click <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg> to discover plugins.</div>
+          </div>
+          <div id="plugin-panel-installed" style="flex:1;overflow:auto;padding:10px 16px;display:none;">
+            <div id="plugin-installed-list" style="display:flex;flex-direction:column;gap:6px;"></div>
+            <div id="plugin-installed-empty" style="text-align:center;padding:16px;opacity:0.5;">No plugins installed yet.</div>
+          </div>
+          <div id="plugin-panel-favourites" style="flex:1;overflow:auto;padding:10px 16px;display:none;">
+            <div id="plugin-favourites-list" style="display:flex;flex-direction:column;gap:6px;"></div>
+            <div id="plugin-favourites-empty" style="text-align:center;padding:16px;opacity:0.5;">No favorite plugins yet. Use the star button in the detail panel to add favorites.</div>
+          </div>
+          <!-- Bottom bar: selected count -->
+          <div id="plugin-bottom-bar" style="padding:6px 16px;display:flex;align-items:center;justify-content:space-between;min-height:28px;">
+            <span id="plugin-selected-count" style="font-size:12px;opacity:0.6;"></span>
+            <span></span>
+          </div>
+        </div>
+        <!-- Right panel: detail -->
+        <div id="plugin-detail-panel" style="width:320px;min-width:260px;display:flex;flex-direction:column;padding:16px;margin:8px;border-radius:10px;border:1px solid var(--border);overflow:auto;background:var(--panel);">
+          <div id="plugin-detail-empty" style="text-align:center;opacity:0.5;padding-top:40px;">Select a plugin to view details</div>
+          <div id="plugin-detail-content" style="display:none;flex:1;flex-direction:column;gap:4px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+              <div style="display:flex;align-items:baseline;gap:8px;flex:1;flex-wrap:wrap;">
+                <h3 id="plugin-detail-title" style="margin:0;"></h3>
+                <span id="plugin-detail-version" style="font-size:11px;opacity:0.6;"></span>
+              </div>
+              <button id="plugin-detail-fav-btn" class="plugin-icon-btn" title="Favorite" style="width:36px;height:36px;border-radius:6px;display:flex;align-items:center;justify-content:center;cursor:pointer;border:none;background:transparent;color:var(--fg);transition:all .15s;flex-shrink:0;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+              </button>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <span id="plugin-detail-update" style="font-size:11px;color:var(--accent,var(--red));display:none;">Update available</span>
+              <span id="plugin-detail-hash" style="font-size:11px;display:none;"></span>
+            </div>
+            <div id="plugin-detail-desc" style="margin:0;opacity:0.75;font-size:12px;line-height:1.5;"></div>
+            <div id="plugin-detail-tags" style="display:flex;gap:4px;flex-wrap:wrap;padding-top:8px;"></div>
+            <div style="margin-top:auto;"></div>
+            <div id="plugin-detail-settings-wrap" style="display:none;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--panel);margin-top:8px;">
+              <div style="font-size:11px;opacity:0.6;margin-bottom:6px;">Plugin Settings</div>
+              <div id="plugin-detail-settings-form" style="display:flex;flex-direction:column;gap:6px;"></div>
+            </div>
+            <div style="display:flex;gap:8px;flex-direction:column;padding-top:8px;">
+              <button id="plugin-settings-btn" class="admin-btn" style="display:none;width:100%;">Settings</button>
+              <button id="plugin-install-btn" class="admin-btn-add" style="width:100%;">Install</button>
+              <button id="plugin-uninstall-btn" class="admin-btn-delete" style="display:none;width:100%;">Uninstall</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Search overlay (Ctrl+K command palette) -->
   <div class="search-overlay hidden" id="search-overlay">
     <div class="search-popup">
@@ -2365,6 +2472,7 @@
 <script type="module" src="/static/js/settings.js"></script>
 <script type="module" src="/static/js/admin.js"></script>
 <script type="module" src="/static/js/assistant.js"></script>
+<script type="module" src="/static/js/plugins.js"></script>
 <script type="module" src="/static/app.js"></script>  <!-- app.js must be LAST -->
 <script type="module" src="/static/js/init.js"></script>
 <script type="module" src="/static/js/a11y.js"></script>
