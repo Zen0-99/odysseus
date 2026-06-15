@@ -71,7 +71,9 @@ def _is_sensitive_path(resolved: str) -> bool:
     """Return True if *resolved* falls under a sensitive directory or
     matches a sensitive filename — regardless of what root it sits under.
     """
-    parts = resolved.split(os.sep)
+    # Normalise separators so forward-slash test paths work on Windows too.
+    normalised = resolved.replace("/", os.sep)
+    parts = normalised.split(os.sep)
     filenames: set[str] = {parts[-1]} if parts else set()
 
     # Check if any path component is a sensitive directory.
@@ -111,6 +113,11 @@ def _tool_path_roots() -> list[str]:
     tmpdir = os.environ.get("TMPDIR")
     if tmpdir:
         roots.append(tmpdir)
+
+    # System temp directory (cross-platform, especially Windows where
+    # tempfile.gettempdir() returns e.g. C:\Users\...\AppData\Local\Temp).
+    import tempfile as _tf
+    roots.append(_tf.gettempdir())
 
     # Opt-in extra roots from settings.
     try:
