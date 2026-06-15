@@ -37008,9 +37008,8 @@ body.theme-frosted .modal {
   color: var(--color-error, #ff6b6b);
   border-color: var(--color-error, #ff6b6b);
 }
-.shard-ribbon-menu-item .shard-ribbon-menu-action.add:hover {
-  color: var(--color-success, #51cf66);
-  border-color: var(--color-success, #51cf66);
+.shard-ribbon-menu-item .shard-note-menu-checkmark {
+  margin-left: auto;
 }
 .shard-ribbon-menu-divider {
   height: 1px;
@@ -37232,8 +37231,8 @@ body.theme-frosted .modal {
 }
 .shard-graph-toolbtn {
   pointer-events: auto;
-  width: 28px;
-  height: 28px;
+  width: 34px;
+  height: 34px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -37253,8 +37252,9 @@ body.theme-frosted .modal {
   top: 44px;
   right: 10px;
   width: 280px;
-  max-height: calc(100% - 60px);
-  overflow-y: auto;
+  height: min(480px, calc(100% - 60px));
+  max-height: min(480px, calc(100% - 60px));
+  overflow: hidden;
   background: var(--bg-raised, var(--bg));
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -37264,6 +37264,9 @@ body.theme-frosted .modal {
   font-size: 12px;
   scrollbar-width: thin;
   pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  resize: none;
 }
 .shard-graph-settings-panel.hidden { display: none; }
 
@@ -37276,7 +37279,40 @@ body.theme-frosted .modal {
   padding: 12px 14px;
   border-bottom: 1px solid var(--border);
   letter-spacing: 0.2px;
+  cursor: grab;
+  user-select: none;
+  flex-shrink: 0;
 }
+.shard-graph-settings-header:active { cursor: grabbing; }
+
+.shard-graph-settings-resize {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  z-index: 10;
+  background: linear-gradient(135deg, transparent 50%, color-mix(in srgb, var(--fg) 25%, transparent) 50%);
+  border-bottom-right-radius: 10px;
+}
+
+.shard-graph-slider-tooltip {
+  position: fixed;
+  z-index: 1000;
+  background: var(--bg-raised, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.1s;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+}
+.shard-graph-slider-tooltip.visible { opacity: 1; }
 .shard-graph-settings-close {
   background: transparent;
   border: none;
@@ -37304,6 +37340,57 @@ body.theme-frosted .modal {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+/* Floating graph window */
+.shard-graph-float {
+  position: fixed !important;
+  top: 60px;
+  left: 60px;
+  width: 800px;
+  height: 600px;
+  background: var(--bg, #1a1d23);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.4);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.shard-graph-float-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--bg-raised, var(--bg));
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+  flex-shrink: 0;
+}
+.shard-graph-float-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.shard-graph-float-close {
+  background: transparent;
+  border: none;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 14px;
+  opacity: 0.5;
+  padding: 2px 6px;
+  border-radius: 5px;
+}
+.shard-graph-float-close:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.shard-graph-float-body {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  min-height: 0;
 }
 
 /* Search */
@@ -37386,6 +37473,8 @@ body.theme-frosted .modal {
   background: transparent;
   border-radius: 2px;
   cursor: pointer;
+  border: none;
+  outline: none;
 }
 .shard-graph-slider-wrap input[type="range"]::-webkit-slider-runnable-track {
   height: 4px;
@@ -37478,6 +37567,94 @@ body.theme-frosted .modal {
   opacity: 1;
 }
 
+/* Collapsible sections */
+.shard-graph-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  user-select: none;
+}
+.shard-graph-section-chevron {
+  font-size: 10px;
+  opacity: 0.6;
+  margin-left: 4px;
+}
+
+/* Groups */
+.shard-graph-groups-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.shard-graph-group-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  background: color-mix(in srgb, var(--bg) 60%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.shard-graph-group-color {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  cursor: pointer;
+  border: 2px solid color-mix(in srgb, var(--fg) 20%, transparent);
+}
+.shard-graph-group-query {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--fg);
+  outline: none;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+.shard-graph-group-query:focus {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.shard-graph-group-query:empty::before {
+  content: 'Enter query...';
+  opacity: 0.4;
+  pointer-events: none;
+}
+.shard-graph-group-del {
+  background: transparent;
+  border: none;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 12px;
+  opacity: 0.4;
+  padding: 2px 4px;
+  border-radius: 4px;
+  line-height: 1;
+}
+.shard-graph-group-del:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.shard-graph-new-group-btn {
+  width: 100%;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 500;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.shard-graph-new-group-btn:hover {
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+  border-color: var(--red);
+  color: var(--red);
+}
+
 .shard-ribbon-sep {
   width: 20px;
   height: 1px;
@@ -37524,6 +37701,123 @@ body.theme-frosted .modal {
   flex: 1;
 }
 .shard-right-placeholder.hidden { display: none; }
+
+/* Panel stack system */
+.shard-panel-stack {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: 0;
+}
+/* Horizontal row for side-by-side panels */
+.shard-panel-row {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  gap: 0;
+}
+.shard-panel-row > .shard-panel-group {
+  flex: 1;
+  min-width: 0;
+}
+/* Horizontal resize handle between side-by-side panels */
+.shard-panel-resize-h {
+  width: 1px;
+  cursor: col-resize;
+  background: transparent;
+  border-left: 1px solid var(--border, rgba(255,255,255,0.06));
+  flex-shrink: 0;
+  transition: border-color 0.15s;
+}
+.shard-panel-resize-h:hover {
+  border-left-color: var(--accent, var(--red, #4a9eff));
+}
+/* Also make vertical resize handle consistent thin line */
+.shard-panel-resize-v {
+  height: 1px;
+  cursor: row-resize;
+  background: transparent;
+  border-top: 1px solid var(--border, rgba(255,255,255,0.06));
+  flex-shrink: 0;
+  transition: border-color 0.15s;
+}
+.shard-panel-resize-v:hover {
+  border-top-color: var(--accent, var(--red, #4a9eff));
+}
+.shard-panel-group {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+.shard-panel-group.hidden {
+  display: none;
+}
+/* Panel edge drop zones for drag-and-drop new panel creation */
+.shard-panel-group {
+  position: relative;
+}
+.shard-panel-edge-zone {
+  position: absolute;
+  z-index: 50;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.shard-panel-edge-zone.active {
+  opacity: 1;
+}
+.shard-panel-edge-zone[data-edge="top"],
+.shard-panel-edge-zone[data-edge="bottom"] {
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--accent, var(--red, #4a9eff));
+}
+.shard-panel-edge-zone[data-edge="top"] {
+  top: 0;
+}
+.shard-panel-edge-zone[data-edge="bottom"] {
+  bottom: 0;
+}
+.shard-panel-edge-zone[data-edge="left"],
+.shard-panel-edge-zone[data-edge="right"] {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--accent, var(--red, #4a9eff));
+}
+.shard-panel-edge-zone[data-edge="left"] {
+  left: 0;
+}
+.shard-panel-edge-zone[data-edge="right"] {
+  right: 0;
+}
+.shard-panel-placeholder {
+  padding: 20px;
+  text-align: center;
+  opacity: 0.5;
+  font-size: 12px;
+  flex: 1;
+}
+.shard-panel-placeholder.hidden {
+  display: none;
+}
+.shard-panel-resize-v {
+  height: 4px;
+  background: transparent;
+  cursor: row-resize;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+.shard-panel-resize-v:hover {
+  background: var(--accent, var(--red, #4a9eff));
+}
+
 /* Right sidebar tabs */
 .shard-right-tabs {
   display: flex;
@@ -37562,6 +37856,10 @@ body.theme-frosted .modal {
   background: color-mix(in srgb, var(--fg) 8%, transparent);
 }
 .shard-right-tab.dragging { opacity: 0.3; cursor: grabbing; }
+.shard-right-tab.drop-target-left { border-left: 2px solid var(--accent, var(--red, #4a9eff)); }
+.shard-right-tab.drop-target-right { border-right: 2px solid var(--accent, var(--red, #4a9eff)); }
+.shard-sidebar-tab.drop-target-left { border-left: 2px solid var(--accent, var(--red, #4a9eff)); }
+.shard-sidebar-tab.drop-target-right { border-right: 2px solid var(--accent, var(--red, #4a9eff)); }
 .shard-right-tab svg { flex-shrink: 0; }
 .shard-right-tab span { display: none; }
 /* Context menu */
@@ -37686,6 +37984,7 @@ body.theme-frosted .modal {
   display: flex;
   align-items: center;
   gap: 4px;
+  width: 100%;
   padding: 3px 6px;
   border-radius: 4px;
   cursor: pointer;
@@ -37701,7 +38000,7 @@ body.theme-frosted .modal {
 }
 .shard-tree-row.drag-over {
   background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 20%, transparent);
-  outline: 1px dashed var(--accent, var(--red, #4a9eff));
+  box-shadow: inset 0 0 0 1px var(--accent, var(--red, #4a9eff));
 }
 /* Grabbing cursor only during active drag */
 .shard-folder-tree.shard-dragging .shard-tree-row[data-note-id],
@@ -39290,6 +39589,1058 @@ body.theme-frosted .modal {
   outline: none;
   cursor: text;
 }
+/* Hide ALL syntax markers by default in an active source line */
+.lp-source .md-syntax,
+.lp-source .md-bracket,
+.lp-source .md-hash,
+.lp-source .md-bq-mark,
+.lp-source .md-li-marker {
+  display: none;
+}
+/* When a token is active, reveal its DIRECT syntax markers only */
+.lp-source .md-h1.active > .md-hash,
+.lp-source .md-h2.active > .md-hash,
+.lp-source .md-h3.active > .md-hash,
+.lp-source .md-h4.active > .md-hash,
+.lp-source .md-h5.active > .md-hash,
+.lp-source .md-h6.active > .md-hash,
+.lp-source .md-bq.active > .md-bq-mark,
+.lp-source .md-li-marker.active,
+.lp-source .md-bold.active > .md-syntax,
+.lp-source .md-italic.active > .md-syntax,
+.lp-source .md-strike.active > .md-syntax,
+.lp-source .md-code.active > .md-syntax,
+.lp-source .md-wikilink.active > .md-bracket,
+.lp-source .md-link.active > .md-syntax,
+.lp-source .md-highlight.active > .md-syntax,
+.lp-source .md-footnote.active > .md-syntax,
+.lp-source .md-comment.active > .md-syntax,
+.lp-source .md-math.active > .md-syntax,
+.lp-source .md-image.active > .md-syntax,
+.lp-source .md-task.active > .md-task-check,
+.lp-source .md-escaped.active > .md-syntax {
+  display: inline;
+}
+/* Source token wrappers must visually match clean equivalents when syntax is hidden */
+.shard-live-view .lp-source .md-h1,
+.shard-reading-view .lp-source .md-h1 { font-size: 2em; font-weight: 700; display: block; margin: 0; line-height: inherit; }
+.shard-live-view .lp-source .md-h2,
+.shard-reading-view .lp-source .md-h2 { font-size: 1.6em; font-weight: 600; display: block; margin: 0; line-height: inherit; }
+.shard-live-view .lp-source .md-h3,
+.shard-reading-view .lp-source .md-h3 { font-size: 1.3em; font-weight: 600; display: block; margin: 0; line-height: inherit; }
+.shard-live-view .lp-source .md-h4,
+.shard-reading-view .lp-source .md-h4 { font-size: 1.15em; font-weight: 600; display: block; margin: 0; line-height: inherit; }
+.shard-live-view .lp-source .md-h5,
+.shard-reading-view .lp-source .md-h5 { font-size: 1em; font-weight: 600; display: block; margin: 0; line-height: inherit; }
+.shard-live-view .lp-source .md-h6,
+.shard-reading-view .lp-source .md-h6 { font-size: 0.9em; font-weight: 600; display: block; margin: 0; line-height: inherit; }
+.lp-source .md-bold { font-weight: bold; }
+.lp-source .md-italic { font-style: italic; }
+.lp-source .md-strike { text-decoration: line-through; opacity: 0.75; }
+.lp-source .md-code {
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.92em;
+}
+.lp-source .md-bq {
+  border-left: 3px solid color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 50%, transparent);
+  padding-left: 12px;
+  margin: 4px 0;
+  display: block;
+}
+.lp-source .md-hr {
+  display: block;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 20%, transparent);
+  margin: 8px 0;
+}
+.lp-source .md-link-text,
+.lp-source .wikilink-source {
+  color: var(--accent, var(--red, #4a9eff));
+  text-decoration: underline;
+}
+.lp-source .md-highlight {
+  background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 25%, transparent);
+}
+.lp-source .md-footnote {
+  color: var(--accent, var(--red, #4a9eff));
+}
+.lp-source .md-comment {
+  color: color-mix(in srgb, var(--fg) 50%, transparent);
+  font-style: italic;
+}
+.lp-source .md-math {
+  font-family: 'Times New Roman', serif;
+  font-style: italic;
+}
+.lp-source .md-image-alt {
+  color: var(--accent, var(--red, #4a9eff));
+}
+.lp-source .md-task-check {
+  color: var(--accent, var(--red, #4a9eff));
+}
+.lp-source .md-escaped {
+  opacity: 0.75;
+}
+.shard-live-view .lp-line.lp-empty,
+.shard-reading-view .lp-line.lp-empty {
+  margin-bottom: 0;
+  min-height: 0.35em;
+}
+.shard-reading-view .lp-source {
+  display: block;
+  outline: none;
+  cursor: default;
+}
+.shard-source-view .md-h1, .shard-live-view .md-h1 { font-size: 2em; font-weight: 700; line-height: 1.2; display: block; margin: 0.6em 0 0.3em; }
+.shard-source-view .md-h2, .shard-live-view .md-h2 { font-size: 1.6em; font-weight: 600; line-height: 1.25; display: block; margin: 0.5em 0 0.25em; }
+.shard-source-view .md-h3, .shard-live-view .md-h3 { font-size: 1.3em; font-weight: 600; line-height: 1.3; display: block; margin: 0.4em 0 0.2em; }
+.shard-source-view .md-h4, .shard-live-view .md-h4 { font-size: 1.15em; font-weight: 600; line-height: 1.35; display: block; margin: 0.35em 0 0.15em; }
+.shard-source-view .md-h5, .shard-live-view .md-h5 { font-size: 1em; font-weight: 600; line-height: 1.4; display: block; margin: 0.3em 0 0.1em; }
+.shard-source-view .md-h6, .shard-live-view .md-h6 { font-size: 0.9em; font-weight: 600; line-height: 1.4; display: block; margin: 0.25em 0 0.1em; }
+.shard-source-view .md-bold, .shard-live-view .md-bold { font-weight: bold; }
+.shard-source-view .md-italic, .shard-live-view .md-italic { font-style: italic; }
+.shard-source-view .md-strike, .shard-live-view .md-strike { text-decoration: line-through; opacity: 0.75; }
+.shard-source-view .md-code, .shard-live-view .md-code {
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.92em;
+}
+.shard-source-view .md-code-block, .shard-live-view .md-code-block, .shard-reading-view .md-code-block {
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin: 4px 0;
+  font-size: 0.92em;
+  line-height: 1.5;
+}
+.shard-source-view .md-bq, .shard-live-view .md-bq {
+  border-left: 3px solid color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 50%, transparent);
+  padding-left: 12px;
+  margin: 4px 0;
+  display: block;
+}
+.shard-source-view .md-link-text, .shard-live-view .md-link-text {
+  color: var(--accent, var(--red, #4a9eff));
+  text-decoration: underline;
+}
+.shard-source-view .md-hr, .shard-live-view .md-hr {
+  display: block;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 20%, transparent);
+  margin: 8px 0;
+  line-height: 0;
+}
+
+/* Source view line numbers */
+.shard-source-view.shard-show-line-numbers {
+  counter-reset: source-line;
+}
+.shard-source-view.shard-show-line-numbers .lp-line {
+  display: flex;
+  gap: 8px;
+}
+.shard-source-view.shard-show-line-numbers .lp-line::before {
+  counter-increment: source-line;
+  content: counter(source-line);
+  display: inline-block;
+  width: 2em;
+  text-align: right;
+  color: var(--fg);
+  opacity: 0.4;
+  font-size: 0.85em;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+/* Unified heading sizes across Reading / Source / Live Preview */
+.shard-body-wrap {
+  width: 100%;
+  overflow-wrap: anywhere;
+  word-wrap: break-word;
+}
+.shard-readable-line .shard-body-wrap {
+  max-width: 700px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.shard-body-wrap h1 { font-size: 2em; font-weight: 700; line-height: 1.2; margin: 0.6em 0 0.3em; }
+.shard-body-wrap h2 { font-size: 1.6em; font-weight: 600; line-height: 1.25; margin: 0.5em 0 0.25em; }
+.shard-body-wrap h3 { font-size: 1.3em; font-weight: 600; line-height: 1.3; margin: 0.4em 0 0.2em; }
+.shard-body-wrap h4 { font-size: 1.15em; font-weight: 600; line-height: 1.35; margin: 0.35em 0 0.15em; }
+.shard-body-wrap h5 { font-size: 1em; font-weight: 600; line-height: 1.4; margin: 0.3em 0 0.1em; }
+.shard-body-wrap h6 { font-size: 0.9em; font-weight: 600; line-height: 1.4; margin: 0.25em 0 0.1em; }
+
+/* Live Preview: element-level syntax reveal */
+.lp-wl {
+  display: inline;
+}
+.lp-wl .lp-raw {
+  display: none;
+  color: var(--fg);
+  outline: none;
+  cursor: text;
+  border-bottom: 1px dashed var(--accent, var(--red, #4a9eff));
+}
+.lp-wl.active .lp-rendered {
+  display: none;
+}
+.lp-wl.active .lp-raw {
+  display: inline;
+}
+
+/* Inline title editing */
+.shard-title-edit {
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.3;
+  display: block;
+  outline: none;
+  padding-bottom: 4px;
+  min-width: 100px;
+}
+
+/* Note more-options button */
+.shard-note-menu-btn {
+  background: none;
+  border: 1px solid var(--border);
+  outline: 1px solid var(--border);
+  color: var(--fg);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.5;
+  transition: opacity 0.15s, background 0.15s;
+  width: 28px;
+  height: 28px;
+}
+.shard-note-menu-btn:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+}
+
+/* Outline */
+.shard-outline-item {
+  transition: background 0.15s;
+}
+.shard-outline-item:hover {
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+
+/* Right sidebar */
+.shard-sidebar-link {
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shard-sidebar-link:hover {
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+.shard-sidebar-link.ghost {
+  opacity: 0.5;
+}
+.shard-backlinks-toggle {
+  transition: opacity 0.15s, color 0.15s;
+}
+.shard-backlinks-toggle:hover {
+  opacity: 1 !important;
+}
+.shard-backlinks-toggle.active {
+  opacity: 1 !important;
+  color: var(--accent, var(--red, #4a9eff)) !important;
+}
+.shard-prop-row {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: 8px;
+  padding: 5px 0;
+  font-size: 11px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  align-items: center;
+}
+.shard-prop-key {
+  opacity: 0.6;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shard-prop-val {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: normal;
+  text-align: left;
+  word-wrap: break-word;
+}
+.shard-prop-val .shard-tag {
+  display: inline-block;
+  margin-right: 4px;
+  margin-bottom: 2px;
+}
+.shard-properties-panel h4 {
+  font-size: 11px;
+  opacity: 0.6;
+  margin: 0 0 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Inline properties block — 2-column grid */
+.shard-properties-inline {
+  margin: 12px 0 4px;
+  padding: 10px 0 4px;
+}
+.shard-properties-inline h4 {
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0.85;
+  margin: 0 0 8px;
+}
+.shard-prop-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 2px 24px;
+}
+.shard-prop-grid:has(> :nth-child(2)) {
+  grid-template-columns: repeat(2, 1fr);
+}
+.shard-properties-inline .shard-prop-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 13px;
+  padding: 6px 10px;
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  cursor: text;
+}
+.shard-properties-inline .shard-prop-row:hover {
+  border-color: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.shard-properties-inline .shard-prop-row:focus-within,
+.shard-properties-inline .shard-prop-row:active {
+  border-color: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.shard-properties-inline .shard-prop-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  opacity: 0.5;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.shard-properties-inline .shard-prop-icon:hover {
+  opacity: 1;
+}
+.shard-properties-inline .shard-prop-key {
+  opacity: 0.55;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+  min-width: 60px;
+  max-width: 120px;
+}
+.shard-properties-inline .shard-prop-val {
+  overflow: visible;
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: normal;
+  word-wrap: break-word;
+}
+.shard-properties-inline .shard-prop-val[data-type="array"] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 4px;
+  align-items: center;
+}
+/* URL properties: clickable link */
+.shard-properties-inline .shard-prop-val.shard-prop-url {
+  color: var(--accent, var(--red, #4a9eff));
+  text-decoration: underline;
+  text-decoration-style: solid;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+}
+.shard-properties-inline .shard-prop-val.shard-prop-url:hover {
+  opacity: 0.8;
+}
+/* Text properties: truncate long values */
+.shard-properties-inline .shard-prop-val[data-prop-type="text"] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+}
+.shard-properties-inline .shard-prop-val[data-prop-type="text"]:hover,
+.shard-properties-inline .shard-prop-val[data-prop-type="text"]:focus {
+  white-space: normal;
+  word-wrap: break-word;
+  overflow: visible;
+}
+.shard-prop-add-main {
+  margin-top: 12px;
+  background: transparent;
+  border: 1px dashed transparent;
+  border-radius: 6px;
+  color: var(--fg);
+  opacity: 0.5;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  transition: opacity 0.15s, border-color 0.15s;
+  outline: none;
+  user-select: none;
+}
+.shard-prop-add-main:hover {
+  opacity: 0.85;
+  border-color: color-mix(in srgb, var(--fg) 15%, transparent);
+}
+.shard-prop-add-main:focus-visible {
+  opacity: 1;
+  border-color: color-mix(in srgb, var(--fg) 30%, transparent);
+}
+.shard-prop-add-area {
+  margin-top: 16px;
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  opacity: 0.5;
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  transition: opacity 0.15s, border-color 0.15s;
+  outline: none;
+  user-select: none;
+}
+.shard-prop-add-area:hover {
+  opacity: 0.85;
+  border-color: color-mix(in srgb, var(--fg) 30%, transparent);
+}
+.shard-prop-add-area:focus-visible {
+  opacity: 1;
+  border-color: var(--fg);
+}
+.shard-properties-inline[data-properties-container] {
+  border: 1px dashed transparent;
+  border-radius: 6px;
+  padding: 10px 8px 4px;
+  margin: 12px -8px 4px;
+  transition: border-color 0.15s;
+  cursor: text;
+}
+.shard-properties-inline[data-properties-container]:hover {
+  border-color: color-mix(in srgb, var(--fg) 15%, transparent);
+}
+.shard-properties-inline[data-properties-container]:focus-within {
+  border-color: color-mix(in srgb, var(--fg) 15%, transparent);
+}
+/* Tag chips */
+.shard-prop-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 12px;
+  cursor: default;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+.shard-prop-chip.is-tag {
+  background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 12%, transparent);
+  color: var(--accent, var(--red, #4a9eff));
+}
+.shard-prop-chip-text {
+  user-select: none;
+}
+.shard-prop-chip-x {
+  opacity: 0.6;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  margin-right: -2px;
+}
+.shard-prop-chip-x:hover {
+  opacity: 1 !important;
+}
+.shard-prop-chip-input {
+  display: inline-block;
+  min-width: 10px;
+  outline: none;
+  font-size: 12px;
+  opacity: 0.6;
+  caret-color: var(--fg);
+}
+.shard-prop-val[contenteditable] {
+  outline: none;
+  caret-color: var(--fg);
+}
+/* Property icon menu */
+.shard-prop-menu {
+  position: absolute;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 0;
+  z-index: 300;
+  min-width: 180px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+}
+.shard-prop-menu-item {
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--fg);
+}
+.shard-prop-menu-item:hover {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+.shard-prop-menu-item.danger {
+  color: var(--color-error, #ff6b6b);
+}
+.shard-prop-menu-divider {
+  height: 1px;
+  background: color-mix(in srgb, var(--border) 50%, transparent);
+  margin: 4px 8px;
+}
+.shard-prop-submenu {
+  position: fixed;
+  z-index: 99999;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 0;
+  min-width: 140px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+}
+.shard-prop-submenu-item {
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.shard-prop-submenu-item:hover {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+.shard-prop-submenu-item.active::after {
+  content: '\2713';
+  margin-left: auto;
+  opacity: 0.7;
+}
+.shard-prop-add-dropdown {
+  position: fixed;
+  z-index: 99999;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-width: 200px;
+  max-height: 240px;
+  overflow-y: auto;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+}
+.shard-prop-add-option {
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.shard-prop-add-option:hover {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+.shard-prop-add-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.shard-prop-add-type {
+  font-size: 11px;
+  opacity: 0.45;
+  margin-left: auto;
+  padding-left: 8px;
+  white-space: nowrap;
+}
+
+/* Shard scrollbar styling — narrower than the global 8px red scrollbar */
+.shard-sidebar-pane::-webkit-scrollbar,
+.shard-right-pane-content::-webkit-scrollbar,
+.shard-right-panes::-webkit-scrollbar,
+.shard-folder-tree::-webkit-scrollbar,
+.shard-note-list::-webkit-scrollbar,
+.shard-preview::-webkit-scrollbar,
+.shard-settings-nav::-webkit-scrollbar,
+.shard-settings-content::-webkit-scrollbar {
+  width: 4px;
+}
+.shard-sidebar-pane::-webkit-scrollbar-track,
+.shard-right-pane-content::-webkit-scrollbar-track,
+.shard-right-panes::-webkit-scrollbar-track,
+.shard-folder-tree::-webkit-scrollbar-track,
+.shard-note-list::-webkit-scrollbar-track,
+.shard-preview::-webkit-scrollbar-track,
+.shard-settings-nav::-webkit-scrollbar-track,
+.shard-settings-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+.shard-sidebar-pane::-webkit-scrollbar-thumb,
+.shard-right-pane-content::-webkit-scrollbar-thumb,
+.shard-right-panes::-webkit-scrollbar-thumb,
+.shard-folder-tree::-webkit-scrollbar-thumb,
+.shard-note-list::-webkit-scrollbar-thumb,
+.shard-preview::-webkit-scrollbar-thumb,
+.shard-settings-nav::-webkit-scrollbar-thumb,
+.shard-settings-content::-webkit-scrollbar-thumb {
+  background: var(--accent, var(--red, #4a9eff));
+  border-radius: 2px;
+}
+.shard-sidebar-pane,
+.shard-right-pane-content,
+.shard-folder-tree,
+.shard-note-list,
+.shard-preview,
+.shard-settings-nav,
+.shard-settings-content {
+  scrollbar-width: thin;
+  scrollbar-color: var(--accent, var(--red, #4a9eff)) transparent;
+}
+
+/* Tag autocomplete dropdown */
+.shard-tag-dropdown {
+  position: fixed;
+  z-index: 99999;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-width: 180px;
+  max-height: 220px;
+  overflow-y: auto;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  padding: 4px 0;
+}
+.shard-tag-dropdown-item {
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.shard-tag-dropdown-item:hover,
+.shard-tag-dropdown-item.selected {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+
+/* Graph group query dropdown — matches search empty state style */
+.shard-graph-group-dropdown {
+  position: fixed;
+  z-index: 99999;
+  background: var(--bg-raised, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  padding: 8px 10px;
+  max-height: 280px;
+  overflow-y: auto;
+  min-width: 180px;
+}
+.shard-graph-group-section { margin-bottom: 8px; }
+.shard-graph-group-section:last-child { margin-bottom: 0; }
+.shard-graph-group-title {
+  font-size: 11px;
+  opacity: 0.5;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.shard-graph-group-item {
+  padding: 5px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.1s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.shard-graph-group-item:hover,
+.shard-graph-group-item.selected {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+.shard-graph-group-help {
+  cursor: default;
+  opacity: 0.75;
+}
+.shard-graph-group-help:hover {
+  background: transparent;
+}
+.shard-graph-group-item code {
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  font-size: 11px;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  padding: 1px 4px;
+  border-radius: 3px;
+  margin-right: 4px;
+}
+
+/* Note cards */
+.shard-note-card {
+  padding: 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  margin-bottom: 4px;
+  border: 1px solid transparent;
+}
+.shard-note-card:hover {
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+.shard-note-card.selected {
+  border-color: var(--accent, var(--red, #4a9eff));
+  background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 8%, transparent);
+}
+.shard-note-card-title {
+  font-weight: 600;
+  font-size: 12px;
+  margin-bottom: 2px;
+}
+.shard-note-card-preview {
+  font-size: 11px;
+  opacity: 0.6;
+  line-height: 1.4;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.shard-note-card-meta {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+.shard-tag {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 15%, transparent);
+  color: var(--accent, var(--red, #4a9eff));
+  font-size: 10px;
+}
+
+@media (max-width: 640px) {
+  .shard-modal-content {
+    width: 100vw;
+    max-height: 100dvh;
+    border-radius: 0;
+  }
+  .shard-3pane {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+  .shard-ribbon {
+    display: none;
+  }
+  .shard-left-pane {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    max-height: 200px;
+  }
+  .shard-right-pane {
+    display: none;
+  }
+  .shard-panel-wrap {
+    flex-direction: column;
+  }
+  .shard-note-list {
+    width: 100%;
+    max-height: 180px;
+  }
+/* GitHub Copilot device-flow connect block (model endpoints → API) */
+.adm-copilot-connect {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.adm-copilot-connect #adm-copilotStatus { flex-basis: 100%; margin-top: 0; }
+.adm-copilot-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.adm-copilot-wait {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: color-mix(in srgb, var(--fg) 70%, transparent);
+}
+.adm-copilot-coderow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.adm-copilot-code-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
+}
+.adm-copilot-code {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  padding: 4px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  user-select: all;
+}
+.adm-copilot-copy { margin-left: auto; }
+.adm-copilot-auth {
+  text-align: center;
+  text-decoration: none;
+  padding: 7px 12px;
+  font-size: 12px;
+}
+.adm-copilot-hint {
+  font-size: 11px;
+  line-height: 1.4;
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
+}
+/* ── Workspace picker ───────────────────────────────────────────── */
+/* Layout (width/flex column/max-height) inherited from base .modal-content. */
+/* Editable path/address bar: reuses .styled-prompt-input for border/bg/radius/
+   focus ring (set in the element's class list). Overrides only the deltas:
+   mono font, and full-bleed via flex stretch with no horizontal margin (the
+   modal-content's 10px padding is the gutter) instead of the base width:100%,
+   which overflowed against the overflow:auto scrollbar. */
+.workspace-cur {
+  align-self: stretch;
+  width: auto;
+  min-width: 0;
+  margin: 4px 0 8px;
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+}
+/* flex/overflow inherited from base .modal-body; only the padding differs. */
+.workspace-body { padding: 6px 0; }
+.workspace-row {
+  padding: 7px 18px;
+  cursor: pointer;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.workspace-row > span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.workspace-row-icon { flex-shrink: 0; opacity: 0.75; }
+.workspace-row:hover {
+  background: color-mix(in srgb, var(--border) 20%, transparent);
+}
+.workspace-up { opacity: 0.7; }
+.workspace-empty { padding: 14px 18px; opacity: 0.5; font-size: 13px; }
+.workspace-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 18px;
+  border-top: 1px solid var(--border);
+}
+/* Cookbook serve panel: Launch + ^ split button pair */
+.hwfit-serve-launch-group {
+  display: inline-flex;
+  align-items: stretch;
+  vertical-align: middle;
+}
+.hwfit-serve-launch-group .hwfit-serve-launch {
+  border-top-right-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+  margin-right: 0 !important;
+}
+.hwfit-serve-launch-group .hwfit-serve-schedule-arrow {
+  border-top-left-radius: 0 !important;
+  border-bottom-left-radius: 0 !important;
+  border-left: 1px solid var(--border) !important;
+  padding: 0 8px !important;
+  min-width: 26px;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Schedule form — mounted inside the cookbook serve panel. Uses the
+   theme tokens (--bg, --panel, --border, --accent, --red) so it
+   matches the rest of the cookbook chrome instead of inline whites. */
+.hwfit-schedule-form {
+  margin: 10px 0 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.hwfit-schedule-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0.95;
+  flex-wrap: wrap;
+}
+.hwfit-schedule-title svg { opacity: 0.7; flex-shrink: 0; }
+.hwfit-schedule-title-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hwfit-schedule-title-spacer { flex: 1; min-width: 8px; }
+.hwfit-schedule-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.hwfit-schedule-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  opacity: 0.75;
+}
+.hwfit-schedule-field input[type="time"] {
+  font: inherit;
+  min-width: 90px;
+}
+.hwfit-schedule-label {
+  font-size: 11px;
+  opacity: 0.75;
+}
+.hwfit-sched-days {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.hwfit-sched-day-chip {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.hwfit-sched-day-chip:hover { border-color: var(--accent, var(--red)); }
+.hwfit-sched-day-chip.is-on {
+  background: var(--accent, var(--red));
+  color: var(--panel, #fff);
+  border-color: var(--accent, var(--red));
+}
+.hwfit-schedule-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.hwfit-schedule-actions-spacer { flex: 1; }
+
+/* Days row hosts the day-chip strip on the left and the Cancel / Save
+   action buttons on the right. The spacer between them pushes the
+   actions to the right edge. */
+.hwfit-schedule-days-row {
+  align-items: center;
+}
+/* Cancel + Save sit on the right side of the days row with matching
+   icon-plus-label chrome. */
+.hwfit-sched-cancel,
+.hwfit-sched-save {
+  display: inline-flex !important;
+  align-items: center;
+}
+.hwfit-schedule-mirror-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  opacity: 0.9;
+  cursor: pointer;
+  user-select: none;
+}
+.hwfit-schedule-mirror-label { white-space: nowrap; }
+.hwfit-schedule-mirror-switch { transform: scale(0.85); transform-origin: left center; }
+.hwfit-sched-err {
+  font-size: 12px;
+  color: var(--red, #ff6b6b);
+  display: none;
+}
+.hwfit-sched-err.is-visible { display: block; }
+@media (max-width: 600px) {
+  .hwfit-schedule-row { gap: 8px; }
+  .hwfit-sched-day-chip { width: 36px; height: 36px; font-size: 11px; }
+}
+
+/* Brief outline flash on a note card when it's the target of a
+   #note-<id> link click from chat — same pattern as the cookbook
+   task flash, just scoped to .note-card. */
+.note-card-flash {
+  animation: note-card-flash-anim 1.6s ease-out;
+}
+@keyframes note-card-flash-anim {
+  0%   { box-shadow: 0 0 0 2px var(--accent, var(--red)); }
+  100% { box-shadow: 0 0 0 2px transparent;
+}
+
 
 /* ===== Shard Settings Dialog (in-panel) ===== */
 .shard-settings-cog {

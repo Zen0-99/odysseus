@@ -619,9 +619,11 @@ async function _selectVault(vaultId) {
   if (preview) { preview.innerHTML = ''; preview.style.display = 'none'; }
   const rightPane = document.getElementById('shard-right-pane');
   if (rightPane) {
-    rightPane.querySelector('#shard-right-placeholder')?.classList.remove('hidden');
-    document.getElementById('shard-right-tabs')?.classList.add('hidden');
-    document.getElementById('shard-right-panes')?.classList.add('hidden');
+    rightPane.querySelectorAll('.shard-panel-group').forEach(panelEl => {
+      panelEl.querySelector('.shard-panel-placeholder, .shard-right-placeholder')?.classList.remove('hidden');
+      panelEl.querySelector('.shard-right-tabs')?.classList.add('hidden');
+      panelEl.querySelector('.shard-right-panes')?.classList.add('hidden');
+    });
   }
   const searchInput = document.getElementById('shard-search');
   if (searchInput) searchInput.value = '';
@@ -1009,12 +1011,16 @@ function _renderFolderTree() {
     // Drop target for folder rows
     if (row.dataset.folder) {
       row.addEventListener('dragover', (e) => {
+        if (e.dataTransfer.types.includes('application/x-shard-tab')) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = 'copy';
         row.classList.add('drag-over');
       });
       row.addEventListener('dragleave', () => {
         row.classList.remove('drag-over');
+      });
+      row.addEventListener('dragenter', (e) => {
+        if (e.dataTransfer.types.includes('application/x-shard-tab')) return;
       });
       row.addEventListener('drop', async (e) => {
         e.preventDefault();
@@ -1116,6 +1122,7 @@ function _renderFolderTree() {
   if (!_rootDropWired) {
     _rootDropWired = true;
     tree.addEventListener('dragover', (e) => {
+      if (e.dataTransfer.types.includes('application/x-shard-tab')) return;
       // Only handle if not over a folder row (those have their own handlers)
       if (e.target.closest('.shard-tree-row[data-folder]')) return;
       e.preventDefault();
@@ -1123,6 +1130,10 @@ function _renderFolderTree() {
       tree.classList.add('shard-root-drag-over');
     });
     tree.addEventListener('dragleave', (e) => {
+      if (e.dataTransfer.types.includes('application/x-shard-tab')) {
+        tree.classList.remove('shard-root-drag-over');
+        return;
+      }
       if (e.target.closest('.shard-tree-row[data-folder]')) return;
       tree.classList.remove('shard-root-drag-over');
     });
@@ -1386,7 +1397,7 @@ function _openGraphView() {
     p.classList.toggle('hidden', p.dataset.shardContent !== 'graph');
   });
   const container = document.getElementById('shard-main-graph-canvas');
-  if (container && window.vis) {
+  if (container) {
     import('./shardGraphCanvas.js').then(mod => {
       mod.renderShardGraph(container, _selectedVaultId);
     });
@@ -1479,15 +1490,47 @@ function _closeCurrentTab() {
   if (viewModes) viewModes.style.display = 'none';
   const noteMenuBtn = document.getElementById('shard-note-menu-btn');
   if (noteMenuBtn) noteMenuBtn.style.display = 'none';
-  const rightPane = document.getElementById('shard-right-pane');
-  if (rightPane) {
-    rightPane.querySelector('#shard-right-placeholder')?.classList.remove('hidden');
-    document.getElementById('shard-right-tabs')?.classList.add('hidden');
-    document.getElementById('shard-right-panes')?.classList.add('hidden');
-  }
+  const backBtn = document.getElementById('shard-back-btn');
+  const forwardBtn = document.getElementById('shard-forward-btn');
+  if (backBtn) backBtn.style.display = 'none';
+  if (forwardBtn) forwardBtn.style.display = 'none';
+  _updateRightPanelVisibility();
   _renderNoteTabs();
   _renderBreadcrumb(null);
   _updateNavButtons();
+}
+
+function _updateRightPanelVisibility() {
+  const pane = document.getElementById('shard-right-pane');
+  if (!pane) return;
+  const stack = document.getElementById('shard-right-stack');
+  if (!stack) return;
+
+  // Check if any panel group is visible
+  const visiblePanels = stack.querySelectorAll('.shard-panel-group:not(.hidden)');
+  if (visiblePanels.length === 0) {
+    pane.classList.add('hidden');
+    return;
+  }
+
+  pane.classList.remove('hidden');
+
+  // Update placeholders for each visible panel
+  for (const panelEl of visiblePanels) {
+    const panelId = panelEl.dataset.panelId;
+    const placeholder = panelEl.querySelector('.shard-panel-placeholder, .shard-right-placeholder');
+    const tabsContainer = panelEl.querySelector('.shard-right-tabs');
+    const panesContainer = panelEl.querySelector('.shard-right-panes');
+    if (!_selectedNoteId) {
+      if (placeholder) placeholder.classList.remove('hidden');
+      if (tabsContainer) tabsContainer.classList.add('hidden');
+      if (panesContainer) panesContainer.classList.add('hidden');
+    } else {
+      if (placeholder) placeholder.classList.add('hidden');
+      if (tabsContainer) tabsContainer.classList.remove('hidden');
+      if (panesContainer) panesContainer.classList.remove('hidden');
+    }
+  }
 }
 
 function _renderNoteTabs() {
@@ -1670,12 +1713,456 @@ function _updateNavButtons() {
   if (forward) forward.disabled = _historyIndex >= _historyStack.length - 1;
 }
 
-// ── Left sidebar tabs ──────────────────────────────────────
+// ── Panel system ───────────────────────────────────────────
 
 let _activeLeftTab = 'files';
 
+function _getPanelConfig(panelId) {
+  return (_shardSettings.panels || []).find(p => p.id === panelId);
+}
+
+function _getPanelForTab(tabName) {
+  return (_shardSettings.panels || []).find(p => p.tabs.includes(tabName));
+}
+
+function _getPanelIdForTab(tabName) {
+  const panel = _getPanelForTab(tabName);
+  return panel ? panel.id : null;
+}
+
+function _getPanelTabsContainer(panelId) {
+  const panelEl = document.querySelector(`.shard-panel-group[data-panel-id="${_esc(panelId)}"]`);
+  if (!panelEl) return null;
+  return panelEl.querySelector('.shard-right-tabs, .shard-sidebar-tabs, .shard-panel-tabs');
+}
+
+function _getPanelPanesContainer(panelId) {
+  const panelEl = document.querySelector(`.shard-panel-group[data-panel-id="${_esc(panelId)}"]`);
+  if (!panelEl) return null;
+  return panelEl.querySelector('.shard-right-panes, .shard-sidebar-panes, .shard-panel-panes');
+}
+
+function _getPanelPlaceholder(panelId) {
+  const panelEl = document.querySelector(`.shard-panel-group[data-panel-id="${_esc(panelId)}"]`);
+  if (!panelEl) return null;
+  return panelEl.querySelector('.shard-panel-placeholder, .shard-right-placeholder');
+}
+
+function _getActiveTabForPanel(panelId) {
+  const panel = _getPanelConfig(panelId);
+  return panel ? panel.activeTab : null;
+}
+
+function _setActiveTabForPanel(panelId, tab) {
+  const panel = _getPanelConfig(panelId);
+  if (panel) panel.activeTab = tab;
+}
+
+function _switchTabInPanel(tab, panelId) {
+  const tabsContainer = _getPanelTabsContainer(panelId);
+  const panesContainer = _getPanelPanesContainer(panelId);
+  if (!tabsContainer || !panesContainer) return;
+
+  _setActiveTabForPanel(panelId, tab);
+
+  tabsContainer.querySelectorAll('[data-tab]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === tab);
+  });
+  panesContainer.querySelectorAll('[data-pane]').forEach(pane => {
+    pane.classList.toggle('hidden', pane.dataset.pane !== tab);
+  });
+}
+
+function _updatePanelVisibility(panelId) {
+  const panelEl = document.querySelector(`.shard-panel-group[data-panel-id="${_esc(panelId)}"]`);
+  if (!panelEl) return;
+  const panel = _getPanelConfig(panelId);
+  if (!panel) { panelEl.classList.add('hidden'); return; }
+
+  const hasVisibleTab = panel.tabs.some(tab => {
+    const tabBtn = panelEl.querySelector(`[data-tab="${_esc(tab)}"]`);
+    return tabBtn && !tabBtn.classList.contains('hidden');
+  });
+
+  if (!hasVisibleTab) {
+    panelEl.classList.add('hidden');
+  } else {
+    panelEl.classList.remove('hidden');
+  }
+}
+
+function _renderPanel(panelId, note) {
+  const panel = _getPanelConfig(panelId);
+  if (!panel) return;
+  const panelEl = document.querySelector(`.shard-panel-group[data-panel-id="${_esc(panelId)}"]`);
+  if (!panelEl) return;
+
+  _updatePanelVisibility(panelId);
+  if (panelEl.classList.contains('hidden')) return;
+
+  const activeTab = _getActiveTabForPanel(panelId);
+  if (!activeTab) return;
+
+  const tabsContainer = _getPanelTabsContainer(panelId);
+  const panesContainer = _getPanelPanesContainer(panelId);
+  const placeholder = _getPanelPlaceholder(panelId);
+
+  // Ensure active tab is visible
+  const activeBtn = tabsContainer?.querySelector(`[data-tab="${_esc(activeTab)}"]:not(.hidden)`);
+  if (!activeBtn) {
+    const firstVisible = tabsContainer?.querySelector('[data-tab]:not(.hidden)');
+    if (firstVisible) {
+      _switchTabInPanel(firstVisible.dataset.tab, panelId);
+    } else {
+      // No visible tabs
+      if (placeholder) placeholder.classList.remove('hidden');
+      if (tabsContainer) tabsContainer.classList.add('hidden');
+      if (panesContainer) panesContainer.classList.add('hidden');
+      return;
+    }
+  }
+
+  if (placeholder) placeholder.classList.add('hidden');
+  if (tabsContainer) tabsContainer.classList.remove('hidden');
+  if (panesContainer) panesContainer.classList.remove('hidden');
+
+  const tabToRender = _getActiveTabForPanel(panelId);
+  if (!tabToRender) return;
+
+  // For right-side panels, render the active tab content
+  if (panel.side === 'right' && note) {
+    _renderRightPaneContent(tabToRender, note, panesContainer);
+  }
+  // For left-side panels
+  if (panel.side === 'left') {
+    if (tabToRender === 'tags' && _pluginManager?.isEnabled('tags')) _renderTagsPane();
+    if (tabToRender === 'bookmarks' && _pluginManager?.isEnabled('bookmarks')) _renderBookmarksPane();
+  }
+}
+
+function _renderRightPaneContent(tab, note, panesContainer) {
+  switch (tab) {
+    case 'backlinks':
+      if (_pluginManager?.isEnabled('backlinks')) _renderBacklinksPane(note);
+      break;
+    case 'outgoing':
+      if (_pluginManager?.isEnabled('outgoing-links')) _renderOutgoingPane(note);
+      break;
+    case 'unlinked':
+      if (_pluginManager?.isEnabled('unlinked')) _renderUnlinkedPane(note);
+      break;
+    case 'outline':
+      if (_pluginManager?.isEnabled('outline')) _renderOutlinePane(note);
+      break;
+    case 'orphans':
+      if (_pluginManager?.isEnabled('orphans')) _renderOrphansPane(note);
+      break;
+    case 'local-graph':
+      _renderLocalGraph(note);
+      break;
+  }
+}
+
+function _renderAllPanels(note) {
+  for (const panel of (_shardSettings.panels || [])) {
+    if (panel.side === 'right') {
+      _renderPanel(panel.id, note);
+    } else if (panel.side === 'left') {
+      _renderPanel(panel.id, null);
+    }
+  }
+}
+
+// ── Panel management ──────────────────────────────────────
+
+function _createPanel(side, tabs, activeTab, options) {
+  console.log('[createPanel] side:', side, 'tabs:', tabs);
+  const panels = _shardSettings.panels || [];
+  const maxNum = panels.filter(p => p.side === side).length;
+  const id = `${side}-${maxNum + 1}`;
+  const newPanel = { id, side, tabs: tabs || [], activeTab: activeTab || (tabs ? tabs[0] : null) };
+  panels.push(newPanel);
+  _shardSettings.panels = panels;
+  _saveShardSettings();
+
+  if (side === 'right') {
+    _buildRightPanelDOM(newPanel, options);
+  } else {
+    _buildLeftPanelDOM(newPanel);
+  }
+  console.log('[createPanel] created:', id);
+  return newPanel;
+}
+
+function _buildRightPanelDOM(panel, options) {
+  const stack = document.getElementById('shard-right-stack');
+  if (!stack) return;
+
+  const group = document.createElement('div');
+  group.className = 'shard-panel-group';
+  group.dataset.panelId = panel.id;
+
+  const placeholder = document.createElement('div');
+  placeholder.className = 'shard-panel-placeholder';
+  placeholder.dataset.panelId = panel.id;
+  placeholder.textContent = 'Select a note to see panel content.';
+  group.appendChild(placeholder);
+
+  const tabsContainer = document.createElement('div');
+  tabsContainer.className = 'shard-right-tabs';
+  tabsContainer.dataset.panelId = panel.id;
+  group.appendChild(tabsContainer);
+
+  const panesContainer = document.createElement('div');
+  panesContainer.className = 'shard-right-panes';
+  panesContainer.dataset.panelId = panel.id;
+  group.appendChild(panesContainer);
+
+  // Wire events
+  tabsContainer.addEventListener('click', (e) => {
+    const tab = e.target.closest('.shard-right-tab');
+    if (!tab) return;
+    _switchRightTab(tab.dataset.tab, panel.id);
+  });
+  tabsContainer.addEventListener('contextmenu', (e) => {
+    _showTabContextMenu(e, panel.id);
+  });
+
+  // Determine placement based on edge option
+  const edge = options?.edge;
+  const targetPanelId = options?.targetPanelId;
+  if (edge && targetPanelId) {
+    const targetGroup = stack.querySelector(`.shard-panel-group[data-panel-id="${_esc(targetPanelId)}"]`);
+    if (targetGroup) {
+      if (edge === 'top' || edge === 'bottom') {
+        // Vertical placement
+        const isBefore = edge === 'top';
+        const sibling = isBefore ? targetGroup.previousElementSibling : targetGroup.nextElementSibling;
+        const needsHandle = !(sibling && sibling.classList.contains('shard-panel-resize-v'));
+        if (needsHandle) {
+          const handle = document.createElement('div');
+          handle.className = 'shard-panel-resize-v';
+          if (isBefore) {
+            stack.insertBefore(handle, targetGroup);
+            stack.insertBefore(group, handle);
+          } else {
+            stack.insertBefore(handle, targetGroup.nextSibling);
+            stack.insertBefore(group, handle.nextSibling);
+          }
+        } else {
+          if (isBefore) stack.insertBefore(group, targetGroup);
+          else stack.insertBefore(group, targetGroup.nextSibling);
+        }
+        return;
+      } else if (edge === 'left' || edge === 'right') {
+        // Horizontal placement - put panels in a row
+        const isBefore = edge === 'left';
+        const parentRow = targetGroup.closest('.shard-panel-row');
+        if (parentRow) {
+          // Already in a row - insert beside target
+          const hHandle = document.createElement('div');
+          hHandle.className = 'shard-panel-resize-h';
+          if (isBefore) {
+            parentRow.insertBefore(hHandle, targetGroup);
+            parentRow.insertBefore(group, hHandle);
+          } else {
+            parentRow.insertBefore(hHandle, targetGroup.nextSibling);
+            parentRow.insertBefore(group, hHandle.nextSibling);
+          }
+        } else {
+          // Create a new row containing target and new panel
+          const row = document.createElement('div');
+          row.className = 'shard-panel-row';
+          const hHandle = document.createElement('div');
+          hHandle.className = 'shard-panel-resize-h';
+          // Move target into row, then add handle and new panel
+          targetGroup.parentNode.insertBefore(row, targetGroup);
+          row.appendChild(targetGroup);
+          row.appendChild(hHandle);
+          row.appendChild(group);
+          if (!isBefore) {
+            // Swap order so new panel is on the right
+            row.insertBefore(group, targetGroup);
+            row.insertBefore(hHandle, targetGroup);
+          }
+        }
+        return;
+      }
+    }
+  }
+
+  // Default: append to bottom of stack with vertical resize handle
+  const existingPanels = stack.querySelectorAll('.shard-panel-group');
+  if (existingPanels.length > 0) {
+    const resizeHandle = document.createElement('div');
+    resizeHandle.className = 'shard-panel-resize-v';
+    stack.appendChild(resizeHandle);
+  }
+  stack.appendChild(group);
+}
+
+function _buildLeftPanelDOM(panel) {
+  // For now, left side only supports one panel
+  // This can be extended later
+}
+
+function _moveTabToPanel(tabName, fromPanelId, toPanelId) {
+  console.log('[moveTabToPanel] tab:', tabName, 'from:', fromPanelId, 'to:', toPanelId);
+  const fromPanel = _getPanelConfig(fromPanelId);
+  const toPanel = _getPanelConfig(toPanelId);
+  if (!fromPanel || !toPanel) { console.log('[moveTabToPanel] missing panel config'); return; }
+
+  // Update settings
+  fromPanel.tabs = fromPanel.tabs.filter(t => t !== tabName);
+  if (!toPanel.tabs.includes(tabName)) toPanel.tabs.push(tabName);
+
+  // If the moved tab was the active tab of the source panel, switch to another tab
+  if (fromPanel.activeTab === tabName) {
+    fromPanel.activeTab = fromPanel.tabs[0] || null;
+  }
+  // Ensure destination has an active tab
+  if (!toPanel.activeTab) {
+    toPanel.activeTab = tabName;
+  }
+
+  _saveShardSettings();
+
+  // Physically move DOM elements
+  const fromTabsContainer = _getPanelTabsContainer(fromPanelId);
+  const toTabsContainer = _getPanelTabsContainer(toPanelId);
+  const fromPanesContainer = _getPanelPanesContainer(fromPanelId);
+  const toPanesContainer = _getPanelPanesContainer(toPanelId);
+
+  if (fromTabsContainer && toTabsContainer) {
+    const tabBtn = fromTabsContainer.querySelector(`[data-tab="${_esc(tabName)}"]`);
+    if (tabBtn) {
+      tabBtn.classList.remove('hidden');
+      toTabsContainer.appendChild(tabBtn);
+    }
+  }
+  if (fromPanesContainer && toPanesContainer) {
+    const pane = fromPanesContainer.querySelector(`[data-pane="${_esc(tabName)}"]`);
+    if (pane) toPanesContainer.appendChild(pane);
+  }
+
+  // Update visibility for both panels without heavy _syncPluginTabs
+  _updatePanelVisibility(fromPanelId);
+  _updatePanelVisibility(toPanelId);
+
+  // Switch active tabs
+  if (fromPanel.activeTab) {
+    if (fromPanel.side === 'right') _switchRightTab(fromPanel.activeTab, fromPanelId);
+    else _switchLeftTab(fromPanel.activeTab);
+  }
+  if (toPanel.activeTab) {
+    if (toPanel.side === 'right') _switchRightTab(toPanel.activeTab, toPanelId);
+    else _switchLeftTab(toPanel.activeTab);
+  }
+
+  // Update overall right panel visibility
+  _updateRightPanelVisibility();
+
+  // If on right side and note selected, re-render pane content
+  if (toPanel.side === 'right' && _selectedNoteId) {
+    const note = _notes.find(n => n.id === _selectedNoteId);
+    if (note) _renderRightSidebar(note);
+  }
+}
+
+function _moveTabToNewPanel(tabName, fromPanelId, edge, targetPanelId) {
+  console.log('[moveTabToNewPanel] tab:', tabName, 'from:', fromPanelId, 'edge:', edge, 'target:', targetPanelId);
+  const fromPanel = _getPanelConfig(fromPanelId);
+  if (!fromPanel) { console.log('[moveTabToNewPanel] missing source panel'); return; }
+  const refPanelId = targetPanelId || fromPanelId;
+  const newPanel = _createPanel(fromPanel.side, [tabName], tabName, { edge, targetPanelId: refPanelId });
+  console.log('[moveTabToNewPanel] created panel:', newPanel.id);
+  _moveTabToPanel(tabName, fromPanelId, newPanel.id);
+}
+
+function _rebuildPanelsFromSettings() {
+  const stack = document.getElementById('shard-right-stack');
+  if (!stack) return;
+  const panels = (_shardSettings.panels || []).filter(p => p.side === 'right');
+  if (panels.length <= 1) return; // Default HTML already handles single panel
+
+  const defaultGroup = stack.querySelector('.shard-panel-group');
+  const defaultTabs = defaultGroup?.querySelector('.shard-right-tabs');
+  const defaultPanes = defaultGroup?.querySelector('.shard-right-panes');
+  if (!defaultTabs || !defaultPanes) return;
+
+  // Build missing panel DOMs first (stacked vertically)
+  for (let i = 1; i < panels.length; i++) {
+    const panel = panels[i];
+    let group = stack.querySelector(`.shard-panel-group[data-panel-id="${_esc(panel.id)}"]`);
+    if (!group) {
+      _buildRightPanelDOM(panel);
+      group = stack.querySelector(`.shard-panel-group[data-panel-id="${_esc(panel.id)}"]`);
+    }
+    if (!group) continue;
+    const tabsContainer = group.querySelector('.shard-right-tabs');
+    const panesContainer = group.querySelector('.shard-right-panes');
+    // Move this panel's tabs and panes from the default group
+    for (const tabName of panel.tabs) {
+      const tabBtn = defaultTabs.querySelector(`[data-tab="${_esc(tabName)}"]`);
+      if (tabBtn && tabsContainer) {
+        tabBtn.classList.remove('hidden');
+        tabsContainer.appendChild(tabBtn);
+      }
+      const pane = defaultPanes.querySelector(`[data-pane="${_esc(tabName)}"]`);
+      if (pane && panesContainer) panesContainer.appendChild(pane);
+    }
+  }
+
+  // Ensure first panel's remaining tabs are unhidden
+  const first = panels[0];
+  const firstGroup = stack.querySelector(`.shard-panel-group[data-panel-id="${_esc(first.id)}"]`);
+  if (firstGroup) {
+    const tc = firstGroup.querySelector('.shard-right-tabs');
+    if (tc) {
+      for (const tabName of first.tabs) {
+        const btn = tc.querySelector(`[data-tab="${_esc(tabName)}"]`);
+        if (btn) btn.classList.remove('hidden');
+      }
+    }
+  }
+}
+
+function _destroyPanel(panelId) {
+  const panels = _shardSettings.panels || [];
+  const idx = panels.findIndex(p => p.id === panelId);
+  if (idx === -1) return;
+  const panel = panels[idx];
+
+  // Move all tabs back to the first panel on the same side
+  const firstPanel = panels.find(p => p.side === panel.side && p.id !== panelId);
+  if (firstPanel) {
+    for (const tab of panel.tabs) {
+      if (!firstPanel.tabs.includes(tab)) firstPanel.tabs.push(tab);
+    }
+  }
+
+  panels.splice(idx, 1);
+  _shardSettings.panels = panels;
+  _saveShardSettings();
+
+  // Remove DOM
+  const panelEl = document.querySelector(`.shard-panel-group[data-panel-id="${_esc(panelId)}"]`);
+  if (panelEl) {
+    // Also remove preceding resize handle if present
+    const prev = panelEl.previousElementSibling;
+    if (prev && prev.classList.contains('shard-panel-resize-v')) prev.remove();
+    panelEl.remove();
+  }
+
+  _syncPluginTabs();
+}
+
+// ── Left sidebar tabs ──────────────────────────────────────
+
 function _switchLeftTab(tab) {
   _activeLeftTab = tab;
+  const panel = _getPanelConfig('left-1');
+  if (panel) _setActiveTabForPanel('left-1', tab);
   document.querySelectorAll('#shard-left-tabs .shard-sidebar-tab').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.tab === tab);
   });
@@ -1828,31 +2315,23 @@ function _renderRibbon() {
 /** Right-click context menu for ribbon */
 let _ribbonMenu = null;
 function _showRibbonMenu(x, y) {
-  console.log('[shard] _showRibbonMenu called', x, y);
   if (_ribbonMenu) { _ribbonMenu.remove(); _ribbonMenu = null; }
   const hiddenItems = new Set(_shardSettings?.appearance?.ribbonHiddenItems || []);
-  const showRibbon = _shardSettings?.appearance?.showRibbon !== false;
 
   const menu = document.createElement('div');
   menu.className = 'shard-ribbon-menu';
   const items = Array.from(_ribbonRegistry.values());
-  console.log('[shard] ribbon items count:', items.length);
-  if (items.length === 0) { console.log('[shard] no ribbon items, returning'); return; }
+  if (items.length === 0) return;
 
   let html = '';
   for (const item of items) {
     const isHidden = hiddenItems.has(item.id);
-    const actionClass = isHidden ? 'add' : 'remove';
-    const actionIcon = isHidden
-      ? '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>'
-      : '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+    const checkClass = isHidden ? '' : 'is-checked';
     html += `
-      <div class="shard-ribbon-menu-item" data-ribbon-id="${item.id}">
+      <div class="shard-ribbon-menu-item shard-note-menu-check ${checkClass}" data-ribbon-action="toggle-item" data-ribbon-id="${item.id}">
         <span class="shard-ribbon-menu-icon">${item.iconSvg.replace(/width="18" height="18"/g, 'width="14" height="14"')}</span>
         <span>${_esc(item.title)}</span>
-        <button type="button" class="shard-ribbon-menu-action ${actionClass}" data-ribbon-action="toggle-item" data-ribbon-id="${item.id}" title="${isHidden ? 'Show' : 'Hide'} item">
-          ${actionIcon}
-        </button>
+        <span class="shard-note-menu-checkmark"></span>
       </div>`;
   }
   html += `<div class="shard-ribbon-menu-divider"></div>`;
@@ -1863,11 +2342,9 @@ function _showRibbonMenu(x, y) {
     </div>`;
   menu.innerHTML = html;
   document.body.appendChild(menu);
-  console.log('[shard] ribbon menu appended to body');
 
   // Position
   const rect = menu.getBoundingClientRect();
-  console.log('[shard] ribbon menu rect:', rect);
   const winW = window.innerWidth;
   const winH = window.innerHeight;
   let left = x;
@@ -1878,20 +2355,19 @@ function _showRibbonMenu(x, y) {
   menu.style.top = top + 'px';
   menu.style.position = 'fixed';
   menu.style.zIndex = '9999';
-  console.log('[shard] ribbon menu positioned at', left, top);
 
-  // Wire hide/show item buttons
-  menu.querySelectorAll('button[data-ribbon-action="toggle-item"]').forEach(btn => {
-    btn.addEventListener('click', (e) => {
+  // Wire toggle item rows
+  menu.querySelectorAll('[data-ribbon-action="toggle-item"]').forEach(row => {
+    row.addEventListener('click', (e) => {
       e.stopPropagation();
-      const id = btn.dataset.ribbonId;
+      const id = row.dataset.ribbonId;
       const set = new Set(_shardSettings.appearance.ribbonHiddenItems || []);
       if (set.has(id)) set.delete(id);
       else set.add(id);
       _shardSettings.appearance.ribbonHiddenItems = Array.from(set);
       _saveShardSettings();
       _renderRibbon();
-      // Refresh menu to swap icon
+      // Refresh menu to swap checkmark
       _ribbonMenu?.remove();
       _ribbonMenu = null;
       _showRibbonMenu(parseInt(menu.style.left), parseInt(menu.style.top));
@@ -1940,6 +2416,157 @@ document.addEventListener('contextmenu', (e) => {
     document.removeEventListener('click', _ribbonMenuClose);
   }
 }, true);
+
+/** Right-click context menu for sidebar tabs */
+let _tabContextMenu = null;
+function _showTabContextMenu(e, panelId) {
+  e.preventDefault();
+  e.stopPropagation();
+  if (_tabContextMenu) { _tabContextMenu.remove(); _tabContextMenu = null; }
+
+  const panel = _getPanelConfig(panelId);
+  const isRight = panel?.side === 'right';
+  const tabDefs = isRight
+    ? [
+        { tab: 'backlinks', pid: 'backlinks', label: 'Backlinks' },
+        { tab: 'outgoing', pid: 'outgoing-links', label: 'Outgoing links' },
+        { tab: 'unlinked', pid: 'unlinked', label: 'Unlinked mentions' },
+        { tab: 'outline', pid: 'outline', label: 'Outline' },
+        { tab: 'orphans', pid: 'orphans', label: 'Orphans' },
+        { tab: 'local-graph', pid: null, label: 'Local graph' },
+      ]
+    : [
+        { tab: 'bookmarks', pid: 'bookmarks', label: 'Bookmarks' },
+        { tab: 'tags', pid: 'tags', label: 'Tags' },
+        { tab: 'search', pid: 'search', label: 'Search' },
+        { tab: 'graph', pid: 'graph', label: 'Graph view' },
+      ];
+
+  const menu = document.createElement('div');
+  menu.className = 'shard-ribbon-menu';
+  let html = '';
+  const hiddenRight = new Set(_shardSettings.appearance?.hiddenRightTabs || []);
+  for (const def of tabDefs) {
+    let enabled;
+    if (def.pid === null) {
+      enabled = !hiddenRight.has(def.tab);
+    } else {
+      enabled = _pluginManager?.isEnabled(def.pid) ?? true;
+    }
+    const checkClass = enabled ? 'is-checked' : '';
+    html += `
+      <div class="shard-ribbon-menu-item shard-note-menu-check ${checkClass}" data-tab-pid="${_esc(def.pid ?? '')}" data-tab-name="${_esc(def.tab)}">
+        <span>${_esc(def.label)}</span>
+        <span class="shard-note-menu-checkmark"></span>
+      </div>`;
+  }
+  // Add "Move to new panel" if user right-clicked on a specific tab
+  const clickedTab = e.target.closest('.shard-right-tab, .shard-sidebar-tab');
+  const clickedTabName = clickedTab?.dataset.tab;
+  if (clickedTabName) {
+    html += `<div class="shard-ribbon-menu-divider"></div>`;
+    html += `
+      <div class="shard-ribbon-menu-item" data-action="move-to-new-panel" data-tab-name="${_esc(clickedTabName)}">
+        <span>Move "${_esc(clickedTab.querySelector('span')?.textContent || clickedTabName)}" to new panel</span>
+      </div>`;
+  }
+
+  menu.innerHTML = html;
+  document.body.appendChild(menu);
+
+  // Position
+  const rect = menu.getBoundingClientRect();
+  const winW = window.innerWidth;
+  const winH = window.innerHeight;
+  let left = e.clientX;
+  let top = e.clientY;
+  if (left + rect.width > winW) left = winW - rect.width - 4;
+  if (top + rect.height > winH) top = winH - rect.height - 4;
+  menu.style.left = left + 'px';
+  menu.style.top = top + 'px';
+  menu.style.position = 'fixed';
+  menu.style.zIndex = '9999';
+
+  // Wire toggles
+  menu.querySelectorAll('[data-tab-pid]').forEach(row => {
+    row.addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      const pid = row.dataset.tabPid;
+      const tabName = row.dataset.tabName;
+
+      // Non-plugin tab (e.g., local-graph)
+      if (!pid) {
+        const hiddenSet = new Set(_shardSettings.appearance?.hiddenRightTabs || []);
+        if (hiddenSet.has(tabName)) hiddenSet.delete(tabName);
+        else hiddenSet.add(tabName);
+        _shardSettings.appearance.hiddenRightTabs = Array.from(hiddenSet);
+        _saveShardSettings();
+        _syncPluginTabs();
+        if (isRight && _selectedNoteId) {
+          const note = _notes.find(n => n.id === _selectedNoteId);
+          if (note) _renderRightSidebar(note);
+        }
+        // Refresh menu
+        _tabContextMenu?.remove();
+        _tabContextMenu = null;
+        _showTabContextMenu(e, panelId);
+        return;
+      }
+
+      if (!_pluginManager) return;
+      const enabled = _pluginManager.isEnabled(pid);
+      try {
+        if (enabled) {
+          await _pluginManager.disable(pid);
+        } else {
+          await _pluginManager.enable(pid);
+        }
+      } catch (err) {
+        console.error('[shard] failed to toggle plugin', pid, err);
+        return;
+      }
+      _shardSettings.enabledPlugins = CORE_PLUGINS
+        .filter(p => _pluginManager.isEnabled(p.id))
+        .map(p => p.id);
+      _saveShardSettings();
+      _syncPluginTabs();
+      // Re-render pane content so panel doesn't appear empty/closed
+      if (isRight && _selectedNoteId) {
+        const note = _notes.find(n => n.id === _selectedNoteId);
+        if (note) _renderRightSidebar(note);
+      } else if (!isRight) {
+        _switchLeftTab(_activeLeftTab);
+      }
+      // Refresh menu
+      _tabContextMenu?.remove();
+      _tabContextMenu = null;
+      _showTabContextMenu(e, panelId);
+    });
+  });
+
+  // Wire "Move to new panel"
+  menu.querySelector('[data-action="move-to-new-panel"]')?.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    const tabName = menu.querySelector('[data-action="move-to-new-panel"]')?.dataset.tabName;
+    if (tabName && panelId) {
+      _moveTabToNewPanel(tabName, panelId);
+    }
+    _tabContextMenu?.remove();
+    _tabContextMenu = null;
+  });
+
+  _tabContextMenu = menu;
+  // Close on outside click
+  setTimeout(() => {
+    document.addEventListener('click', function closeMenu(ev) {
+      if (_tabContextMenu && !_tabContextMenu.contains(ev.target)) {
+        _tabContextMenu.remove();
+        _tabContextMenu = null;
+        document.removeEventListener('click', closeMenu);
+      }
+    });
+  }, 50);
+}
 
 /** Ribbon configuration dialog */
 function _openRibbonConfigDialog() {
@@ -2123,18 +2750,19 @@ function _renderRibbonConfigLists() {
 
 let _activeRightTab = 'backlinks';
 
-function _switchRightTab(tab) {
+function _switchRightTab(tab, panelId) {
+  // If panelId not provided, find the panel containing this tab
+  if (!panelId) {
+    const panel = _getPanelForTab(tab);
+    panelId = panel ? panel.id : 'right-1';
+  }
   _activeRightTab = tab;
-  document.querySelectorAll('#shard-right-tabs .shard-right-tab').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.tab === tab);
-  });
-  document.querySelectorAll('#shard-right-panes .shard-right-pane-content').forEach(pane => {
-    pane.classList.toggle('hidden', pane.dataset.pane !== tab);
-  });
+  _switchTabInPanel(tab, panelId);
+
   // Re-render current note into the newly active tab if a note is selected
   if (_selectedNoteId && _noteContentCache?.has(_selectedNoteId)) {
     const note = _noteContentCache.get(_selectedNoteId);
-    _renderRightSidebar(note);
+    _renderPanel(panelId, note);
   } else if (tab === 'orphans') {
     _renderOrphansPane();
   }
@@ -2201,6 +2829,10 @@ let _shardSettings = {
     showTabTitleBar: true,
     showBacklinksAtBottom: false,
   },
+  panels: [
+    { id: 'left-1', side: 'left', tabs: ['files', 'search', 'bookmarks', 'tags', 'graph'], activeTab: 'files' },
+    { id: 'right-1', side: 'right', tabs: ['backlinks', 'outgoing', 'unlinked', 'outline', 'orphans', 'local-graph'], activeTab: 'backlinks' }
+  ],
   plugins: {
     backlinks: { showBacklinksAtBottom: false },
     canvas: { newFileLocation: 'vault-root', mouseWheelBehaviour: 'pan', ctrlDragBehaviour: 'show-menu', showCardNames: 'always', snapToGrid: true, snapToObjects: true, zoomThreshold: 50 },
@@ -2856,7 +3488,7 @@ function _runCommandById(cmdId) {
       return true;
     }
     case 'open-local-graph': {
-      const localGraphTab = document.querySelector('#shard-right-tabs [data-tab="local-graph"]');
+      const localGraphTab = document.querySelector('.shard-right-tabs [data-tab="local-graph"]');
       if (localGraphTab) localGraphTab.click();
       return true;
     }
@@ -3192,28 +3824,6 @@ function _applyMonospaceFont() {
     }
   }
 
-  // Diagnostic: report computed font-family of representative vault content
-  // elements so we can verify the CSS actually takes effect.
-  const probe = (sel) => {
-    const el = modal.querySelector(sel);
-    if (!el) return `${sel}: <missing>`;
-    const ff = getComputedStyle(el).fontFamily;
-    return `${sel}: ${ff.slice(0, 60)}`;
-  };
-  console.log('[shard] _applyMonospaceFont', {
-    settingOn: on,
-    classBefore: before,
-    classAfter: after,
-    settingsObj: _shardSettings.appearance,
-  });
-  console.log('[shard] computed font-family:', [
-    probe('#shard-preview'),
-    probe('.shard-source-view'),
-    probe('.shard-live-view'),
-    probe('.shard-reading-view'),
-    probe('.shard-folder-tree'),
-    probe('.shard-tab'),
-  ].join(' | '));
 }
 
 function _applyReadableLineLength() {
@@ -3315,15 +3925,21 @@ function _renderPluginSettings(query = '') {
       const leftMap = { bookmarks: 'bookmarks', tags: 'tags', search: 'search' };
       const rightMap = { backlinks: 'backlinks', 'outgoing-links': 'outgoing', unlinked: 'unlinked', outline: 'outline', orphans: 'orphans' };
       if (!on && leftMap[pid] && _activeLeftTab === leftMap[pid]) {
-        const fallback = Array.from(document.querySelectorAll('#shard-left-tabs .shard-sidebar-tab:not(.hidden)')).map(b => b.dataset.tab)[0];
+        const fallback = Array.from(document.querySelectorAll('.shard-sidebar-tabs .shard-sidebar-tab:not(.hidden)')).map(b => b.dataset.tab)[0];
         if (fallback) _switchLeftTab(fallback);
       }
       if (!on && rightMap[pid] && _activeRightTab === rightMap[pid]) {
-        const fallback = Array.from(document.querySelectorAll('#shard-right-tabs .shard-right-tab:not(.hidden)')).map(b => b.dataset.tab)[0];
-        if (fallback) _switchRightTab(fallback);
+        const fallback = Array.from(document.querySelectorAll('.shard-right-tabs .shard-right-tab:not(.hidden)')).map(b => b.dataset.tab)[0];
+        if (fallback) {
+          const panel = _getPanelForTab(fallback);
+          _switchRightTab(fallback, panel?.id);
+        }
       }
       _switchLeftTab(_activeLeftTab);
-      _switchRightTab(_activeRightTab);
+      if (_activeRightTab) {
+        const panel = _getPanelForTab(_activeRightTab);
+        _switchRightTab(_activeRightTab, panel?.id);
+      }
       if (_selectedNoteId) _selectNote(_selectedNoteId);
       // Re-render sidebar to update toggle visual state
       _renderPluginSettings(document.getElementById('shard-plugin-search')?.value || '');
@@ -3512,7 +4128,7 @@ function _wireShardSettings() {
         return;
       }
       specificFileSuggestions.innerHTML = matches.map(n =>
-        `<div class="shard-note-menu-item" data-note-id="${_esc(n.id)}"><span>${_esc(n.title || n.id)}</span></div>`
+        `<div class="shard-note-menu-item" data-note-id="${_esc(n.id)}"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(n.title || n.id)}</span></div>`
       ).join('');
       specificFileSuggestions.classList.remove('hidden');
       specificFileSuggestions.querySelectorAll('.shard-note-menu-item').forEach(item => {
@@ -4281,7 +4897,18 @@ let _editModePref = 'live';   // 'live' | 'edit' — the edit mode used when tog
 let _sourceModeEnabled = false; // when true, main toggle is Read/Source instead of Read/Live
 let _autoRenameNoteId = null; // set when creating new note to auto-focus title
 
+function _isCorruptCharObject(obj) {
+  if (!obj || typeof obj !== 'object') return false;
+  const keys = Object.keys(obj);
+  if (!keys.length) return false;
+  return keys.every(k => /^\d+$/.test(k));
+}
+
 function _serializeFrontmatter(fm) {
+  // If frontmatter is a string or String object, it was corrupted; fall back to empty
+  if (typeof fm === 'string' || fm instanceof String || _isCorruptCharObject(fm)) {
+    fm = {};
+  }
   const lines = ['---'];
   for (const [k, v] of Object.entries(fm)) {
     if (Array.isArray(v)) {
@@ -4509,7 +5136,9 @@ function _parseFrontmatter(text) {
 }
 
 function _buildPropertiesHtml(frontmatter, note) {
-  const fm = (frontmatter && typeof frontmatter === 'object' && !Array.isArray(frontmatter)) ? frontmatter : {};
+  let fm = (frontmatter && typeof frontmatter === 'object' && !Array.isArray(frontmatter)) ? frontmatter : {};
+  // Detect and recover from frontmatter that was saved as a split string
+  if (_isCorruptCharObject(fm)) fm = {};
   const entries = Object.entries(fm);
   const rows = entries.map(([k, v]) => {
     const propType = _inferPropType(k, v);
@@ -4562,8 +5191,12 @@ async function _selectNote(id) {
     }
     if (!note) { preview.style.display = 'none'; return; }
     // Server returns frontmatter as a raw YAML string; parse it into an object
-    if (note && typeof note.frontmatter === 'string') {
-      note.frontmatter = _parseFrontmatter(note.frontmatter);
+    if (note && (typeof note.frontmatter === 'string' || note.frontmatter instanceof String)) {
+      note.frontmatter = _parseFrontmatter(String(note.frontmatter));
+    }
+    // Recover from previously corrupted numeric-key objects
+    if (note && _isCorruptCharObject(note.frontmatter)) {
+      note.frontmatter = {};
     }
     preview.style.display = 'block';
     const isAutoRename = _autoRenameNoteId === note.id;
@@ -5752,6 +6385,10 @@ const _getRawOffsetUpTo = (root, endNode, endOffset) => {
     const wordCount = (note.content || '').split(/\s+/).filter(Boolean).length;
     wcEl.textContent = `${wordCount} words`;
     _updateModeButtons();
+    const backBtn = document.getElementById('shard-back-btn');
+    const forwardBtn = document.getElementById('shard-forward-btn');
+    if (backBtn) backBtn.style.display = '';
+    if (forwardBtn) forwardBtn.style.display = '';
     const viewModes = document.getElementById('shard-view-modes');
     if (viewModes) {
       viewModes.style.display = 'flex';
@@ -5848,8 +6485,10 @@ const _getRawOffsetUpTo = (root, endNode, endOffset) => {
         if (!hasActiveLiveEditor && !userEditedSinceFetch && _previewMode !== 'edit' && full.content !== note.content) {
           note.content = full.content;
           note.title = full.title;
-          if (typeof full.frontmatter === 'string') {
-            note.frontmatter = _parseFrontmatter(full.frontmatter);
+          if (typeof full.frontmatter === 'string' || full.frontmatter instanceof String) {
+            note.frontmatter = _parseFrontmatter(String(full.frontmatter));
+          } else if (_isCorruptCharObject(full.frontmatter)) {
+            note.frontmatter = {};
           } else {
             note.frontmatter = full.frontmatter;
           }
@@ -6318,34 +6957,7 @@ function _wirePropertyEditors(preview, note) {
 }
 
 function _renderRightSidebar(note) {
-  const pane = document.getElementById('shard-right-pane');
-  if (!pane) return;
-  const placeholder = document.getElementById('shard-right-placeholder');
-  if (placeholder) placeholder.classList.add('hidden');
-  document.getElementById('shard-right-tabs')?.classList.remove('hidden');
-  document.getElementById('shard-right-panes')?.classList.remove('hidden');
-
-  switch (_activeRightTab) {
-    case 'backlinks':
-      if (_pluginManager?.isEnabled('backlinks')) _renderBacklinksPane(note);
-      break;
-    case 'outgoing':
-      if (_pluginManager?.isEnabled('outgoing-links')) _renderOutgoingPane(note);
-      break;
-    case 'unlinked':
-      if (_pluginManager?.isEnabled('unlinked')) _renderUnlinkedPane(note);
-      break;
-    case 'outline':
-      if (_pluginManager?.isEnabled('outline')) _renderOutlinePane(note);
-      break;
-    case 'orphans':
-      if (_pluginManager?.isEnabled('orphans')) _renderOrphansPane(note);
-      break;
-    case 'local-graph':
-      _renderLocalGraph(note);
-      break;
-  }
-
+  _renderAllPanels(note);
   // Update word-count plugin when active note changes
   const wc = _pluginManager?.getInstance('word-count');
   if (wc && typeof wc.update === 'function') wc.update();
@@ -8028,28 +8640,405 @@ function _applySidebarOrder(containerId, settingsKey) {
   }
 }
 
+// ── Panel-aware tab drag-and-drop ──────────────────────────
+
+function _wirePanelDnD() {
+  let _panelDraggedTab = null;
+  let _panelDragSource = null;
+  let _activeEdge = null;        // { panelId, edge }
+  let _lastTabTarget = null;     // { tab, side } for reorder indicators
+  let _lastEdgeKey = null;       // "panelId:edge" string to avoid flicker
+
+  function _clearTabIndicators(container) {
+    if (!container) container = document;
+    container.querySelectorAll('.shard-right-tab, .shard-sidebar-tab').forEach(t => {
+      t.classList.remove('drop-target-left', 'drop-target-right');
+    });
+  }
+
+  function _clearEdgeIndicators() {
+    document.querySelectorAll('.shard-panel-edge-zone').forEach(z => z.classList.remove('active'));
+    _activeEdge = null;
+    _lastEdgeKey = null;
+  }
+
+  function _clearAllIndicators() {
+    _clearTabIndicators();
+    _clearEdgeIndicators();
+    _lastTabTarget = null;
+  }
+
+  function _ensureEdgeZones(panelGroup) {
+    if (panelGroup.querySelector('.shard-panel-edge-zone')) return;
+    for (const edge of ['top', 'bottom', 'left', 'right']) {
+      const zone = document.createElement('div');
+      zone.className = 'shard-panel-edge-zone';
+      zone.dataset.edge = edge;
+      zone.dataset.panelId = panelGroup.dataset.panelId;
+      panelGroup.appendChild(zone);
+    }
+  }
+
+  function _getClosestEdge(rect, x, y) {
+    const thresholdY = Math.max(80, rect.height * 0.15);
+    const thresholdX = Math.max(80, rect.width * 0.15);
+    const distTop = y - rect.top;
+    const distBottom = rect.bottom - y;
+    const distLeft = x - rect.left;
+    const distRight = rect.right - x;
+    const distances = [
+      { edge: 'top', dist: distTop, thresh: thresholdY },
+      { edge: 'bottom', dist: distBottom, thresh: thresholdY },
+      { edge: 'left', dist: distLeft, thresh: thresholdX },
+      { edge: 'right', dist: distRight, thresh: thresholdX },
+    ];
+    const closest = distances.reduce((a, b) => a.dist < b.dist ? a : b);
+    if (closest.dist >= 0 && closest.dist <= closest.thresh) return closest.edge;
+    return null;
+  }
+
+  document.addEventListener('dragstart', (e) => {
+    const tab = e.target.closest('.shard-right-tab, .shard-sidebar-tab');
+    if (!tab) return;
+    const panelGroup = tab.closest('.shard-panel-group');
+    if (!panelGroup) return;
+    _panelDraggedTab = tab;
+    _panelDragSource = panelGroup.dataset.panelId;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', tab.dataset.tab);
+    e.dataTransfer.setData('application/x-shard-tab', tab.dataset.tab);
+    tab.classList.add('dragging');
+    console.log('[DND] dragstart tab:', tab.dataset.tab, 'sourcePanel:', _panelDragSource);
+    document.querySelectorAll('.shard-panel-group').forEach(_ensureEdgeZones);
+  });
+
+  document.addEventListener('dragend', (e) => {
+    if (_panelDraggedTab) _panelDraggedTab.classList.remove('dragging');
+    _panelDraggedTab = null;
+    _panelDragSource = null;
+    document.querySelectorAll('.shard-panel-resize-v, .shard-panel-resize-h').forEach(h => {
+      h.style.borderColor = '';
+      h.style.opacity = '';
+    });
+    _clearAllIndicators();
+  });
+
+  document.addEventListener('dragover', (e) => {
+    if (!_panelDraggedTab) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+
+    const tabContainer = e.target.closest('.shard-right-tabs, .shard-sidebar-tabs');
+    const panelGroup = e.target.closest('.shard-panel-group');
+    const leftPane = e.target.closest('.shard-left-pane');
+    const resizeHandle = e.target.closest('.shard-panel-resize-v, .shard-panel-resize-h');
+
+    // ── 1. Hovering over a resize handle = create panel between ──
+    if (resizeHandle) {
+      _clearTabIndicators();
+      _lastTabTarget = null;
+      const isV = resizeHandle.classList.contains('shard-panel-resize-v');
+      const siblings = Array.from(resizeHandle.parentNode.children);
+      const idx = siblings.indexOf(resizeHandle);
+      const before = siblings[idx - 1];
+      const after = siblings[idx + 1];
+      if (!before || !after) { _clearEdgeIndicators(); return; }
+      const edgeKey = `between:${before.dataset.panelId || 'row'}`;
+      if (edgeKey !== _lastEdgeKey) {
+        _clearEdgeIndicators();
+        _activeEdge = { panelId: before.dataset.panelId || before.closest('.shard-panel-group')?.dataset.panelId, edge: isV ? 'bottom' : 'right', between: true, before: before.dataset.panelId, after: after.dataset.panelId };
+        _lastEdgeKey = edgeKey;
+        // Show a thin line on the resize handle itself
+        resizeHandle.style.borderColor = 'var(--accent, var(--red, #4a9eff))';
+        resizeHandle.style.opacity = '1';
+      }
+      return;
+    }
+    // Clear any resize handle highlight when not hovering on one
+    document.querySelectorAll('.shard-panel-resize-v, .shard-panel-resize-h').forEach(h => {
+      h.style.borderColor = '';
+      h.style.opacity = '';
+    });
+
+    if (tabContainer) {
+      const target = e.target.closest('.shard-right-tab, .shard-sidebar-tab');
+      if (target && target !== _panelDraggedTab) {
+        // ── Tab reorder zone ──
+        _clearEdgeIndicators();
+        const rect = target.getBoundingClientRect();
+        const side = e.clientX < rect.left + rect.width / 2 ? 'left' : 'right';
+        if (!_lastTabTarget || _lastTabTarget.tab !== target || _lastTabTarget.side !== side) {
+          _clearTabIndicators(tabContainer);
+          target.classList.add(side === 'left' ? 'drop-target-left' : 'drop-target-right');
+          _lastTabTarget = { tab: target, side };
+        }
+      } else if (!target) {
+        // ── Empty space in tab container = drop on panel bottom edge ──
+        if (_lastTabTarget) { _clearTabIndicators(tabContainer); _lastTabTarget = null; }
+        const pg = tabContainer.closest('.shard-panel-group');
+        if (pg) {
+          const edgeKey = `${pg.dataset.panelId}:bottom`;
+          if (edgeKey !== _lastEdgeKey) {
+            _clearEdgeIndicators();
+            const zone = pg.querySelector('.shard-panel-edge-zone[data-edge="bottom"]');
+            if (zone) {
+              zone.classList.add('active');
+              _activeEdge = { panelId: pg.dataset.panelId, edge: 'bottom' };
+              _lastEdgeKey = edgeKey;
+            }
+          }
+        }
+      }
+    } else if (panelGroup) {
+      // ── Panel edge zone ──
+      if (_lastTabTarget) { _clearTabIndicators(); _lastTabTarget = null; }
+      // Suppress edge indicators on source panel if it only has 1 tab (the dragged one)
+      const sourcePanelEl = document.querySelector(`.shard-panel-group[data-panel-id="${_esc(_panelDragSource)}"]`);
+      const sourceTabCount = sourcePanelEl ? sourcePanelEl.querySelectorAll('.shard-right-tab, .shard-sidebar-tab').length : 0;
+      const isSourcePanel = panelGroup.dataset.panelId === _panelDragSource;
+      if (isSourcePanel && sourceTabCount <= 1) {
+        _clearEdgeIndicators();
+        return;
+      }
+      const rect = panelGroup.getBoundingClientRect();
+      const edge = _getClosestEdge(rect, e.clientX, e.clientY);
+      const edgeKey = edge ? `${panelGroup.dataset.panelId}:${edge}` : null;
+      if (edgeKey !== _lastEdgeKey) {
+        _clearEdgeIndicators();
+        if (edge) {
+          const zone = panelGroup.querySelector(`.shard-panel-edge-zone[data-edge="${_esc(edge)}"]`);
+          if (zone) {
+            zone.classList.add('active');
+            _activeEdge = { panelId: panelGroup.dataset.panelId, edge };
+            _lastEdgeKey = edgeKey;
+          }
+        }
+      }
+    } else if (leftPane) {
+      if (_lastTabTarget) { _clearTabIndicators(); _lastTabTarget = null; }
+      const rect = leftPane.getBoundingClientRect();
+      const edge = _getClosestEdge(rect, e.clientX, e.clientY);
+      const edgeKey = edge ? `left-1:${edge}` : null;
+      if (edgeKey !== _lastEdgeKey) {
+        _clearEdgeIndicators();
+        if (edge) {
+          let indicator = leftPane.querySelector('.shard-panel-edge-zone.active');
+          if (!indicator) {
+            indicator = document.createElement('div');
+            indicator.className = 'shard-panel-edge-zone active';
+            indicator.style.cssText = 'position:absolute;z-index:50;pointer-events:none;background:var(--accent, var(--red, #4a9eff));';
+            indicator.dataset.edge = edge;
+            leftPane.style.position = 'relative';
+            leftPane.appendChild(indicator);
+          }
+          if (edge === 'top' || edge === 'bottom') {
+            indicator.style.left = '0'; indicator.style.right = '0'; indicator.style.height = '1px';
+            indicator.style.top = edge === 'top' ? '0' : 'auto';
+            indicator.style.bottom = edge === 'bottom' ? '0' : 'auto';
+            indicator.style.width = '';
+          } else {
+            indicator.style.top = '0'; indicator.style.bottom = '0'; indicator.style.width = '1px';
+            indicator.style.left = edge === 'left' ? '0' : 'auto';
+            indicator.style.right = edge === 'right' ? '0' : 'auto';
+            indicator.style.height = '';
+          }
+          _activeEdge = { panelId: 'left-1', edge, isLeftPane: true };
+          _lastEdgeKey = edgeKey;
+        }
+      }
+    } else {
+      _clearAllIndicators();
+    }
+  });
+
+  document.addEventListener('drop', (e) => {
+    if (!_panelDraggedTab) return;
+    e.preventDefault();
+    const tabName = _panelDraggedTab.dataset.tab;
+    const sourcePanel = _panelDragSource;
+    console.log('[DND] drop tab:', tabName, 'sourcePanel:', sourcePanel, 'target:', e.target.className);
+
+    const tabContainer = e.target.closest('.shard-right-tabs, .shard-sidebar-tabs');
+    const panelGroup = e.target.closest('.shard-panel-group');
+    const leftPane = e.target.closest('.shard-left-pane');
+    const resizeHandle = e.target.closest('.shard-panel-resize-v, .shard-panel-resize-h');
+
+    if (resizeHandle && _activeEdge?.between) {
+      // Dropped on a resize handle = create panel between two panels
+      console.log('[DND] dropping between panels:', _activeEdge.before, 'and', _activeEdge.after);
+      _moveTabToNewPanel(tabName, sourcePanel, _activeEdge.edge, _activeEdge.before);
+    } else if (tabContainer) {
+      const targetPanel = tabContainer.closest('.shard-panel-group')?.dataset.panelId;
+      const target = e.target.closest('.shard-right-tab, .shard-sidebar-tab');
+      console.log('[DND] tabContainer found, targetPanel:', targetPanel, 'target:', target?.dataset?.tab);
+
+      if (targetPanel && targetPanel !== sourcePanel) {
+        console.log('[DND] moving to different panel');
+        _moveTabToPanel(tabName, sourcePanel, targetPanel);
+      } else if (targetPanel === sourcePanel && target && target !== _panelDraggedTab) {
+        console.log('[DND] reordering in same panel');
+        const rect = target.getBoundingClientRect();
+        const midX = rect.left + rect.width / 2;
+        if (e.clientX < midX) {
+          tabContainer.insertBefore(_panelDraggedTab, target);
+        } else {
+          tabContainer.insertBefore(_panelDraggedTab, target.nextElementSibling);
+        }
+        const panel = _getPanelConfig(sourcePanel);
+        if (panel) {
+          const side = panel.side;
+          const settingsKey = side === 'right' ? 'rightSidebarOrder' : 'leftSidebarOrder';
+          const newOrder = Array.from(tabContainer.children).map(t => t.dataset.tab);
+          if (!_shardSettings.appearance) _shardSettings.appearance = {};
+          _shardSettings.appearance[settingsKey] = newOrder;
+          _saveShardSettings();
+        }
+      }
+    } else if ((panelGroup || leftPane) && _activeEdge) {
+      const targetPanelId = _activeEdge.panelId;
+      console.log('[DND] dropping on edge:', _activeEdge.edge, 'of panel:', targetPanelId);
+      _moveTabToNewPanel(tabName, sourcePanel, _activeEdge.edge);
+    } else {
+      console.log('[DND] dropped in unrecognized area');
+    }
+
+    // Cleanup
+    document.querySelectorAll('.shard-panel-resize-v, .shard-panel-resize-h').forEach(h => {
+      h.style.borderColor = '';
+      h.style.opacity = '';
+    });
+    document.querySelectorAll('.shard-left-pane .shard-panel-edge-zone').forEach(el => el.remove());
+    _clearAllIndicators();
+    _panelDraggedTab = null;
+    _panelDragSource = null;
+  });
+}
+
+function _wirePanelResizers() {
+  let _resizingHandle = null;
+  let _resizingStart = 0;
+  let _panelA = null;
+  let _panelB = null;
+  let _aStartSize = 0;
+  let _bStartSize = 0;
+  let _isHorizontal = false; // true for .shard-panel-resize-h (col-resize)
+
+  document.addEventListener('mousedown', (e) => {
+    const vHandle = e.target.closest('.shard-panel-resize-v');
+    const hHandle = e.target.closest('.shard-panel-resize-h');
+    if (!vHandle && !hHandle) return;
+    e.preventDefault();
+    _resizingHandle = vHandle || hHandle;
+    _isHorizontal = !!hHandle;
+
+    if (vHandle) {
+      // Vertical: find panels above and below in stack
+      _resizingStart = e.clientY;
+      const stack = vHandle.closest('.shard-panel-stack');
+      if (!stack) return;
+      const children = Array.from(stack.children);
+      const idx = children.indexOf(vHandle);
+      _panelA = children[idx - 1];
+      _panelB = children[idx + 1];
+      if (!_panelA || !_panelB) return;
+      const aRect = _panelA.getBoundingClientRect();
+      const bRect = _panelB.getBoundingClientRect();
+      _aStartSize = aRect.height;
+      _bStartSize = bRect.height;
+      document.body.style.cursor = 'row-resize';
+    } else {
+      // Horizontal: find panels left and right in row
+      _resizingStart = e.clientX;
+      const row = hHandle.closest('.shard-panel-row');
+      if (!row) return;
+      const children = Array.from(row.children);
+      const idx = children.indexOf(hHandle);
+      _panelA = children[idx - 1];
+      _panelB = children[idx + 1];
+      if (!_panelA || !_panelB) return;
+      const aRect = _panelA.getBoundingClientRect();
+      const bRect = _panelB.getBoundingClientRect();
+      _aStartSize = aRect.width;
+      _bStartSize = bRect.width;
+      document.body.style.cursor = 'col-resize';
+    }
+    document.body.style.userSelect = 'none';
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!_resizingHandle || !_panelA || !_panelB) return;
+    if (_isHorizontal) {
+      const delta = e.clientX - _resizingStart;
+      const total = _aStartSize + _bStartSize;
+      const aW = Math.max(100, Math.min(total - 100, _aStartSize + delta));
+      const bW = total - aW;
+      _panelA.style.flexGrow = String((aW / total) * 100);
+      _panelB.style.flexGrow = String((bW / total) * 100);
+    } else {
+      const delta = e.clientY - _resizingStart;
+      const total = _aStartSize + _bStartSize;
+      const aH = Math.max(60, Math.min(total - 60, _aStartSize + delta));
+      const bH = total - aH;
+      _panelA.style.flexGrow = String((aH / total) * 100);
+      _panelB.style.flexGrow = String((bH / total) * 100);
+    }
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (_resizingHandle) {
+      _resizingHandle = null;
+      _panelA = null;
+      _panelB = null;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      _isHorizontal = false;
+    }
+  });
+}
+
 // ── Init wiring ──────────────────────────────────────────────
 
 function _init() {
-  // Left sidebar tabs
-  document.getElementById('shard-left-tabs')?.addEventListener('click', (e) => {
-    const tab = e.target.closest('.shard-sidebar-tab');
-    if (!tab) return;
-    _switchLeftTab(tab.dataset.tab);
+  // Left sidebar tabs - delegated to panel groups
+  document.querySelectorAll('.shard-sidebar-tabs').forEach(container => {
+    container.addEventListener('click', (e) => {
+      const tab = e.target.closest('.shard-sidebar-tab');
+      if (!tab) return;
+      const panelGroup = tab.closest('.shard-panel-group');
+      const panelId = panelGroup?.dataset.panelId;
+      if (panelId) _switchLeftTab(tab.dataset.tab);
+      else _switchLeftTab(tab.dataset.tab);
+    });
+    container.addEventListener('contextmenu', (e) => {
+      _showTabContextMenu(e, container.dataset.panelId || 'left-1');
+    });
   });
 
-  // Right sidebar tabs
-  document.getElementById('shard-right-tabs')?.addEventListener('click', (e) => {
-    const tab = e.target.closest('.shard-right-tab');
-    if (!tab) return;
-    _switchRightTab(tab.dataset.tab);
+  // Right sidebar tabs - delegated to panel groups
+  document.querySelectorAll('.shard-right-tabs').forEach(container => {
+    container.addEventListener('click', (e) => {
+      const tab = e.target.closest('.shard-right-tab');
+      if (!tab) return;
+      const panelGroup = tab.closest('.shard-panel-group');
+      const panelId = panelGroup?.dataset.panelId;
+      _switchRightTab(tab.dataset.tab, panelId);
+    });
+    container.addEventListener('contextmenu', (e) => {
+      _showTabContextMenu(e, container.dataset.panelId || 'right-1');
+    });
   });
 
   // Sidebar tab drag-and-drop
   _wireSidebarTabDnD('shard-left-tabs', 'leftSidebarOrder');
-  _wireSidebarTabDnD('shard-right-tabs', 'rightSidebarOrder');
+  // Right tabs DND is handled by _wirePanelDnD (inter-panel + intra-panel)
   _applySidebarOrder('shard-left-tabs', 'leftSidebarOrder');
   _applySidebarOrder('shard-right-tabs', 'rightSidebarOrder');
+
+  // Panel-aware inter-panel drag-and-drop
+  _wirePanelDnD();
+
+  // Panel resizers
+  _wirePanelResizers();
 
   // Search input + clear + case + sort + settings
   const searchInput = document.getElementById('shard-search-input');
@@ -8164,6 +9153,7 @@ function _init() {
   _wireSnippetSettings();
   _injectCssSnippets();
   _loadShardSettings();
+  _rebuildPanelsFromSettings();
   const dv = _shardSettings.editor.defaultView;
   _previewMode = dv === 'live' ? 'live' : dv === 'source' ? 'edit' : 'preview';
   _editModePref = dv === 'source' ? 'edit' : 'live';
@@ -8248,71 +9238,62 @@ function _restoreVaultsAndWarmCache() {
   } catch {}
 }
 
-/** Remove / restore tab buttons whose feature is a toggleable plugin */
+/** Show / hide tab buttons based on plugin state and panel membership */
 function _syncPluginTabs() {
   if (!_pluginManager) return;
 
-  const _sync = (containerSelector, map) => {
-    const container = document.querySelector(containerSelector);
-    if (!container) return;
-    container.querySelectorAll(':scope > [data-tab]').forEach(btn => {
-      const tab = btn.dataset.tab;
-      const pid = map[tab];
-      if (!pid) return;
-      const enabled = _pluginManager.isEnabled(pid);
-      if (!enabled && btn.parentNode) {
-        _removedTabs.set(tab, btn);
-        btn.remove();
-      }
-    });
-    // Restore any tabs that are now enabled
-    for (const [tab, pid] of Object.entries(map)) {
-      if (!_pluginManager.isEnabled(pid)) continue;
-      const detached = _removedTabs.get(tab);
-      if (!detached) continue;
-      // Find insertion point: keep original order by looking at remaining tabs
-      const tabsInDom = Array.from(container.querySelectorAll(':scope > [data-tab]'));
-      const allTabNames = ['files', 'bookmarks', 'tags', 'graph', 'search'];
-      const rightTabNames = ['backlinks', 'outgoing', 'unlinked', 'outline', 'orphans', 'local-graph'];
-      const order = containerSelector.includes('right') ? rightTabNames : allTabNames;
-      const idx = order.indexOf(tab);
-      let inserted = false;
-      for (let i = idx + 1; i < order.length; i++) {
-        const after = tabsInDom.find(b => b.dataset.tab === order[i]);
-        if (after) {
-          container.insertBefore(detached, after);
-          inserted = true;
-          break;
-        }
-      }
-      if (!inserted) container.appendChild(detached);
-      _removedTabs.delete(tab);
-    }
-  };
-
-  _sync('#shard-right-tabs', {
+  const hiddenRight = new Set(_shardSettings.appearance?.hiddenRightTabs || []);
+  const rightOrder = ['backlinks', 'outgoing', 'unlinked', 'outline', 'orphans', 'local-graph'];
+  const leftOrder = ['files', 'bookmarks', 'tags', 'graph', 'search'];
+  const pluginMap = {
     backlinks: 'backlinks',
     outgoing: 'outgoing-links',
     unlinked: 'unlinked',
     outline: 'outline',
     orphans: 'orphans',
-  });
-
-  _sync('#shard-left-tabs', {
     bookmarks: 'bookmarks',
     tags: 'tags',
     search: 'search',
     graph: 'graph',
-  });
+  };
 
-  // If active tab was removed, switch to a safe fallback
-  if (!document.querySelector(`#shard-left-tabs [data-tab="${_activeLeftTab}"]`)) {
-    _switchLeftTab('files');
+  // Sync each panel independently
+  for (const panel of (_shardSettings.panels || [])) {
+    const tabsContainer = _getPanelTabsContainer(panel.id);
+    if (!tabsContainer) continue;
+    const order = panel.side === 'right' ? rightOrder : leftOrder;
+
+    // Hide tabs that don't belong or should be hidden;
+    // show tabs that belong and should be visible
+    tabsContainer.querySelectorAll(':scope > [data-tab]').forEach(btn => {
+      const tab = btn.dataset.tab;
+      const belongs = panel.tabs.includes(tab);
+      if (!belongs) {
+        btn.classList.add('hidden');
+        return;
+      }
+      const pid = pluginMap[tab];
+      const shouldShow = pid ? _pluginManager.isEnabled(pid) : !hiddenRight.has(tab);
+      btn.classList.toggle('hidden', !shouldShow);
+    });
+
+    _updatePanelVisibility(panel.id);
+
+    // If active tab is now hidden, switch to first visible
+    const activeTab = _getActiveTabForPanel(panel.id);
+    if (activeTab) {
+      const activeBtn = tabsContainer.querySelector(`[data-tab="${_esc(activeTab)}"]:not(.hidden)`);
+      if (!activeBtn) {
+        const firstVisible = tabsContainer.querySelector('[data-tab]:not(.hidden)');
+        if (firstVisible) {
+          if (panel.side === 'right') _switchRightTab(firstVisible.dataset.tab, panel.id);
+          else _switchLeftTab(firstVisible.dataset.tab);
+        }
+      }
+    }
   }
-  if (!document.querySelector(`#shard-right-tabs [data-tab="${_activeRightTab}"]`)) {
-    const firstRight = document.querySelector('#shard-right-tabs [data-tab]');
-    if (firstRight) _switchRightTab(firstRight.dataset.tab);
-  }
+
+  _updateRightPanelVisibility();
 }
 
 // ── Command Palette / Quick Switcher (Phase 2.5) ───────────

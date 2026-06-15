@@ -203,6 +203,7 @@
   <link id="katex-css" rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.css" media="print">
   <script async src="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.js"></script>
   <script id="mermaid-script" async src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script async src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
   <script async src="https://cdn.jsdelivr.net/npm/force-graph@1.44.2/dist/force-graph.min.js"></script>
   <script nonce="{{CSP_NONCE}}">
     (function(){
@@ -674,45 +675,50 @@
           <!-- Resize handle: center-right -->
           <div class="shard-resize-handle-h" id="shard-resize-right"></div>
 
-          <!-- Right pane: Tabbed sidebar -->
+          <!-- Right pane: Panel stack -->
           <div class="shard-right-pane" id="shard-right-pane">
-            <div class="shard-right-placeholder" id="shard-right-placeholder">
-              Select a note to see backlinks and outgoing links.
-            </div>
-            <div class="shard-right-tabs" id="shard-right-tabs">
-              <div class="shard-right-tab active" data-tab="backlinks" title="Backlinks" draggable="true" role="button" tabindex="0">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-                <span>Backlinks</span>
-              </div>
-              <div class="shard-right-tab" data-tab="outgoing" title="Outgoing links" draggable="true" role="button" tabindex="0">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-                <span>Outgoing</span>
-              </div>
-              <div class="shard-right-tab" data-tab="unlinked" title="Unlinked mentions" draggable="true" role="button" tabindex="0">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-                <span>Unlinked</span>
-              </div>
-              <div class="shard-right-tab" data-tab="outline" title="Outline" draggable="true" role="button" tabindex="0">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
-                <span>Outline</span>
-              </div>
-              <div class="shard-right-tab" data-tab="orphans" title="Orphans" draggable="true" role="button" tabindex="0">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 22V12h6v10"/><path d="M12 2v10"/><path d="M2 10h20"/></svg>
-                <span>Orphans</span>
-              </div>
-              <div class="shard-right-tab" data-tab="local-graph" title="Local graph" draggable="true" role="button" tabindex="0">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-                <span>Local Graph</span>
-              </div>
-            </div>
-            <div class="shard-right-panes" id="shard-right-panes">
-              <div class="shard-right-pane-content" data-pane="backlinks" id="shard-backlinks-panel"></div>
-              <div class="shard-right-pane-content hidden" data-pane="outgoing" id="shard-outgoing-panel"></div>
-              <div class="shard-right-pane-content hidden" data-pane="unlinked" id="shard-unlinked-panel"></div>
-              <div class="shard-right-pane-content hidden" data-pane="outline" id="shard-outline-panel"></div>
-              <div class="shard-right-pane-content hidden" data-pane="orphans" id="shard-orphans-panel"></div>
-              <div class="shard-right-pane-content hidden" data-pane="local-graph" id="shard-local-graph-panel">
-                <div id="shard-local-graph-canvas" class="shard-local-graph-canvas"></div>
+            <div class="shard-panel-stack" id="shard-right-stack">
+              <!-- Panel group 1 (default) -->
+              <div class="shard-panel-group" data-panel-id="right-1">
+                <div class="shard-panel-placeholder" data-panel-id="right-1">
+                  Select a note to see backlinks and outgoing links.
+                </div>
+                <div class="shard-right-tabs" id="shard-right-tabs" data-panel-id="right-1">
+                  <div class="shard-right-tab active" data-tab="backlinks" title="Backlinks" draggable="true" role="button" tabindex="0">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                    <span>Backlinks</span>
+                  </div>
+                  <div class="shard-right-tab" data-tab="outgoing" title="Outgoing links" draggable="true" role="button" tabindex="0">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                    <span>Outgoing</span>
+                  </div>
+                  <div class="shard-right-tab" data-tab="unlinked" title="Unlinked mentions" draggable="true" role="button" tabindex="0">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                    <span>Unlinked</span>
+                  </div>
+                  <div class="shard-right-tab" data-tab="outline" title="Outline" draggable="true" role="button" tabindex="0">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+                    <span>Outline</span>
+                  </div>
+                  <div class="shard-right-tab" data-tab="orphans" title="Orphans" draggable="true" role="button" tabindex="0">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 22V12h6v10"/><path d="M12 2v10"/><path d="M2 10h20"/></svg>
+                    <span>Orphans</span>
+                  </div>
+                  <div class="shard-right-tab" data-tab="local-graph" title="Local graph" draggable="true" role="button" tabindex="0">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+                    <span>Local Graph</span>
+                  </div>
+                </div>
+                <div class="shard-right-panes" id="shard-right-panes" data-panel-id="right-1">
+                  <div class="shard-right-pane-content" data-pane="backlinks" id="shard-backlinks-panel"></div>
+                  <div class="shard-right-pane-content hidden" data-pane="outgoing" id="shard-outgoing-panel"></div>
+                  <div class="shard-right-pane-content hidden" data-pane="unlinked" id="shard-unlinked-panel"></div>
+                  <div class="shard-right-pane-content hidden" data-pane="outline" id="shard-outline-panel"></div>
+                  <div class="shard-right-pane-content hidden" data-pane="orphans" id="shard-orphans-panel"></div>
+                  <div class="shard-right-pane-content hidden" data-pane="local-graph" id="shard-local-graph-panel">
+                    <div id="shard-local-graph-canvas" class="shard-local-graph-canvas"></div>
+                  </div>
+                </div>
               </div>
             </div>
             <!-- Sidebar drop zones -->
@@ -995,7 +1001,7 @@
                       </div>
                       <div style="position:relative;min-width:140px;max-width:240px;width:100%;">
                         <input type="text" id="shard-set-specific-file" class="shard-settings-input" placeholder="Type note name..." autocomplete="off">
-                        <div class="shard-note-menu-dropdown hidden" id="shard-specific-file-suggestions" style="left:0;right:auto;top:calc(100% + 2px);max-height:200px;overflow-y:auto;"></div>
+                        <div class="shard-note-menu-dropdown hidden" id="shard-specific-file-suggestions" style="left:0;right:auto;top:calc(100% + 2px);max-height:200px;overflow-y:auto;max-width:100%;min-width:0;"></div>
                       </div>
                     </div>
                   </div>
