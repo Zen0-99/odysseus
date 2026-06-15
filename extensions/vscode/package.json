@@ -1,0 +1,83 @@
+{
+  "name": "odysseus",
+  "displayName": "Odysseus",
+  "description": "Connect to your local Odysseus AI workspace",
+  "version": "0.1.0",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Machine Learning",
+    "Chat",
+    "Other"
+  ],
+  "keywords": [
+    "ai",
+    "llm",
+    "local",
+    "assistant"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "odysseus.chat",
+        "title": "Chat",
+        "category": "Odysseus"
+      },
+      {
+        "command": "odysseus.connect",
+        "title": "Connect",
+        "category": "Odysseus"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "odysseus",
+          "title": "Odysseus",
+          "icon": "$(comment-discussion)"
+        }
+      ]
+    },
+    "views": {
+      "odysseus": [
+        {
+          "id": "odysseus.chatPanel",
+          "name": "Chat",
+          "type": "webview"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Odysseus",
+      "properties": {
+        "odysseus.host": {
+          "type": "string",
+          "default": "http://127.0.0.1:7860",
+          "description": "Odysseus server URL"
+        },
+        "odysseus.apiToken": {
+          "type": "string",
+          "default": "",
+          "description": "API token (ody_...) for Bearer auth"
+        },
+        "odysseus.model": {
+          "type": "string",
+          "default": "",
+          "description": "Default model to use for chat"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.x",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0"
+  }
+}
