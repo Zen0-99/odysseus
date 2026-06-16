@@ -53,171 +53,8 @@ window.uiModule = uiModule;
 window.adminModule = adminModule;
 window.cookbookModule = cookbookModule;
 
-// Plugin sandbox registry (iframe references)
-const _pluginSandboxes = new Map();
-
-// Plugin panel registry: panelId -> { pluginId, label, icon, container, iframe, btn }
-const _pluginPanels = new Map();
-let _activePanelId = null;
-
-function _deactivateAllPanels() {
-  _pluginPanels.forEach((p) => {
-    if (p.container) p.container.style.display = 'none';
-    if (p.btn) p.btn.classList.remove('active-section');
-  });
-  _activePanelId = null;
-  const panelsWrap = document.getElementById('plugin-panels');
-  if (panelsWrap) panelsWrap.style.display = 'none';
-  const chatHistory = document.getElementById('chat-history');
-  if (chatHistory) chatHistory.style.display = '';
-  const welcome = document.getElementById('welcome-screen');
-  if (welcome) welcome.style.display = '';
-}
-
-function _activatePanel(panelId) {
-  const panel = _pluginPanels.get(panelId);
-  if (!panel) return;
-  _deactivateAllPanels();
-  _activePanelId = panelId;
-  const panelsWrap = document.getElementById('plugin-panels');
-  if (panelsWrap) panelsWrap.style.display = 'flex';
-  const chatHistory = document.getElementById('chat-history');
-  if (chatHistory) chatHistory.style.display = 'none';
-  const welcome = document.getElementById('welcome-screen');
-  if (welcome) welcome.style.display = 'none';
-  if (panel.container) panel.container.style.display = 'flex';
-  if (panel.btn) panel.btn.classList.add('active-section');
-}
-
-function _createPanelIframe(pluginId, panelId, src) {
-  const iframe = document.createElement('iframe');
-  iframe.sandbox = 'allow-scripts allow-same-origin';
-  iframe.style.cssText = 'width:100%;height:100%;border:0;';
-  iframe.dataset.pluginId = pluginId;
-  iframe.dataset.panelId = panelId;
-  const srcdoc = `<!DOCTYPE html>
-<html><head><meta charset="utf-8"/><style>body{margin:0;padding:16px;font-family:system-ui,sans-serif;background:var(--bg,#0d1117);color:var(--fg,#c9d1d9);}</style></head><body>
-<script nonce="${window.__cspNonce__ || ''}">
-(function(){
-  var _reqId=0;
-  var _panelId='${panelId}';
-  Object.defineProperty(document,'title',{
-    get:function(){var t=document.querySelector('title');return t?t.textContent:'';},
-    set:function(v){var t=document.querySelector('title');if(!t){t=document.createElement('title');document.head.appendChild(t);}t.textContent=v;if(window.odysseus&&window.odysseus.setTitle)window.odysseus.setTitle(v);}
-  });
-  window.odysseus={
-    getPanelId:function(){return _panelId;},
-    getSetting:function(key){
-      return new Promise(function(resolve){
-        var id=++_reqId;
-        var h=function(e){
-          var d=e.data;
-          if(d&&d.type==='odysseus:settings:get:response'&&d.reqId===id){
-            window.removeEventListener('message',h);
-            resolve(d.value);
-          }
-        };
-        window.addEventListener('message',h);
-        parent.postMessage({type:'odysseus:settings:get',key:key,reqId:id,pluginId:'${pluginId}'},'*');
-      });
-    },
-    setSetting:function(key,value){
-      parent.postMessage({type:'odysseus:settings:set',key:key,value:value,pluginId:'${pluginId}'},'*');
-    },
-    setTitle:function(t){parent.postMessage({type:'odysseus:setTitle',title:t},'*');},
-    emit:function(e,d){parent.postMessage({type:'odysseus:emit',event:e,detail:d},'*');},
-    on:function(ev,cb){
-      window.addEventListener('message',function(m){
-        var d=m.data;
-        if(d&&d.type==='odysseus:event'&&d.event===ev)cb(d.detail);
-      });
-    },
-    storage:{
-      get:function(key){
-        return new Promise(function(resolve){
-          var id=++_reqId;
-          var h=function(e){
-            var d=e.data;
-            if(d&&d.type==='odysseus:storage:get:response'&&d.reqId===id){
-              window.removeEventListener('message',h);
-              resolve(d.value===null?null:JSON.parse(d.value));
-            }
-          };
-          window.addEventListener('message',h);
-          parent.postMessage({type:'odysseus:storage:get',key:key,reqId:id,pluginId:'${pluginId}'},'*');
-        });
-      },
-      set:function(key,value){
-        parent.postMessage({type:'odysseus:storage:set',key:key,value:value,pluginId:'${pluginId}'},'*');
-      }
-    }
-  };
-  var s=document.createElement('script');
-  s.src='${src}';
-  s.async=true;
-  document.head.appendChild(s);
-})();
-<\/script>
-</body></html>`;
-  iframe.srcdoc = srcdoc;
-  return iframe;
-}
-
-const _pluginFrontendPaths = new Map();
-
-function _registerPluginPanel({ pluginId, id, label, icon, src }) {
-  if (_pluginPanels.has(id)) return;
-  const rail = document.getElementById('plugin-rail-buttons');
-  const sep = document.getElementById('plugin-rail-separator');
-  if (sep) sep.style.display = '';
-
-  // Default icon (grid)
-  const iconSvg = icon || `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>`;
-
-  const btn = document.createElement('button');
-  btn.className = 'icon-rail-btn plugin-panel-btn';
-  btn.title = label || id;
-  btn.dataset.panelId = id;
-  btn.innerHTML = iconSvg;
-  btn.style.cssText = 'width:32px;height:32px;border-radius:6px;display:flex;align-items:center;justify-content:center;cursor:pointer;border:none;background:transparent;color:var(--fg);transition:all .15s;';
-  btn.addEventListener('click', () => {
-    if (_activePanelId === id) {
-      _deactivateAllPanels();
-    } else {
-      _activatePanel(id);
-    }
-  });
-  if (rail) rail.appendChild(btn);
-
-  const panelsWrap = document.getElementById('plugin-panels');
-  const container = document.createElement('div');
-  container.id = 'plugin-panel-' + id;
-  container.style.cssText = 'display:none;flex:1;flex-direction:column;overflow:hidden;position:absolute;inset:0;';
-  if (panelsWrap) panelsWrap.appendChild(container);
-
-  // Create panel iframe — use provided src or fall back to stored frontend path
-  const fe = src || _pluginFrontendPaths.get(pluginId) || 'index.js';
-  const panelSrc = `/api/plugins/static/${encodeURIComponent(pluginId)}/${fe}`;
-  const iframe = _createPanelIframe(pluginId, id, panelSrc);
-  container.appendChild(iframe);
-
-  _pluginPanels.set(id, { pluginId, label, icon, container, iframe, btn });
-}
-
-function _unregisterPluginPanels(pluginId) {
-  for (const [panelId, panel] of _pluginPanels.entries()) {
-    if (panel.pluginId === pluginId) {
-      if (panel.container) panel.container.remove();
-      if (panel.btn) panel.btn.remove();
-      if (_activePanelId === panelId) _deactivateAllPanels();
-      _pluginPanels.delete(panelId);
-    }
-  }
-  if (!_pluginPanels.size) {
-    const sep = document.getElementById('plugin-rail-separator');
-    if (sep) sep.style.display = 'none';
-  }
-}
+// Plugin frontend loader — thin core (no iframe sandbox)
+const _pluginScripts = new Map();
 
 function _loadPluginStyles(pluginId, styles) {
   if (!Array.isArray(styles)) return;
@@ -235,43 +72,10 @@ function _loadPluginStyles(pluginId, styles) {
 
 function _removePluginStyles(pluginId) {
   document.querySelectorAll(`link[data-plugin-style="true"][data-plugin-id="${pluginId}"]`).forEach(l => l.remove());
-  const themeEl = document.getElementById(`plugin-theme-${pluginId}`);
-  if (themeEl) themeEl.remove();
 }
 
-function _applyPluginTheme(pluginId, theme) {
-  if (!theme || typeof theme !== 'object') return;
-  let styleEl = document.getElementById(`plugin-theme-${pluginId}`);
-  if (!styleEl) {
-    styleEl = document.createElement('style');
-    styleEl.id = `plugin-theme-${pluginId}`;
-    document.head.appendChild(styleEl);
-  }
-  const vars = Object.entries(theme).map(([k, v]) => `  ${k}: ${v};`).join('\n');
-  styleEl.textContent = `:root {\n${vars}\n}`;
-}
-
-// Odysseus plugin runtime API
+// Minimal odysseus API for in-process plugins
 window.odysseus = {
-  setTitle(title) {
-    const meta = document.getElementById('current-meta');
-    if (meta) meta.textContent = title;
-    const welcomeName = document.querySelector('.welcome-name');
-    if (welcomeName) {
-      for (const node of welcomeName.childNodes) {
-        if (node.nodeType === Node.TEXT_NODE && node.textContent.trim()) {
-          node.textContent = title;
-          break;
-        }
-      }
-    }
-    const brand = document.querySelector('.sidebar-brand-title');
-    if (brand) brand.textContent = title;
-    document.title = title;
-  },
-  registerPanel({ id, label, icon }) {
-    console.warn('[Plugin API] registerPanel should be called from inside a plugin sandbox, not the host');
-  },
   getSetting(pluginId, key) {
     const fullKey = pluginId ? `plugin:${pluginId}:settings:${key}` : key;
     try {
@@ -285,58 +89,10 @@ window.odysseus = {
       localStorage.setItem(fullKey, JSON.stringify(value));
     } catch (_) {}
   },
-  on(event, callback) {
-    window.addEventListener('odysseus:' + event, callback);
-  },
-  emit(event, detail) {
-    window.dispatchEvent(new CustomEvent('odysseus:' + event, { detail }));
-    for (const iframe of _pluginSandboxes.values()) {
-      try {
-        iframe.contentWindow.postMessage({ type: 'odysseus:event', event, detail }, '*');
-      } catch (_) {}
-    }
+  log(level, message) {
+    console.log(`[Plugin ${level}]`, message);
   },
 };
-
-// Sandbox -> Parent bridge
-window.addEventListener('message', (e) => {
-  const data = e.data;
-  if (!data || !data.type) return;
-  if (data.type === 'odysseus:setTitle') {
-    window.odysseus.setTitle(data.title);
-  }
-  if (data.type === 'odysseus:emit') {
-    window.odysseus.emit(data.event, data.detail);
-  }
-  if (data.type === 'odysseus:storage:get') {
-    const fullKey = data.pluginId ? `plugin:${data.pluginId}:${data.key}` : data.key;
-    const value = localStorage.getItem(fullKey);
-    if (e.source && e.source.postMessage) {
-      e.source.postMessage({ type: 'odysseus:storage:get:response', reqId: data.reqId, value }, '*');
-    }
-  }
-  if (data.type === 'odysseus:storage:set') {
-    const fullKey = data.pluginId ? `plugin:${data.pluginId}:${data.key}` : data.key;
-    try {
-      localStorage.setItem(fullKey, JSON.stringify(data.value));
-    } catch (_) {}
-  }
-  if (data.type === 'odysseus:registerPanel') {
-    const { pluginId, id, label, icon } = data;
-    if (pluginId && id) {
-      _registerPluginPanel({ pluginId, id, label, icon });
-    }
-  }
-  if (data.type === 'odysseus:settings:get') {
-    const value = window.odysseus.getSetting(data.pluginId, data.key);
-    if (e.source && e.source.postMessage) {
-      e.source.postMessage({ type: 'odysseus:settings:get:response', reqId: data.reqId, value }, '*');
-    }
-  }
-  if (data.type === 'odysseus:settings:set') {
-    window.odysseus.setSetting(data.pluginId, data.key, data.value);
-  }
-});
 
 // Redirect to login on 401 from any fetch
 const _origFetch = window.fetch;
@@ -4364,109 +4120,24 @@ function startOdysseusApp() {
     });
   }
 
-  // Load installed plugin frontend scripts (sandboxed iframes)
+  // Load installed plugin frontend scripts (in-process, no sandbox)
   (async () => {
     try {
-      // Clean up legacy direct script tags
-      document.querySelectorAll('script[data-plugin-id]').forEach(s => s.remove());
-      // Unregister any existing plugin panels and styles before reloading
-      for (const [pid] of _pluginSandboxes.entries()) {
-        _unregisterPluginPanels(pid);
-        _removePluginStyles(pid);
-      }
-      _pluginSandboxes.clear();
       const r = await fetch('/api/plugins');
       const data = await r.json();
       const plugins = data.installed || [];
       for (const p of plugins) {
         const fe = p.entrypoints && p.entrypoints.frontend;
         if (!fe) continue;
-        _pluginFrontendPaths.set(p.id, fe);
         const src = `/api/plugins/static/${encodeURIComponent(p.id)}/${fe}`;
-        const iframe = document.createElement('iframe');
-        iframe.sandbox = 'allow-scripts allow-same-origin';
-        iframe.style.cssText = 'display:none;width:0;height:0;border:0;';
-        iframe.dataset.pluginId = p.id;
-        const srcdoc = `<!DOCTYPE html>
-<html><head><meta charset="utf-8"/></head><body>
-<script nonce="${window.__cspNonce__ || ''}">
-(function(){
-  var _reqId=0;
-  Object.defineProperty(document,'title',{
-    get:function(){var t=document.querySelector('title');return t?t.textContent:'';},
-    set:function(v){var t=document.querySelector('title');if(!t){t=document.createElement('title');document.head.appendChild(t);}t.textContent=v;if(window.odysseus&&window.odysseus.setTitle)window.odysseus.setTitle(v);}
-  });
-  window.odysseus = {
-    getPanelId:function(){return null;},
-    registerPanel:function(cfg){
-      parent.postMessage({type:'odysseus:registerPanel',pluginId:'${p.id}',id:cfg.id,label:cfg.label,icon:cfg.icon},'*');
-    },
-    getSetting:function(key){
-      return new Promise(function(resolve){
-        var id=++_reqId;
-        var h=function(e){
-          var d=e.data;
-          if(d&&d.type==='odysseus:settings:get:response'&&d.reqId===id){
-            window.removeEventListener('message',h);
-            resolve(d.value);
-          }
-        };
-        window.addEventListener('message',h);
-        parent.postMessage({type:'odysseus:settings:get',key:key,reqId:id,pluginId:'${p.id}'},'*');
-      });
-    },
-    setSetting:function(key,value){
-      parent.postMessage({type:'odysseus:settings:set',key:key,value:value,pluginId:'${p.id}'},'*');
-    },
-    setTitle:function(t){parent.postMessage({type:'odysseus:setTitle',title:t},'*');},
-    emit:function(e,d){parent.postMessage({type:'odysseus:emit',event:e,detail:d},'*');},
-    on:function(ev,cb){
-      window.addEventListener('message',function(m){
-        var d=m.data;
-        if(d&&d.type==='odysseus:event'&&d.event===ev)cb(d.detail);
-      });
-    },
-    storage:{
-      get:function(key){
-        return new Promise(function(resolve){
-          var id=++_reqId;
-          var h=function(e){
-            var d=e.data;
-            if(d&&d.type==='odysseus:storage:get:response'&&d.reqId===id){
-              window.removeEventListener('message',h);
-              resolve(d.value===null?null:JSON.parse(d.value));
-            }
-          };
-          window.addEventListener('message',h);
-          parent.postMessage({type:'odysseus:storage:get',key:key,reqId:id,pluginId:'${p.id}'},'*');
-        });
-      },
-      set:function(key,value){
-        parent.postMessage({type:'odysseus:storage:set',key:key,value:value,pluginId:'${p.id}'},'*');
-      }
-    }
-  };
-  var s=document.createElement('script');
-  s.src='${src}';
-  s.async=true;
-  document.head.appendChild(s);
-})();
-<\/script>
-</body></html>`;
-        iframe.srcdoc = srcdoc;
-        document.body.appendChild(iframe);
-        _pluginSandboxes.set(p.id, iframe);
-        // Auto-create panels declared in manifest
-        const panels = p.panels || [];
-        for (const panel of panels) {
-          if (panel && panel.id) {
-            _registerPluginPanel({ pluginId: p.id, id: panel.id, label: panel.label, icon: panel.icon, src: fe });
-          }
-        }
+        const script = document.createElement('script');
+        script.src = src;
+        script.async = true;
+        script.dataset.pluginId = p.id;
+        document.head.appendChild(script);
+        _pluginScripts.set(p.id, script);
         // Load plugin stylesheets
         _loadPluginStyles(p.id, p.styles);
-        // Apply theme overrides
-        _applyPluginTheme(p.id, p.theme);
       }
     } catch (e) {
       console.warn('[Plugins] failed to load frontend scripts:', e);

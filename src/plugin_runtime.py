@@ -8,7 +8,6 @@ import importlib.util
 import json
 import logging
 import os
-import subprocess
 import sys
 import types
 from typing import Any
@@ -86,43 +85,8 @@ def _make_module(plugin_id: str) -> Any:
     return mod
 
 
-def _run_sandbox(plugin_dir: str, entrypoint: str, hook_name: str) -> Any | None:
-    """Run a plugin hook in an isolated subprocess with restricted sys.path."""
-    python = sys.executable
-    cmd = [
-        python, "-m", "src.plugin_runtime",
-        "--sandbox", plugin_dir, entrypoint, hook_name,
-    ]
-    env = {**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)}
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=30.0,
-            env=env,
-        )
-        if result.returncode != 0:
-            logger.warning(
-                "Sandbox %s/%s failed (rc=%d): %s",
-                entrypoint, hook_name, result.returncode, result.stderr,
-            )
-            return None
-        if not result.stdout.strip():
-            return None
-        data = json.loads(result.stdout.strip().splitlines()[-1])
-        if data.get("status") == "ok":
-            return data.get("result")
-        elif data.get("status") == "error":
-            logger.warning("Hook %s error: %s", hook_name, data.get("message"))
-            return None
-    except Exception as e:
-        logger.warning("Failed to run sandbox for %s: %s", hook_name, e)
-        return None
-
-
 def call_hook(plugin_id: str, hook_name: str, *args, **kwargs) -> Any:
-    """Call a named hook on a plugin's backend module via an isolated subprocess."""
+    """Call a named hook on a plugin's backend module in-process."""
     plugin_dir = os.path.join(PLUGINS_DIR, plugin_id)
     manifest_path = os.path.join(plugin_dir, "odysseus-plugin.json")
     try:
@@ -133,7 +97,30 @@ def call_hook(plugin_id: str, hook_name: str, *args, **kwargs) -> Any:
     be = manifest.get("entrypoints", {}).get("backend", "")
     if not be:
         return None
-    return _run_sandbox(plugin_dir, be, hook_name)
+    entry_path = os.path.join(plugin_dir, be)
+    if not os.path.isfile(entry_path):
+        logger.warning("Backend entrypoint not found: %s", entry_path)
+        return None
+    spec = importlib.util.spec_from_file_location(f"_plugin_{plugin_id}", entry_path)
+    if not spec or not spec.loader:
+        logger.warning("Failed to create module spec for %s", plugin_id)
+        return None
+    # Inject the odysseus module before loading the plugin
+    sys.modules["odysseus"] = _make_module(plugin_id)
+    mod = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(mod)
+    except Exception as e:
+        logger.warning("Failed to load plugin %s: %s", plugin_id, e)
+        return None
+    fn = getattr(mod, hook_name, None)
+    if not callable(fn):
+        return None
+    try:
+        return fn(*args, **kwargs)
+    except Exception as e:
+        logger.warning("Hook %s failed in plugin %s: %s", hook_name, plugin_id, e)
+        return None
 
 
 def _load_registry() -> dict:
@@ -160,99 +147,3 @@ def shutdown_all():
         call_hook(plugin_id, "on_shutdown")
 
 
-# ---------------------------------------------------------------------------
-# Subprocess sandbox entry point
-# ---------------------------------------------------------------------------
-if __name__ == "__main__":
-    import argparse
-
-    _parser = argparse.ArgumentParser()
-    _parser.add_argument("--sandbox", required=True)
-    _parser.add_argument("entrypoint")
-    _parser.add_argument("hook_name")
-    _parsed = _parser.parse_args()
-
-    _plugin_dir = _parsed.sandbox
-    _entrypoint = _parsed.entrypoint
-    _hook_name = _parsed.hook_name
-
-    # Restrict sys.path to plugin dir + stdlib
-    _stdlib = os.path.dirname(os.__file__)
-    sys.path = [_plugin_dir, _stdlib]
-
-    _settings_file = os.path.join(os.path.dirname(_plugin_dir), "plugin_settings.json")
-
-    def _sb_get_setting(key: str) -> Any | None:
-        try:
-            with open(_settings_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            data = {}
-        return data.get(os.path.basename(_plugin_dir), {}).get(key)
-
-    def _sb_set_setting(key: str, value: Any):
-        try:
-            with open(_settings_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            data = {}
-        pid = os.path.basename(_plugin_dir)
-        if pid not in data:
-            data[pid] = {}
-        data[pid][key] = value
-        with open(_settings_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-
-    def _sb_log(level: str, message: str):
-        print(
-            f"[odysseus:{os.path.basename(_plugin_dir)}] {level.upper()}: {message}",
-            file=sys.stderr,
-        )
-
-    def _sb_manifest() -> dict:
-        mp = os.path.join(_plugin_dir, "odysseus-plugin.json")
-        try:
-            with open(mp, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {}
-
-    _odysseus_mod = types.ModuleType("odysseus")
-    _odysseus_mod.get_setting = _sb_get_setting
-    _odysseus_mod.set_setting = _sb_set_setting
-    _odysseus_mod.log = _sb_log
-    _odysseus_mod.manifest = _sb_manifest
-    sys.modules["odysseus"] = _odysseus_mod
-
-    _path = os.path.join(_plugin_dir, _entrypoint)
-    if not os.path.isfile(_path):
-        print(json.dumps({"status": "error", "message": f"Entrypoint not found: {_entrypoint}"}))
-        sys.exit(1)
-
-    _spec = importlib.util.spec_from_file_location("_plugin_backend", _path)
-    if not _spec or not _spec.loader:
-        print(json.dumps({"status": "error", "message": "Failed to create module spec"}))
-        sys.exit(1)
-
-    _mod = importlib.util.module_from_spec(_spec)
-    try:
-        _spec.loader.exec_module(_mod)
-    except Exception as _exc:
-        print(json.dumps({"status": "error", "message": f"Failed to load module: {_exc}"}))
-        sys.exit(1)
-
-    _fn = getattr(_mod, _hook_name, None)
-    if not callable(_fn):
-        print(json.dumps({"status": "error", "message": f"Hook {_hook_name} not found"}))
-        sys.exit(1)
-
-    try:
-        _hook_result = _fn()
-        try:
-            _serialized = json.dumps({"status": "ok", "result": _hook_result})
-        except (TypeError, ValueError):
-            _serialized = json.dumps({"status": "ok", "result": None})
-        print(_serialized)
-    except Exception as _exc:
-        print(json.dumps({"status": "error", "message": str(_exc)}))
-        sys.exit(1)
