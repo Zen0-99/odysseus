@@ -1,22 +1,24 @@
 """Plugin runtime API for backend Python hooks.
 
-Provides a controlled `odysseus` module that installed plugins can import
-to interact with the host application safely.
+Provides a controlled `register(host)` pattern and a per-plugin
+`odysseus` module for settings and logging.
 """
 
+import importlib
 import importlib.util
 import json
 import logging
 import os
 import sys
-import types
 from typing import Any
 
 from src.constants import DATA_DIR
-
-PLUGINS_DIR = os.path.join(DATA_DIR, "plugins")
+from src.plugin_host import PluginHost
+from src.plugin_schema import PluginValidationError, validate_manifest
 
 logger = logging.getLogger(__name__)
+
+PLUGINS_DIR = os.path.join(DATA_DIR, "plugins")
 
 # Scoped plugin storage (in-memory + persisted JSON file)
 _plugin_settings: dict[str, dict[str, Any]] = {}
@@ -44,39 +46,55 @@ def _save_settings():
 
 
 class PluginContext:
-    """Runtime context exposed to a backend plugin."""
+    """Runtime context exposed to a backend plugin via the fake 'odysseus' module."""
 
-    def __init__(self, plugin_id: str):
-        self.plugin_id = plugin_id
+    def __init__(self, plugin_name: str):
+        self.plugin_name = plugin_name
 
     def get_setting(self, key: str) -> Any | None:
         _load_settings()
-        return _plugin_settings.get(self.plugin_id, {}).get(key)
+        return _plugin_settings.get(self.plugin_name, {}).get(key)
 
     def set_setting(self, key: str, value: Any):
         _load_settings()
-        if self.plugin_id not in _plugin_settings:
-            _plugin_settings[self.plugin_id] = {}
-        _plugin_settings[self.plugin_id][key] = value
+        if self.plugin_name not in _plugin_settings:
+            _plugin_settings[self.plugin_name] = {}
+        _plugin_settings[self.plugin_name][key] = value
         _save_settings()
 
     def log(self, level: str, message: str):
         lvl = getattr(logging, level.upper(), logging.INFO)
-        logger.log(lvl, "[%s] %s", self.plugin_id, message)
+        logger.log(lvl, "[%s] %s", self.plugin_name, message)
 
     def manifest(self) -> dict:
         """Return the plugin's manifest as a dict."""
-        manifest_path = os.path.join(PLUGINS_DIR, self.plugin_id, "odysseus-plugin.json")
+        # Check both local and pip-installed paths
+        candidates = [
+            os.path.join(PLUGINS_DIR, self.plugin_name, "odysseus-plugin.json"),
+        ]
         try:
-            with open(manifest_path, "r", encoding="utf-8") as f:
-                return json.load(f)
+            import importlib.metadata as md
+            for ep in md.entry_points(group="odysseus.plugins"):
+                if ep.name == self.plugin_name:
+                    import inspect
+                    mod = ep.load()
+                    candidates.append(
+                        os.path.join(os.path.dirname(inspect.getfile(mod)), "odysseus-plugin.json")
+                    )
         except Exception:
-            return {}
+            pass
+        for path in candidates:
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                continue
+        return {}
 
 
-def _make_module(plugin_id: str) -> Any:
-    """Return a fake 'odysseus' module for the given plugin id."""
-    ctx = PluginContext(plugin_id)
+def _make_module(plugin_name: str) -> Any:
+    """Return a fake 'odysseus' module for the given plugin name."""
+    ctx = PluginContext(plugin_name)
     mod = type(sys)("odysseus")
     mod.get_setting = ctx.get_setting
     mod.set_setting = ctx.set_setting
@@ -85,65 +103,116 @@ def _make_module(plugin_id: str) -> Any:
     return mod
 
 
-def call_hook(plugin_id: str, hook_name: str, *args, **kwargs) -> Any:
-    """Call a named hook on a plugin's backend module in-process."""
-    plugin_dir = os.path.join(PLUGINS_DIR, plugin_id)
-    manifest_path = os.path.join(plugin_dir, "odysseus-plugin.json")
+def _load_manifest(plugin_name: str) -> dict[str, Any] | None:
+    """Find and validate a plugin manifest by name."""
+    # Local
+    local_path = os.path.join(PLUGINS_DIR, plugin_name, "odysseus-plugin.json")
+    if os.path.isfile(local_path):
+        try:
+            with open(local_path, "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+            validate_manifest(manifest)
+            return manifest
+        except PluginValidationError:
+            pass
+    # Entry-point
     try:
-        with open(manifest_path, "r", encoding="utf-8") as f:
-            manifest = json.load(f)
+        import importlib.metadata as md
+        for ep in md.entry_points(group="odysseus.plugins"):
+            if ep.name == plugin_name:
+                import inspect
+                module_dir = os.path.dirname(inspect.getfile(ep.load()))
+                with open(os.path.join(module_dir, "odysseus-plugin.json"), "r", encoding="utf-8") as f:
+                    manifest = json.load(f)
+                validate_manifest(manifest)
+                return manifest
     except Exception:
-        return None
-    be = manifest.get("entrypoints", {}).get("backend", "")
-    if not be:
-        return None
-    entry_path = os.path.join(plugin_dir, be)
-    if not os.path.isfile(entry_path):
-        logger.warning("Backend entrypoint not found: %s", entry_path)
-        return None
-    spec = importlib.util.spec_from_file_location(f"_plugin_{plugin_id}", entry_path)
-    if not spec or not spec.loader:
-        logger.warning("Failed to create module spec for %s", plugin_id)
-        return None
-    # Inject the odysseus module before loading the plugin
-    sys.modules["odysseus"] = _make_module(plugin_id)
-    mod = importlib.util.module_from_spec(spec)
-    try:
-        spec.loader.exec_module(mod)
-    except Exception as e:
-        logger.warning("Failed to load plugin %s: %s", plugin_id, e)
-        return None
-    fn = getattr(mod, hook_name, None)
-    if not callable(fn):
-        return None
-    try:
-        return fn(*args, **kwargs)
-    except Exception as e:
-        logger.warning("Hook %s failed in plugin %s: %s", hook_name, plugin_id, e)
-        return None
+        pass
+    return None
 
 
-def _load_registry() -> dict:
-    registry_path = os.path.join(PLUGINS_DIR, "registry.json")
+def _resolve_entry_point(entry_point: str):
+    """Import and return the callable described by 'module.path:callable_name'."""
+    if ":" in entry_point:
+        module_path, callable_name = entry_point.split(":", 1)
+    else:
+        parts = entry_point.rsplit(".", 1)
+        module_path = parts[0]
+        callable_name = parts[1]
+    module = importlib.import_module(module_path)
+    return getattr(module, callable_name)
+
+
+def call_register(plugin_name: str, app: Any) -> bool:
+    """Call a plugin's register(host) function with a PluginHost facade.
+
+    Returns True if registration succeeded, False otherwise.
+    """
+    manifest = _load_manifest(plugin_name)
+    if not manifest:
+        logger.warning("Could not load manifest for plugin %s", plugin_name)
+        return False
+
+    entry_point = manifest.get("entry_point", "")
+    if not entry_point:
+        logger.warning("Plugin %s has no entry_point", plugin_name)
+        return False
+
+    capabilities = manifest.get("capabilities", [])
+    host = PluginHost(plugin_name, capabilities, app)
+
+    # Inject the fake odysseus module so the plugin can import it
+    sys.modules["odysseus"] = _make_module(plugin_name)
+
     try:
-        with open(registry_path, "r", encoding="utf-8") as f:
+        register_fn = _resolve_entry_point(entry_point)
+        register_fn(host)
+        logger.info("Plugin %s registered successfully", plugin_name)
+        return True
+    except PermissionError as e:
+        logger.warning("Plugin %s capability violation: %s", plugin_name, e)
+        return False
+    except Exception as e:
+        logger.warning("Plugin %s registration failed: %s", plugin_name, e)
+        return False
+
+
+def _load_enabled() -> dict[str, bool]:
+    enabled_path = os.path.join(PLUGINS_DIR, "enabled.json")
+    try:
+        with open(enabled_path, "r", encoding="utf-8") as f:
             data = json.load(f)
             return data if isinstance(data, dict) else {}
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
 
 
-def startup_all():
-    """Call on_startup() for every installed plugin that has a backend entrypoint."""
-    registry = _load_registry()
-    for plugin_id in registry:
-        call_hook(plugin_id, "on_startup")
+def startup_all(app: Any):
+    """Call register(host) for every installed/enabled plugin that has an entry_point."""
+    enabled = _load_enabled()
+    # Local plugins
+    if os.path.isdir(PLUGINS_DIR):
+        for entry in os.listdir(PLUGINS_DIR):
+            plugin_dir = os.path.join(PLUGINS_DIR, entry)
+            if not os.path.isdir(plugin_dir):
+                continue
+            manifest_path = os.path.join(plugin_dir, "odysseus-plugin.json")
+            if not os.path.isfile(manifest_path):
+                continue
+            if not enabled.get(entry, True):
+                continue
+            call_register(entry, app)
+    # Entry-point plugins
+    try:
+        import importlib.metadata as md
+        for ep in md.entry_points(group="odysseus.plugins"):
+            if not enabled.get(ep.name, True):
+                continue
+            call_register(ep.name, app)
+    except Exception:
+        pass
 
 
 def shutdown_all():
-    """Call on_shutdown() for every installed plugin that has a backend entrypoint."""
-    registry = _load_registry()
-    for plugin_id in registry:
-        call_hook(plugin_id, "on_shutdown")
-
-
+    """Graceful shutdown hook — currently a no-op since plugins run in-process."""
+    pass

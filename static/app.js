@@ -4120,27 +4120,13 @@ function startOdysseusApp() {
     });
   }
 
-  // Load installed plugin frontend scripts (in-process, no sandbox)
+  // Load installed plugin frontend scripts via the thin registry
   (async () => {
     try {
-      const r = await fetch('/api/plugins');
-      const data = await r.json();
-      const plugins = data.installed || [];
-      for (const p of plugins) {
-        const fe = p.entrypoints && p.entrypoints.frontend;
-        if (!fe) continue;
-        const src = `/api/plugins/static/${encodeURIComponent(p.id)}/${fe}`;
-        const script = document.createElement('script');
-        script.src = src;
-        script.async = true;
-        script.dataset.pluginId = p.id;
-        document.head.appendChild(script);
-        _pluginScripts.set(p.id, script);
-        // Load plugin stylesheets
-        _loadPluginStyles(p.id, p.styles);
-      }
+      const { initPluginRegistry } = await import('./js/plugin_registry.js');
+      await initPluginRegistry();
     } catch (e) {
-      console.warn('[Plugins] failed to load frontend scripts:', e);
+      console.warn('[Plugins] failed to init registry:', e);
     }
   })();
 }

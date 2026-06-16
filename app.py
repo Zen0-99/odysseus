@@ -1155,7 +1155,7 @@ async def _startup_event():
     # Plugin backend startup hooks
     try:
         from src.plugin_runtime import startup_all
-        startup_all()
+        startup_all(app)
         logger.info("Plugin startup hooks complete")
     except Exception as e:
         logger.warning(f"Plugin startup hooks failed (non-critical): {type(e).__name__}: {e}")

@@ -23,9 +23,6 @@ def setup_plugin_routes():
         if not url:
             raise HTTPException(400, "url required")
         results = pm.discover(url)
-        # Mark already-installed
-        for r in results:
-            r["_installed"] = pm.is_installed(r.get("id", ""))
         return {"plugins": results}
 
     @router.post("/install")
@@ -40,12 +37,21 @@ def setup_plugin_routes():
         result = pm.install(url, ids)
         return result
 
-    @router.delete("/{plugin_id}")
-    async def uninstall_plugin(request: Request, plugin_id: str):
+    @router.delete("/{plugin_name}")
+    async def uninstall_plugin(request: Request, plugin_name: str):
         require_admin(request)
-        if pm.uninstall(plugin_id):
+        if pm.uninstall(plugin_name):
             return {"ok": True}
         raise HTTPException(404, "Plugin not found")
+
+    @router.post("/{plugin_name}/toggle")
+    async def toggle_plugin(request: Request, plugin_name: str, body: dict):
+        require_admin(request)
+        enabled = body.get("enabled")
+        if not isinstance(enabled, bool):
+            raise HTTPException(400, "enabled must be a boolean")
+        pm.set_enabled(plugin_name, enabled)
+        return {"ok": True, "enabled": enabled}
 
     @router.post("/updates")
     async def check_updates(request: Request):
@@ -53,15 +59,9 @@ def setup_plugin_routes():
         updates = pm.check_updates()
         return {"updates": updates}
 
-    @router.post("/verify")
-    async def verify_plugins(request: Request):
-        require_admin(request)
-        results = pm.verify_hashes()
-        return {"results": results}
-
-    @router.get("/static/{plugin_id}/{filepath:path}")
-    async def plugin_static(request: Request, plugin_id: str, filepath: str):
-        target = pm.serve_path(plugin_id, filepath)
+    @router.get("/static/{plugin_name}/{filepath:path}")
+    async def plugin_static(request: Request, plugin_name: str, filepath: str):
+        target = pm.serve_path(plugin_name, filepath)
         if not target:
             raise HTTPException(404, "Not found")
         return FileResponse(target)
