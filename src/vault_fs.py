@@ -1,4 +1,4 @@
-"""Direct filesystem access for Shard vaults — with in-memory index cache."""
+"""Direct filesystem access for Vault vaults — with in-memory index cache."""
 
 from __future__ import annotations
 
@@ -220,6 +220,9 @@ def _read_note_file(vault_path: Path, rel_path: str) -> Optional[Dict[str, Any]]
     title = _extract_title(frontmatter_raw, file_path)
     folder = str(Path(rel_path).parent).replace("\\", "/") if Path(rel_path).parent != Path(".") else ""
     mtime = file_path.stat().st_mtime
+    # Birth time: st_birthtime on Windows/macOS, st_ctime as Linux fallback
+    stat = file_path.stat()
+    birth_time = getattr(stat, 'st_birthtime', None) or getattr(stat, 'st_ctime', mtime)
 
     # Extract outbound links from body
     outbound = []
@@ -244,6 +247,7 @@ def _read_note_file(vault_path: Path, rel_path: str) -> Optional[Dict[str, Any]]
         "outbound_links": outbound,
         "backlinks": [],
         "last_modified_src": datetime.fromtimestamp(mtime).isoformat(),
+        "birth_time": datetime.fromtimestamp(birth_time).isoformat(),
         "sync_status": "synced",
     }
 

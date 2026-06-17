@@ -115,7 +115,7 @@ function _toGraphData(data, settings, activeNoteId) {
   return {
     nodes: safeNodes.map(n => {
       const degree = degrees.get(n.id) || 0;
-      const scale = 1 + Math.sqrt(degree / maxDegree) * 3; // 1x to 4x, sqrt for better differentiation
+      const scale = Math.min(2.5, 1 + Math.sqrt(degree / maxDegree) * 3); // 1x to 2.5x, sqrt for better differentiation
       const groupColor = _resolveGroupColor(n, settings.groups);
       return {
         id: n.id,
@@ -136,10 +136,11 @@ function _toGraphData(data, settings, activeNoteId) {
 function _createTooltip(container) {
   if (_tooltipEl) _tooltipEl.remove();
   _tooltipEl = document.createElement('div');
-  _tooltipEl.className = 'shard-graph-tooltip';
+  _tooltipEl.className = 'vault-graph-tooltip';
   container.appendChild(_tooltipEl);
 }
 
+let _lastPerfLog = 0;
 function _buildNodeCanvasObject(adjMap, fg, settings) {
   return (node, ctx, globalScale) => {
     const isHovered = !_settingsPanelHovered && node.id === _hoverNodeId;
@@ -181,8 +182,10 @@ function _buildNodePointerAreaPaint(settings) {
 }
 
 function _buildLinkCanvasObject(settings, nodes, accentColor) {
+  const nodeMap = new Map(nodes.map(n => [n.id, n]));
   return (link, ctx, globalScale) => {
-    const { source, target } = _resolveLink(link, nodes);
+    const source = typeof link.source === 'object' ? link.source : nodeMap.get(link.source);
+    const target = typeof link.target === 'object' ? link.target : nodeMap.get(link.target);
     if (!source || !target) return;
 
     const isHovered = !_settingsPanelHovered && (source.id === _hoverNodeId || target.id === _hoverNodeId);
@@ -265,19 +268,8 @@ function _computeDynamicLinkDistances(nodes, edges, baseDistance) {
   });
 }
 
-function _configureForces(graph, settings, nodes, edges) {
+function _configureForces(graph, settings) {
   if (!window.d3) return;
-
-  // Sanitize so d3-force never gets edges referencing missing nodes
-  const safeNodes = (nodes || [])
-    .filter(n => n.id != null && String(n.id).length > 0)
-    .map(n => ({ ...n, id: String(n.id) }));
-  const nodeIdSet = new Set(safeNodes.map(n => n.id));
-  const safeEdges = (edges || []).filter(e => {
-    const from = e.from != null ? String(e.from) : '';
-    const to = e.to != null ? String(e.to) : '';
-    return nodeIdSet.has(from) && nodeIdSet.has(to);
-  });
 
   // UI repel 0-20 maps to internal -(val*500)
   const repelStrength = settings.repelForce >= 0 ? -(settings.repelForce * 500) : settings.repelForce;
@@ -286,11 +278,17 @@ function _configureForces(graph, settings, nodes, edges) {
   graph.d3Force('x', window.d3.forceX(0).strength(settings.centreForce));
   graph.d3Force('y', window.d3.forceY(0).strength(settings.centreForce));
 
-  const linkData = safeNodes.length && safeEdges.length
-    ? _computeDynamicLinkDistances(safeNodes, safeEdges, settings.linkDistance)
-    : [];
+  // Only update the existing link force's parameters — never replace the force
+  // object itself, because force-graph's internal linkMethod will try to
+  // re-initialize it with the graph's current links and can hit
+  // "node not found: undefined" if source/target values are in flux.
+  const linkForce = graph.d3Force('link');
+  if (linkForce) {
+    linkForce.distance(d => d.distance || settings.linkDistance)
+           .strength(settings.linkForce);
+  }
 
-  graph.d3Force('link', window.d3.forceLink(linkData).id(d => d.id).distance(d => d.distance || settings.linkDistance).strength(settings.linkForce));
+  graph.d3AlphaDecay(0.08);
 }
 
 /**
@@ -327,7 +325,13 @@ export function createMainGraph(container, data, settings) {
       .linkCanvasObjectMode(() => 'replace')
       .linkCanvasObject(_buildLinkCanvasObject(settings, graphData.nodes, accentColor))
       .onNodeHover(node => {
-        _hoverNodeId = node ? node.id : null;
+        const t0 = performance.now();
+        const nextId = node ? node.id : null;
+        if (_hoverNodeId === nextId) return;
+        _hoverNodeId = nextId;
+        container.classList.toggle('graph-node-hover', !!node);
+        const t1 = performance.now();
+        if (t1 - t0 > 5) console.log(`[perf] onNodeHover took ${Math.round(t1 - t0)}ms`);
         if (_tooltipEl) {
           if (node) {
             _tooltipEl.textContent = node.name;
@@ -342,7 +346,7 @@ export function createMainGraph(container, data, settings) {
       })
       .onNodeClick(node => {
         if (node) {
-          window.dispatchEvent(new CustomEvent('odysseus-shard-select-note', { detail: { id: node.id } }));
+          window.dispatchEvent(new CustomEvent('odysseus-vault-select-note', { detail: { id: node.id } }));
         }
       })
       .onNodeRightClick(node => {
@@ -364,12 +368,12 @@ export function createMainGraph(container, data, settings) {
       });
   } catch (err) {
     console.error('[force-graph] Failed to initialize graph:', err.message, err);
-    container.innerHTML = `<div class="shard-graph-error">Graph error: ${err.message}</div>`;
+    container.innerHTML = `<div class="vault-graph-error">Graph error: ${err.message}</div>`;
     return null;
   }
 
   try {
-    _configureForces(graph, settings, graphData.nodes, data.edges);
+    _configureForces(graph, settings);
   } catch (err) {
     console.error('[force-graph] Failed to configure forces:', err.message, err);
   }
@@ -378,10 +382,29 @@ export function createMainGraph(container, data, settings) {
   graph.enablePanInteraction(true);
   graph.onNodeDrag(() => graph.d3ReheatSimulation());
   graph.nodePointerAreaPaint(_buildNodePointerAreaPaint(settings));
+  graph.onEngineStop(() => console.log('[force-graph] simulation stopped'));
+
+  // Let the simulation spread nodes before first render, then stop quickly
+  graph.warmupTicks(50);
+  graph.cooldownTicks(0);
+  graph.cooldownTime(0);
+
+  let _lastMouseMove = 0;
+  container.addEventListener('mousemove', () => {
+    const now = performance.now();
+    const delta = now - _lastMouseMove;
+    _lastMouseMove = now;
+    if (delta > 50) {
+      console.log(`[perf] mousemove interval: ${Math.round(delta)}ms (jank detected)`);
+    }
+  });
 
   container.addEventListener('mouseleave', () => {
-    _hoverNodeId = null;
-    if (_tooltipEl) _tooltipEl.classList.remove('visible');
+    if (_hoverNodeId !== null) {
+      _hoverNodeId = null;
+      container.classList.remove('graph-node-hover');
+      if (_tooltipEl) _tooltipEl.classList.remove('visible');
+    }
   });
 
   _setInitialView(graph);
@@ -400,11 +423,10 @@ export function createMainGraph(container, data, settings) {
         if (p) { n.x = p.x; n.y = p.y; n.vx = p.vx; n.vy = p.vy; }
       });
       graph.graphData(newGraphData);
-      graph.cooldownTicks(0);
     },
     updateSettings: (newSettings) => {
-      _configureForces(graph, newSettings, data.nodes, data.edges);
-      graph.d3ReheatSimulation();
+      _configureForces(graph, newSettings);
+      // Removed d3ReheatSimulation: slider tweaks should not restart physics
     },
     updateNodeSize: (size) => {
       const ratio = size / settings.nodeSize;
@@ -475,7 +497,13 @@ export function createLocalGraph(container, data, activeNoteId, settings) {
       .linkCanvasObjectMode(() => 'replace')
       .linkCanvasObject(_buildLinkCanvasObject(settings, graphData.nodes, accentColor))
       .onNodeHover(node => {
-        _hoverNodeId = node ? node.id : null;
+        const t0 = performance.now();
+        const nextId = node ? node.id : null;
+        if (_hoverNodeId === nextId) return;
+        _hoverNodeId = nextId;
+        container.classList.toggle('graph-node-hover', !!node);
+        const t1 = performance.now();
+        if (t1 - t0 > 5) console.log(`[perf] onNodeHover took ${Math.round(t1 - t0)}ms`);
         if (_tooltipEl) {
           if (node) {
             _tooltipEl.textContent = node.name;
@@ -490,7 +518,7 @@ export function createLocalGraph(container, data, activeNoteId, settings) {
       })
       .onNodeClick(node => {
         if (node) {
-          window.dispatchEvent(new CustomEvent('odysseus-shard-select-note', { detail: { id: node.id } }));
+          window.dispatchEvent(new CustomEvent('odysseus-vault-select-note', { detail: { id: node.id } }));
         }
       })
       .onNodeRightClick(node => {
@@ -512,12 +540,12 @@ export function createLocalGraph(container, data, activeNoteId, settings) {
       });
   } catch (err) {
     console.error('[force-graph] Failed to initialize local graph:', err.message, err);
-    container.innerHTML = `<div class="shard-graph-error">Graph error: ${err.message}</div>`;
+    container.innerHTML = `<div class="vault-graph-error">Graph error: ${err.message}</div>`;
     return null;
   }
 
   try {
-    _configureForces(graph, settings, graphData.nodes, data.edges);
+    _configureForces(graph, settings);
   } catch (err) {
     console.error('[force-graph] Failed to configure local forces:', err.message, err);
   }
@@ -526,10 +554,28 @@ export function createLocalGraph(container, data, activeNoteId, settings) {
   graph.enablePanInteraction(true);
   graph.onNodeDrag(() => graph.d3ReheatSimulation());
   graph.nodePointerAreaPaint(_buildNodePointerAreaPaint(settings));
+  graph.onEngineStop(() => console.log('[force-graph] simulation stopped'));
+
+  graph.warmupTicks(50);
+  graph.cooldownTicks(0);
+  graph.cooldownTime(0);
+
+  let _lastMouseMove = 0;
+  container.addEventListener('mousemove', () => {
+    const now = performance.now();
+    const delta = now - _lastMouseMove;
+    _lastMouseMove = now;
+    if (delta > 50) {
+      console.log(`[perf] mousemove interval: ${Math.round(delta)}ms (jank detected)`);
+    }
+  });
 
   container.addEventListener('mouseleave', () => {
-    _hoverNodeId = null;
-    if (_tooltipEl) _tooltipEl.classList.remove('visible');
+    if (_hoverNodeId !== null) {
+      _hoverNodeId = null;
+      container.classList.remove('graph-node-hover');
+      if (_tooltipEl) _tooltipEl.classList.remove('visible');
+    }
   });
 
   _setInitialView(graph);
@@ -548,11 +594,9 @@ export function createLocalGraph(container, data, activeNoteId, settings) {
         if (p) { n.x = p.x; n.y = p.y; n.vx = p.vx; n.vy = p.vy; }
       });
       graph.graphData(newGraphData);
-      graph.cooldownTicks(0);
     },
     updateSettings: (newSettings) => {
-      _configureForces(graph, newSettings, data.nodes, data.edges);
-      graph.d3ReheatSimulation();
+      _configureForces(graph, newSettings);
     },
     updateNodeSize: (size) => {
       const ratio = size / settings.nodeSize;

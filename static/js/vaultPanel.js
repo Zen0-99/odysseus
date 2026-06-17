@@ -1,11 +1,11 @@
 /**
- * Shard Vault — floating modal panel for vault sync, graph, and timeline.
+ * The Vault — floating modal panel for vault sync, graph, and timeline.
  */
 
 import { makeWindowDraggable } from './windowDrag.js';
 import { makeWindowResizable } from './windowResize.js';
-import { shardMdToHtml, buildNoteCache } from './shardMarkdown.js';
-import { styledConfirm, styledPrompt, showToast } from './ui.js';
+import { vaultMdToHtml, buildNoteCache } from './vaultMarkdown.js';
+import { styledConfirm, styledPrompt, showToast, showError } from './ui.js';
 import { IS_MAC } from './platform.js';
 import {
   PluginManager, createAppApi, CORE_PLUGINS,
@@ -16,7 +16,12 @@ import {
   WordCountPlugin, RandomNotePlugin,
   CanvasPlugin, CommandPalettePlugin, FileRecoveryPlugin,
   NoteComposerPlugin, QuickSwitcherPlugin, UniqueNoteCreatorPlugin,
-} from './shardPluginApi.js';
+} from './vaultPluginApi.js';
+import {
+  fetchObsidianRegistry, loadCommunityPlugin, disableCommunityPlugin,
+  uninstallPlugin, getInstalledPlugins, setPluginManager,
+  loadAllEnabledPlugins, renderPluginBrowser, isPluginInstalled,
+} from './pluginLoader.js';
 
 const API_BASE = window.location.origin;
 
@@ -41,7 +46,7 @@ let _vaults = [];
 let _selectedVaultId = null;
 let _permissions = [];
 let _pluginManager = null;
-let _shardApp = null;
+let _vaultApp = null;
 let _removedTabs = new Map(); // tabName -> detached element
 let _recentDragNoteId = null; // suppress click after drag-and-drop
 let _recentDragTimer = null;
@@ -49,13 +54,13 @@ let _isDraggingTree = false; // guard _renderFolderTree during drag
 let _propsCollapsed = false; // global collapse state for properties section
 
 function _showLoading(text = 'Loading vault...') {
-  const overlay = document.getElementById('shard-loading-overlay');
-  const txt = overlay?.querySelector('.shard-loading-text');
+  const overlay = document.getElementById('vault-loading-overlay');
+  const txt = overlay?.querySelector('.vault-loading-text');
   if (overlay) overlay.classList.remove('hidden');
   if (txt) txt.textContent = text;
 }
 function _hideLoading() {
-  document.getElementById('shard-loading-overlay')?.classList.add('hidden');
+  document.getElementById('vault-loading-overlay')?.classList.add('hidden');
 }
 
 function _startFilePolling() {
@@ -63,7 +68,7 @@ function _startFilePolling() {
   _filePollInterval = setInterval(async () => {
     if (!_open || !_selectedVaultId) return;
     try {
-      const r = await fetch(`${API_BASE}/api/shard/last-modified?vault_id=${encodeURIComponent(_selectedVaultId)}`, { credentials: 'same-origin' });
+      const r = await fetch(`${API_BASE}/api/vault/last-modified?vault_id=${encodeURIComponent(_selectedVaultId)}`, { credentials: 'same-origin' });
       if (!r.ok) return;
       const data = await r.json();
       const mtime = data.mtime || 0;
@@ -80,8 +85,8 @@ function _stopFilePolling() {
 }
 
 export async function openPanel() {
-  console.log('[shard] openPanel called');
-  const modal = document.getElementById('shard-modal');
+  console.log('[vault] openPanel called');
+  const modal = document.getElementById('vault-modal');
   if (!modal) return;
   if (_open) { _bringToFront(); return; }
   _open = true;
@@ -92,9 +97,9 @@ export async function openPanel() {
   const content = modal.querySelector('.modal-content');
   if (content) {
     try {
-      const saved = JSON.parse(localStorage.getItem('shard-pos'));
+      const saved = JSON.parse(localStorage.getItem('vault-pos'));
       if (saved && saved.fullscreen) {
-        _enterShardFullscreen(content);
+        _enterVaultFullscreen(content);
       } else if (saved && saved.left && saved.top) {
         content.style.position = 'fixed';
         content.style.left = saved.left;
@@ -117,7 +122,7 @@ export async function openPanel() {
     // restore instantly and the fetch can run silently in background.
     let hasCache = false;
     try {
-      const cached = localStorage.getItem('shard-vaults');
+      const cached = localStorage.getItem('vault-vaults');
       if (cached) {
         const { ts } = JSON.parse(cached);
         if (Date.now() - ts < 10 * 60 * 1000) hasCache = true;
@@ -134,13 +139,13 @@ export async function openPanel() {
     _loadVaults().catch(() => {});
   }
 
-  document.getElementById('tool-shard-btn')?.classList.add('active');
-  document.addEventListener('keydown', _shardKeyHandler);
+  document.getElementById('tool-vault-btn')?.classList.add('active');
+  document.addEventListener('keydown', _vaultKeyHandler);
 }
 
 export function closePanel() {
-  const modal = document.getElementById('shard-modal');
-  console.log('[shard] closePanel called; _open=', _open, 'modal=', !!modal);
+  const modal = document.getElementById('vault-modal');
+  console.log('[vault] closePanel called; _open=', _open, 'modal=', !!modal);
   if (!modal || !_open) return;
   // Don't close if quick switcher or command palette is open — close those first
   if (_quickSwitcherEl) { _hideQuickSwitcher(); return; }
@@ -149,24 +154,24 @@ export function closePanel() {
   _rootDropWired = false;
   _stopFilePolling();
   modal.classList.add('hidden');
-  document.getElementById('tool-shard-btn')?.classList.remove('active');
-  document.removeEventListener('keydown', _shardKeyHandler);
+  document.getElementById('tool-vault-btn')?.classList.remove('active');
+  document.removeEventListener('keydown', _vaultKeyHandler);
   _hideQuickSwitcher();
   _hideCommandPalette();
 }
 
 export function togglePanel() {
-  console.log('[shard] togglePanel; _open=', _open);
+  console.log('[vault] togglePanel; _open=', _open);
   if (_open) closePanel(); else openPanel();
 }
 
-// Re-clamp the shard modal so it stays fully on-screen when the browser/Electron
+// Re-clamp the vault modal so it stays fully on-screen when the browser/Electron
 // window is resized. Floating (dragged/resized) windows have fixed pixel
 // positions that can drift off-screen after a viewport shrink.
-function _reclampShardModal() {
-  const modal = document.getElementById('shard-modal');
+function _reclampVaultModal() {
+  const modal = document.getElementById('vault-modal');
   if (!modal || modal.classList.contains('hidden')) return;
-  if (modal.classList.contains('shard-fullscreen')) return;
+  if (modal.classList.contains('vault-fullscreen')) return;
   if (modal.classList.contains('modal-right-docked') || modal.classList.contains('modal-left-docked')) return;
   const content = modal.querySelector('.modal-content');
   if (!content || content.style.position !== 'fixed') return;
@@ -194,9 +199,9 @@ function _reclampShardModal() {
 }
 
 window.addEventListener('resize', () => {
-  requestAnimationFrame(_reclampShardModal);
+  requestAnimationFrame(_reclampVaultModal);
   requestAnimationFrame(() => {
-    const bc = document.getElementById('shard-breadcrumb');
+    const bc = document.getElementById('vault-breadcrumb');
     if (bc) _fitBreadcrumb(bc);
   });
 });
@@ -204,13 +209,13 @@ window.addEventListener('resize', () => {
 // Wire close button immediately at module load (module scripts are deferred,
 // so the DOM element already exists). Use capture phase so the handler
 // fires before windowDrag's synthetic-click swallow listener.
-document.getElementById('close-shard-modal')?.addEventListener('click', () => closePanel(), true);
+document.getElementById('close-vault-modal')?.addEventListener('click', () => closePanel(), true);
 
 // Keep _open in sync when the modal is hidden via backdrop click (ui.js
 // adds .hidden directly without calling our closePanel).
-document.getElementById('shard-modal')?.addEventListener('mousedown', (e) => {
+document.getElementById('vault-modal')?.addEventListener('mousedown', (e) => {
   if (e.target === e.currentTarget && _open) {
-    console.log('[shard] backdrop click detected, syncing _open');
+    console.log('[vault] backdrop click detected, syncing _open');
     closePanel();
   }
 });
@@ -218,17 +223,17 @@ document.getElementById('shard-modal')?.addEventListener('mousedown', (e) => {
 export function isOpen() { return _open; }
 
 function _bringToFront() {
-  const modal = document.getElementById('shard-modal');
+  const modal = document.getElementById('vault-modal');
   if (!modal) return;
   const z = 260;
   modal.style.zIndex = z;
 }
 
-function _enterShardFullscreen(content) {
-  const modal = document.getElementById('shard-modal');
+function _enterVaultFullscreen(content) {
+  const modal = document.getElementById('vault-modal');
   if (!modal || !content) return;
-  if (modal.classList.contains('shard-fullscreen')) return;
-  modal.classList.add('shard-fullscreen');
+  if (modal.classList.contains('vault-fullscreen')) return;
+  modal.classList.add('vault-fullscreen');
   content.style.position = 'fixed';
   content.style.left = '0';
   content.style.top = '0';
@@ -240,14 +245,14 @@ function _enterShardFullscreen(content) {
   content.style.borderRadius = '0';
   content.style.margin = '0';
   content.style.transform = 'none';
-  try { localStorage.setItem('shard-pos', JSON.stringify({ fullscreen: true })); } catch {}
+  try { localStorage.setItem('vault-pos', JSON.stringify({ fullscreen: true })); } catch {}
 }
 
-function _exitShardFullscreen(content, cx, cy) {
-  const modal = document.getElementById('shard-modal');
+function _exitVaultFullscreen(content, cx, cy) {
+  const modal = document.getElementById('vault-modal');
   if (!modal || !content) return;
-  if (!modal.classList.contains('shard-fullscreen')) return;
-  modal.classList.remove('shard-fullscreen');
+  if (!modal.classList.contains('vault-fullscreen')) return;
+  modal.classList.remove('vault-fullscreen');
   content.style.width = '';
   content.style.maxWidth = '';
   content.style.height = '';
@@ -267,7 +272,7 @@ function _exitShardFullscreen(content, cx, cy) {
 
 function _wireDrag() {
   if (_dragWired) return;
-  const modal = document.getElementById('shard-modal');
+  const modal = document.getElementById('vault-modal');
   const content = modal?.querySelector('.modal-content');
   const header = modal?.querySelector('.modal-header');
   if (!modal || !content || !header) return;
@@ -277,30 +282,30 @@ function _wireDrag() {
     makeWindowDraggable(modal, {
       content,
       header,
-      fsClass: 'shard-fullscreen',
+      fsClass: 'vault-fullscreen',
       enableDock: true,
       enableLeftDock: true,
-      onEnterFullscreen: () => _enterShardFullscreen(content),
-      onExitFullscreen: (cx, cy) => _exitShardFullscreen(content, cx, cy),
+      onEnterFullscreen: () => _enterVaultFullscreen(content),
+      onExitFullscreen: (cx, cy) => _exitVaultFullscreen(content, cx, cy),
       onDragEnd: () => {
         try {
-          localStorage.setItem('shard-pos', JSON.stringify({ left: content.style.left, top: content.style.top }));
+          localStorage.setItem('vault-pos', JSON.stringify({ left: content.style.left, top: content.style.top }));
         } catch {}
       },
     });
   } catch (e) {
-    console.warn('[shard] makeWindowDraggable failed:', e);
+    console.warn('[vault] makeWindowDraggable failed:', e);
   }
 
   // Note tab bar — event delegation for tab switching, closing, and new tab
-  document.getElementById('shard-note-tabs')?.addEventListener('click', (e) => {
-    const newBtn = e.target.closest('.shard-tab-new');
+  document.getElementById('vault-note-tabs')?.addEventListener('click', (e) => {
+    const newBtn = e.target.closest('.vault-tab-new');
     if (newBtn) {
       _showNewNotePrompt();
       return;
     }
-    const closeBtn = e.target.closest('.shard-tab-close');
-    const tabBtn = e.target.closest('.shard-tab');
+    const closeBtn = e.target.closest('.vault-tab-close');
+    const tabBtn = e.target.closest('.vault-tab');
     if (!tabBtn) return;
     const noteId = tabBtn.dataset.noteId;
     if (closeBtn && noteId) {
@@ -328,8 +333,17 @@ function _wireDrag() {
     }
   });
 
+  // Graph node click → open the corresponding note
+  if (!window._vaultGraphSelectNoteBound) {
+    window._vaultGraphSelectNoteBound = true;
+    window.addEventListener('odysseus-vault-select-note', (e) => {
+      const id = e.detail?.id;
+      if (id) _navigateToNote(id, true);
+    });
+  }
+
   // Tab bar drag-and-drop
-  const tabBar = document.getElementById('shard-note-tabs');
+  const tabBar = document.getElementById('vault-note-tabs');
   if (tabBar) {
     let dragCounter = 0;
     tabBar.addEventListener('dragenter', (e) => {
@@ -356,7 +370,7 @@ function _wireDrag() {
       if (!noteId) return;
       const note = _notes.find(n => n.id === noteId);
       if (!note) return;
-      const droppedOnTab = e.target.closest('.shard-tab');
+      const droppedOnTab = e.target.closest('.vault-tab');
       if (droppedOnTab) {
         // Dropped on existing tab: replace that tab's note
         const existingId = droppedOnTab.dataset.noteId;
@@ -375,11 +389,11 @@ function _wireDrag() {
   }
 
   // Back / Forward navigation
-  document.getElementById('shard-back-btn')?.addEventListener('click', _goBack);
-  document.getElementById('shard-forward-btn')?.addEventListener('click', _goForward);
+  document.getElementById('vault-back-btn')?.addEventListener('click', _goBack);
+  document.getElementById('vault-forward-btn')?.addEventListener('click', _goForward);
 
   // Search — debounced backend fetch that updates the tree
-  const searchInput = document.getElementById('shard-search');
+  const searchInput = document.getElementById('vault-search');
   if (searchInput) {
     let searchDebounce;
     searchInput.addEventListener('input', (e) => {
@@ -393,12 +407,12 @@ function _wireDrag() {
   }
 
   // Vault management
-  document.getElementById('shard-save-vault-btn')?.addEventListener('click', _saveNewVault);
-  document.getElementById('shard-cancel-vault-btn')?.addEventListener('click', _hideAddVaultForm);
+  document.getElementById('vault-save-vault-btn')?.addEventListener('click', _saveNewVault);
+  document.getElementById('vault-cancel-vault-btn')?.addEventListener('click', _hideAddVaultForm);
 
   // Browse button — prefer Electron IPC directory picker, then file input, then FS Access API
-  const browseBtn = document.getElementById('shard-browse-vault-btn');
-  const fileInput = document.getElementById('shard-vault-file-input');
+  const browseBtn = document.getElementById('vault-browse-vault-btn');
+  const fileInput = document.getElementById('vault-vault-file-input');
   if (browseBtn && fileInput) {
     browseBtn.addEventListener('click', async () => {
       // Electron: use IPC to get real folder path from main process
@@ -406,11 +420,11 @@ function _wireDrag() {
         try {
           const result = await window.electronAPI.selectDirectory();
           if (result && !result.canceled && result.filePaths?.length) {
-            const pathInput = document.getElementById('shard-new-vault-path');
+            const pathInput = document.getElementById('vault-new-vault-path');
             if (pathInput) pathInput.value = result.filePaths[0];
           }
         } catch (err) {
-          console.warn('[shard] electron directory picker failed:', err);
+          console.warn('[vault] electron directory picker failed:', err);
         }
         return;
       }
@@ -418,10 +432,19 @@ function _wireDrag() {
       if (window.showDirectoryPicker) {
         try {
           const handle = await window.showDirectoryPicker();
-          const pathInput = document.getElementById('shard-new-vault-path');
-          if (pathInput) pathInput.value = handle.name;
+          const pathInput = document.getElementById('vault-new-vault-path');
+          const hint = document.getElementById('vault-browse-hint');
+          if (pathInput) {
+            // FS Access API hides real paths for security — user must type the full path
+            pathInput.placeholder = 'e.g. C:\\Users\\You\\Obsidian Vault';
+            pathInput.focus();
+          }
+          if (hint) {
+            hint.textContent = 'Selected: ' + handle.name + ' — please type the full absolute path above (browsers cannot reveal real paths).';
+            hint.style.display = 'block';
+          }
         } catch (err) {
-          if (err.name !== 'AbortError') console.warn('[shard] directory picker failed:', err);
+          if (err.name !== 'AbortError') console.warn('[vault] directory picker failed:', err);
         }
         return;
       }
@@ -431,7 +454,7 @@ function _wireDrag() {
     fileInput.addEventListener('change', (e) => {
       const files = e.target.files;
       if (!files || !files.length) return;
-      const pathInput = document.getElementById('shard-new-vault-path');
+      const pathInput = document.getElementById('vault-new-vault-path');
       const relPath = files[0].webkitRelativePath || '';
       const folderName = relPath.split('/')[0] || '';
       const filePath = files[0].path || '';
@@ -455,21 +478,21 @@ function _wireDrag() {
   _wireVaultDropdown();
 
   // Permissions button
-  document.getElementById('shard-vault-perm-btn')?.addEventListener('click', () => {
+  document.getElementById('vault-vault-perm-btn')?.addEventListener('click', () => {
     _switchTab('permissions');
   });
 
   // Permission management
-  document.getElementById('shard-vault-read-all')?.addEventListener('change', _updateVaultToggles);
-  document.getElementById('shard-vault-write-all')?.addEventListener('change', _updateVaultToggles);
-  document.getElementById('shard-add-perm-btn')?.addEventListener('click', _addPermission);
+  document.getElementById('vault-vault-read-all')?.addEventListener('change', _updateVaultToggles);
+  document.getElementById('vault-vault-write-all')?.addEventListener('change', _updateVaultToggles);
+  document.getElementById('vault-add-perm-btn')?.addEventListener('click', _addPermission);
 
   // Refresh button
-  document.getElementById('shard-refresh-btn')?.addEventListener('click', _refreshVault);
+  document.getElementById('vault-refresh-btn')?.addEventListener('click', _refreshVault);
 
   // Connect / Disconnect (legacy - keep for compatibility)
-  document.getElementById('shard-connect-btn')?.addEventListener('click', _connectVault);
-  document.getElementById('shard-disconnect-btn')?.addEventListener('click', _disconnectVault);
+  document.getElementById('vault-connect-btn')?.addEventListener('click', _connectVault);
+  document.getElementById('vault-disconnect-btn')?.addEventListener('click', _disconnectVault);
 
   // Resize panes
   _wireResizeHandles();
@@ -483,7 +506,7 @@ async function _loadVaults() {
   try {
     // Restore from cache first
     try {
-      const cached = localStorage.getItem('shard-vaults');
+      const cached = localStorage.getItem('vault-vaults');
       if (cached) {
         const { vaults, ts } = JSON.parse(cached);
         if (Date.now() - ts < 10 * 60 * 1000) {
@@ -491,34 +514,34 @@ async function _loadVaults() {
           _populateVaultDropdown();
           if (_vaults.length > 0 && !_selectedVaultId) {
             let lastVault = null;
-            try { lastVault = localStorage.getItem('shard-last-vault'); } catch {}
+            try { lastVault = localStorage.getItem('vault-last-vault'); } catch {}
             const target = _vaults.find(v => v.id === lastVault) ? lastVault : _vaults[0].id;
             _selectVault(target);
           }
         }
       }
     } catch {}
-    const r = await fetch(`${API_BASE}/api/shard/status`, { credentials: 'same-origin' });
+    const r = await fetch(`${API_BASE}/api/vault/status`, { credentials: 'same-origin' });
     const s = r.ok ? await r.json() : {};
     _vaults = s.vaults || [];
-    try { localStorage.setItem('shard-vaults', JSON.stringify({ vaults: _vaults, ts: Date.now() })); } catch {}
+    try { localStorage.setItem('vault-vaults', JSON.stringify({ vaults: _vaults, ts: Date.now() })); } catch {}
     _populateVaultDropdown();
     if (_vaults.length > 0 && !_selectedVaultId) {
       let lastVault = null;
-      try { lastVault = localStorage.getItem('shard-last-vault'); } catch {}
+      try { lastVault = localStorage.getItem('vault-last-vault'); } catch {}
       const target = _vaults.find(v => v.id === lastVault) ? lastVault : _vaults[0].id;
       _selectVault(target);
     }
   } catch (e) {
-    console.error('[shard] load vaults failed', e);
+    console.error('[vault] load vaults failed', e);
     // Keep cached vaults if fetch fails
     if (!_vaults.length) _vaults = [];
   }
 }
 
 function _populateVaultDropdown() {
-  const menu = document.getElementById('shard-vault-dropdown-menu');
-  const label = document.getElementById('shard-vault-dropdown-label');
+  const menu = document.getElementById('vault-vault-dropdown-menu');
+  const label = document.getElementById('vault-vault-dropdown-label');
   if (!menu) return;
 
   const vault = _vaults.find(v => v.id === _selectedVaultId);
@@ -527,10 +550,10 @@ function _populateVaultDropdown() {
 
   let html = '';
   if (!_vaults.length) {
-    html = '<div class="shard-vault-dropdown-item" style="opacity:0.5;cursor:default;"><span class="vault-name">No vaults</span></div>';
+    html = '<div class="vault-vault-dropdown-item" style="opacity:0.5;cursor:default;"><span class="vault-name">No vaults</span></div>';
   } else {
     html = _vaults.map(v => `
-      <div class="shard-vault-dropdown-item ${_selectedVaultId === v.id ? 'selected' : ''}" data-id="${v.id}">
+      <div class="vault-vault-dropdown-item ${_selectedVaultId === v.id ? 'selected' : ''}" data-id="${v.id}">
         <span class="vault-name">${_esc(v.name)} <span style="opacity:0.5;font-size:11px;">(${v.note_count || 0})</span></span>
         <button class="vault-menu-btn" data-id="${v.id}" title="Vault options" aria-label="Vault options">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
@@ -540,25 +563,25 @@ function _populateVaultDropdown() {
   }
 
   html += `
-    <div class="shard-vault-dropdown-item shard-vault-dropdown-add" id="shard-add-vault-item">
+    <div class="vault-vault-dropdown-item vault-vault-dropdown-add" id="vault-add-vault-item">
       <span class="vault-name">+ Add new vault</span>
     </div>
   `;
   menu.innerHTML = html;
 
-  document.getElementById('shard-add-vault-item')?.addEventListener('click', (e) => {
+  document.getElementById('vault-add-vault-item')?.addEventListener('click', (e) => {
     e.stopPropagation();
     _closeVaultDropdown();
     _showAddVaultForm();
   });
 
   // Wire vault selection
-  menu.querySelectorAll('.shard-vault-dropdown-item:not(.shard-vault-dropdown-add)').forEach(item => {
+  menu.querySelectorAll('.vault-vault-dropdown-item:not(.vault-vault-dropdown-add)').forEach(item => {
     item.addEventListener('click', (e) => {
       if (e.target.closest('.vault-menu-btn')) return;
       _closeVaultDropdown();
       _selectVault(item.dataset.id);
-      try { localStorage.setItem('shard-last-vault', item.dataset.id); } catch {}
+      try { localStorage.setItem('vault-last-vault', item.dataset.id); } catch {}
     });
   });
 
@@ -573,13 +596,13 @@ function _populateVaultDropdown() {
 }
 
 function _wireVaultDropdown() {
-  const wrap = document.getElementById('shard-vault-dropdown-wrap');
-  const trigger = document.getElementById('shard-vault-dropdown-trigger');
+  const wrap = document.getElementById('vault-vault-dropdown-wrap');
+  const trigger = document.getElementById('vault-vault-dropdown-trigger');
   if (!trigger || !wrap) return;
 
   trigger.addEventListener('click', (e) => {
     e.stopPropagation();
-    const menu = document.getElementById('shard-vault-dropdown-menu');
+    const menu = document.getElementById('vault-vault-dropdown-menu');
     if (!menu) return;
     const isHidden = menu.classList.contains('hidden');
     if (isHidden) {
@@ -597,8 +620,8 @@ function _wireVaultDropdown() {
 }
 
 function _closeVaultDropdown() {
-  const menu = document.getElementById('shard-vault-dropdown-menu');
-  const wrap = document.getElementById('shard-vault-dropdown-wrap');
+  const menu = document.getElementById('vault-vault-dropdown-menu');
+  const wrap = document.getElementById('vault-vault-dropdown-wrap');
   if (menu) menu.classList.add('hidden');
   if (wrap) wrap.classList.remove('open');
 }
@@ -615,21 +638,21 @@ async function _selectVault(vaultId) {
   _renderNoteTabs();
   _renderBreadcrumb(null);
   _updateNavButtons();
-  const preview = document.getElementById('shard-preview');
+  const preview = document.getElementById('vault-preview');
   if (preview) { preview.innerHTML = ''; preview.style.display = 'none'; }
-  const rightPane = document.getElementById('shard-right-pane');
+  const rightPane = document.getElementById('vault-right-pane');
   if (rightPane) {
-    rightPane.querySelectorAll('.shard-panel-group').forEach(panelEl => {
-      panelEl.querySelector('.shard-panel-placeholder, .shard-right-placeholder')?.classList.remove('hidden');
-      panelEl.querySelector('.shard-right-tabs')?.classList.add('hidden');
-      panelEl.querySelector('.shard-right-panes')?.classList.add('hidden');
+    rightPane.querySelectorAll('.vault-panel-group').forEach(panelEl => {
+      panelEl.querySelector('.vault-panel-placeholder, .vault-right-placeholder')?.classList.remove('hidden');
+      panelEl.querySelector('.vault-right-tabs')?.classList.add('hidden');
+      panelEl.querySelector('.vault-right-panes')?.classList.add('hidden');
     });
   }
-  const searchInput = document.getElementById('shard-search');
+  const searchInput = document.getElementById('vault-search');
   if (searchInput) searchInput.value = '';
   const vault = _vaults.find(v => v.id === vaultId);
-  const mainPanel = document.getElementById('shard-main-panel');
-  const folderTree = document.getElementById('shard-folder-tree');
+  const mainPanel = document.getElementById('vault-main-panel');
+  const folderTree = document.getElementById('vault-folder-tree');
 
   _populateVaultDropdown();
   _hideAddVaultForm();
@@ -648,8 +671,8 @@ async function _selectVault(vaultId) {
   if (folderTree) folderTree.classList.remove('hidden');
 
   // Update permission toggles
-  const readCb = document.getElementById('shard-vault-read-all');
-  const writeCb = document.getElementById('shard-vault-write-all');
+  const readCb = document.getElementById('vault-vault-read-all');
+  const writeCb = document.getElementById('vault-vault-write-all');
   if (readCb) readCb.checked = vault.read_enabled;
   if (writeCb) writeCb.checked = vault.write_enabled;
 
@@ -675,7 +698,7 @@ async function _selectVault(vaultId) {
 }
 
 function _openStartupFile() {
-  const mode = _shardSettings?.filesAndLinks?.defaultFileToOpen || 'last-opened';
+  const mode = _vaultSettings?.filesAndLinks?.defaultFileToOpen || 'last-opened';
   if (mode === 'none') return;
   if (mode === 'new-note') {
     _showNewNotePrompt();
@@ -686,7 +709,7 @@ function _openStartupFile() {
     return;
   }
   if (mode === 'specific-file') {
-    const specificFile = _shardSettings?.filesAndLinks?.defaultSpecificFile;
+    const specificFile = _vaultSettings?.filesAndLinks?.defaultSpecificFile;
     if (specificFile && _notes.some(n => n.id === specificFile)) {
       _navigateToNote(specificFile, false);
     }
@@ -695,7 +718,7 @@ function _openStartupFile() {
   // last-opened
   if (_selectedVaultId) {
     try {
-      const lastNote = localStorage.getItem(`shard-last-note-${_selectedVaultId}`);
+      const lastNote = localStorage.getItem(`vault-last-note-${_selectedVaultId}`);
       if (lastNote && _notes.some(n => n.id === lastNote)) {
         _navigateToNote(lastNote, false);
       }
@@ -704,7 +727,7 @@ function _openStartupFile() {
 }
 
 function _openDailyNote() {
-  const dateFormat = _shardSettings?.plugins?.['daily-notes']?.dateFormat || 'YYYY-MM-DD';
+  const dateFormat = _vaultSettings?.plugins?.['daily-notes']?.dateFormat || 'YYYY-MM-DD';
   const now = new Date();
   const pad = (n) => String(n).padStart(2, '0');
   const yyyy = now.getFullYear();
@@ -718,7 +741,7 @@ function _openDailyNote() {
     .replace('HH', pad(now.getHours()))
     .replace('ss', pad(now.getSeconds()));
   fileName += '.md';
-  const folder = _shardSettings?.plugins?.['daily-notes']?.newFileLocation || '';
+  const folder = _vaultSettings?.plugins?.['daily-notes']?.newFileLocation || '';
   const noteId = folder ? `${folder}/${fileName}` : fileName;
   const existing = _notes.find(n => n.id === noteId);
   if (existing) {
@@ -726,7 +749,7 @@ function _openDailyNote() {
     return;
   }
   // Create daily note if it doesn't exist
-  const templatePath = _shardSettings?.plugins?.['daily-notes']?.templateFileLocation || '';
+  const templatePath = _vaultSettings?.plugins?.['daily-notes']?.templateFileLocation || '';
   let content = '';
   if (templatePath) {
     const template = _notes.find(n => n.id === templatePath || n.rel_path === templatePath);
@@ -757,7 +780,7 @@ async function _createNoteWithContent(noteId, content) {
   _renderNoteList();
   _navigateToNote(noteId, false);
   try {
-    const r = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(noteId)}/edit`, {
+    const r = await fetch(`${API_BASE}/api/vault/notes/${encodeURIComponent(noteId)}/edit`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content }),
@@ -765,7 +788,7 @@ async function _createNoteWithContent(noteId, content) {
     if (!r.ok) throw new Error();
     delete optimisticNote._optimistic;
   } catch (e) {
-    console.error('[shard] create note failed', e);
+    console.error('[vault] create note failed', e);
     const idx = _notes.findIndex(n => n.id === noteId);
     if (idx !== -1) _notes.splice(idx, 1);
     _renderFolderTree();
@@ -775,13 +798,234 @@ async function _createNoteWithContent(noteId, content) {
   }
 }
 
+// ── Templates ────────────────────────────────────────────────
+
+function _getTemplates() {
+  const folder = _vaultSettings?.plugins?.templates?.templateFolderLocation || '';
+  if (!folder) return _notes.filter(n => n.folder?.toLowerCase() === 'templates');
+  return _notes.filter(n => n.folder === folder || n.folder?.startsWith(folder + '/'));
+}
+
+function _processTemplate(content, title) {
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const dateFmt = _vaultSettings?.plugins?.templates?.dateFormat || 'DD-MM-YYYY';
+  const timeFmt = _vaultSettings?.plugins?.templates?.timeFormat || 'HH:mm';
+
+  const formatDate = (d, fmt) => {
+    return fmt
+      .replace('YYYY', d.getFullYear())
+      .replace('MM', pad(d.getMonth() + 1))
+      .replace('DD', pad(d.getDate()))
+      .replace('HH', pad(d.getHours()))
+      .replace('mm', pad(d.getMinutes()))
+      .replace('ss', pad(d.getSeconds()));
+  };
+
+  return content
+    .replace(/\{\{date:([^}]+)\}\}/g, (_, fmt) => formatDate(now, fmt))
+    .replace(/\{\{date\}\}/g, formatDate(now, dateFmt))
+    .replace(/\{\{time\}\}/g, formatDate(now, timeFmt))
+    .replace(/\{\{title\}\}/g, title || '');
+}
+
+function _showTemplatePicker(folder, onSelect) {
+  const templates = _getTemplates();
+  if (!templates.length) {
+    showToast('No templates found. Set a template folder in Settings > Templates.');
+    return;
+  }
+
+  const modal = document.getElementById('vault-modal');
+  if (!modal) return;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'vault-template-picker';
+  overlay.innerHTML = `
+    <div class="vault-qs-backdrop" style="position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:10000;display:flex;align-items:flex-start;justify-content:center;padding-top:15vh;">
+      <div class="vault-qs-box" style="width:520px;max-width:90vw;background:var(--bg-raised,var(--bg,#1a1a1a));border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.5);display:flex;flex-direction:column;overflow:hidden;">
+        <input type="text" class="vault-qs-input" placeholder="Pick a template..." style="width:100%;background:transparent;color:var(--fg);border:none;border-bottom:1px solid var(--border);padding:12px 14px;font-size:15px;outline:none;box-sizing:border-box;" autocomplete="off" spellcheck="false">
+        <div class="vault-qs-results" style="max-height:320px;overflow-y:auto;padding:4px 0;"></div>
+        <div class="vault-qs-hint" style="padding:6px 14px;font-size:11px;opacity:0.5;border-top:1px solid var(--border);">↑↓ to navigate · Enter to select · Esc to close</div>
+      </div>
+    </div>
+  `;
+  modal.appendChild(overlay);
+
+  const input = overlay.querySelector('.vault-qs-input');
+  const results = overlay.querySelector('.vault-qs-results');
+  let selectedIndex = 0;
+
+  const render = (q) => {
+    const qLower = q.trim().toLowerCase();
+    let items = templates;
+    if (qLower) {
+      items = templates.map(n => {
+        const title = (n.title || '').toLowerCase();
+        let score = 0;
+        if (title === qLower) score = 100;
+        else if (title.startsWith(qLower)) score = 80;
+        else if (title.includes(qLower)) score = 60;
+        return { note: n, score };
+      }).filter(x => x.score > 0).sort((a, b) => b.score - a.score).map(x => x.note);
+    }
+    if (!items.length) {
+      results.innerHTML = '<div style="padding:20px;text-align:center;opacity:0.5;font-size:13px;">No templates</div>';
+      return;
+    }
+    results.innerHTML = items.slice(0, 20).map((n, i) => `
+      <div class="vault-qs-item" data-note-id="${_esc(n.id)}" data-index="${i}" style="padding:7px 14px;font-size:13px;cursor:pointer;pointer-events:auto;display:flex;align-items:center;gap:8px;border-radius:4px;margin:0 4px;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(n.title || n.id)}</span>
+        <span style="opacity:0.4;font-size:11px;">${_esc(n.folder || '')}</span>
+      </div>
+    `).join('');
+    selectedIndex = 0;
+    _updateSelection(results);
+  };
+
+  const _updateSelection = (container) => {
+    const allItems = container.querySelectorAll('.vault-qs-item');
+    if (selectedIndex < 0) selectedIndex = 0;
+    if (selectedIndex >= allItems.length) selectedIndex = allItems.length - 1;
+    allItems.forEach((el, i) => {
+      el.style.background = i === selectedIndex ? 'color-mix(in srgb, var(--accent, var(--red)) 15%, transparent)' : 'transparent';
+    });
+    const selected = container.querySelector(`.vault-qs-item[data-index="${selectedIndex}"]`);
+    if (selected) selected.scrollIntoView({ block: 'nearest' });
+  };
+
+  const close = () => { overlay.remove(); };
+
+  input.addEventListener('input', () => render(input.value));
+  input.addEventListener('keydown', (e) => {
+    const items = results.querySelectorAll('.vault-qs-item');
+    if (e.key === 'ArrowDown') { e.preventDefault(); selectedIndex = Math.min(selectedIndex + 1, items.length - 1); _updateSelection(results); return; }
+    if (e.key === 'ArrowUp') { e.preventDefault(); selectedIndex = Math.max(selectedIndex - 1, 0); _updateSelection(results); return; }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const selected = results.querySelector(`.vault-qs-item[data-index="${selectedIndex}"]`);
+      if (selected) { const note = _notes.find(n => n.id === selected.dataset.noteId); if (note) onSelect(note, folder); }
+      close();
+      return;
+    }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+  });
+
+  results.addEventListener('click', (e) => {
+    const item = e.target.closest('.vault-qs-item');
+    if (item) { const note = _notes.find(n => n.id === item.dataset.noteId); if (note) onSelect(note, folder); close(); }
+  });
+
+  overlay.querySelector('.vault-qs-backdrop').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) close();
+  });
+
+  input.focus();
+  render('');
+}
+
+function _insertTemplate() {
+  const currentNote = _notes.find(n => n.id === _selectedNoteId);
+  const title = currentNote?.title || '';
+  _showTemplatePicker('', (templateNote) => {
+    const raw = templateNote.content || '';
+    const processed = _processTemplate(raw, title);
+    _insertBlock(processed);
+    showToast(`Inserted template: ${templateNote.title}`);
+  });
+}
+
+async function _createNoteFromTemplate(folder) {
+  _showTemplatePicker(folder, async (templateNote, targetFolder) => {
+    const fileName = _findUniqueUntitled(templateNote.title.replace(/\.md$/, '') || 'Untitled', _notes, '.md');
+    const title = fileName.replace(/\.md$/, '');
+    const raw = templateNote.content || '';
+    const content = _processTemplate(raw, title);
+
+    const optimisticNote = {
+      id: fileName,
+      rel_path: fileName,
+      folder: targetFolder || '',
+      title: title,
+      content: content,
+      frontmatter: {},
+      tags: _extractTags(content),
+      outbound_links: _extractOutboundLinks(content),
+      backlinks: [],
+      last_modified_src: new Date().toISOString(),
+      sync_status: 'synced',
+      _optimistic: true,
+    };
+    _notes.push(optimisticNote);
+    _notes.sort((a, b) => a.title.toLowerCase().localeCompare(b.title.toLowerCase()));
+    _renderFolderTree();
+    _navigateToNote(fileName, true, true);
+
+    try {
+      const r = await fetch(`${API_BASE}/api/vault/notes/${encodeURIComponent(fileName)}/edit`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+        body: JSON.stringify({ content }),
+      });
+      if (!r.ok) throw new Error();
+      if (targetFolder) {
+        try {
+          const moveR = await fetch(`${API_BASE}/api/vault/notes/${encodeURIComponent(fileName)}/move`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+            body: JSON.stringify({ folder: targetFolder }),
+          });
+          if (moveR.ok) {
+            const data = await moveR.json().catch(() => ({}));
+            if (data.new_path) {
+              _syncNoteIdAfterMove(fileName, data.new_path);
+              optimisticNote.id = data.new_path;
+              optimisticNote.rel_path = data.new_path;
+              optimisticNote.folder = targetFolder;
+            }
+          }
+        } catch {}
+      }
+      delete optimisticNote._optimistic;
+      _autoRenameNoteId = optimisticNote.id;
+      showToast(`Created note from template: ${title}`);
+    } catch (e) {
+      console.error('[vault] create note from template failed', e);
+      const idx = _notes.findIndex(n => n.id === fileName || n.rel_path === fileName);
+      if (idx !== -1) _notes.splice(idx, 1);
+      _renderFolderTree();
+      showToast('Failed to create note from template');
+    }
+  });
+}
+
+function _insertCurrentDate() {
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const fmt = _vaultSettings?.plugins?.templates?.dateFormat || 'DD-MM-YYYY';
+  const text = fmt
+    .replace('YYYY', now.getFullYear())
+    .replace('MM', pad(now.getMonth() + 1))
+    .replace('DD', pad(now.getDate()));
+  _insertBlock(text);
+}
+
+function _insertCurrentTime() {
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const fmt = _vaultSettings?.plugins?.templates?.timeFormat || 'HH:mm';
+  const text = fmt
+    .replace('HH', pad(now.getHours()))
+    .replace('mm', pad(now.getMinutes()));
+  _insertBlock(text);
+}
+
 // ── Folder Tree ──────────────────────────────────────────────
 
 let _folders = [];
 
 function _restoreCachedFolders(vaultId) {
   try {
-    const cached = localStorage.getItem(`shard-folders-${vaultId}`);
+    const cached = localStorage.getItem(`vault-folders-${vaultId}`);
     if (cached) {
       const { folders, ts } = JSON.parse(cached);
       if (Date.now() - ts < 10 * 60 * 1000) {
@@ -797,7 +1041,7 @@ function _restoreCachedFolders(vaultId) {
 async function _loadFolders() {
   if (!_selectedVaultId) return;
   try {
-    const r = await fetch(`${API_BASE}/api/shard/folders?vault_id=${encodeURIComponent(_selectedVaultId)}`, { credentials: 'same-origin' });
+    const r = await fetch(`${API_BASE}/api/vault/folders?vault_id=${encodeURIComponent(_selectedVaultId)}`, { credentials: 'same-origin' });
     if (!r.ok) return;
     const data = await r.json();
     const backendFolders = data.folders || [];
@@ -807,10 +1051,10 @@ async function _loadFolders() {
     _folders = [...backendFolders, ...optimisticStrings];
     _renderFolderTree();
     try {
-      localStorage.setItem(`shard-folders-${_selectedVaultId}`, JSON.stringify({ folders: _folders, ts: Date.now() }));
+      localStorage.setItem(`vault-folders-${_selectedVaultId}`, JSON.stringify({ folders: _folders, ts: Date.now() }));
     } catch {}
   } catch (e) {
-    console.error('[shard] load folders failed', e);
+    console.error('[vault] load folders failed', e);
     _folders = [];
     _renderFolderTree();
   }
@@ -846,16 +1090,16 @@ function _renderFolderTreeNode(node, depth = 0) {
   const isSelected = _selectedFolder === node.path;
   const arrowClass = isExpanded ? 'expanded' : (isEmpty ? 'leaf' : '');
   const depthClass = depth > 0 ? 'sub' : 'root';
-  const liClass = `shard-tree-${depthClass}${isExpanded ? ' expanded' : ''}`;
+  const liClass = `vault-tree-${depthClass}${isExpanded ? ' expanded' : ''}`;
 
   let html = '';
   if (node.name) {
     const folderSvg = _getFolderIconSvg(node.path, 'folder', 13);
     html += `<li class="${liClass}">
-      <div class="shard-tree-row ${depthClass} ${isSelected ? 'selected' : ''}" data-folder="${_esc(node.path)}" draggable="true">
-        <span class="shard-tree-arrow ${arrowClass}"></span>
-        <span class="shard-tree-folder-icon">${folderSvg}</span>
-        <span class="shard-tree-name">${_esc(node.name)}</span>
+      <div class="vault-tree-row ${depthClass} ${isSelected ? 'selected' : ''}" data-folder="${_esc(node.path)}" draggable="true">
+        <span class="vault-tree-arrow ${arrowClass}"></span>
+        <span class="vault-tree-folder-icon">${folderSvg}</span>
+        <span class="vault-tree-name">${_esc(node.name)}</span>
       </div>`;
   }
 
@@ -868,11 +1112,11 @@ function _renderFolderTreeNode(node, depth = 0) {
     }
     for (const f of files) {
       const iconSvg = _getNoteIconSvg(f.id, 'file', 13);
-      html += `<li class="shard-tree-sub">
-        <div class="shard-tree-row sub ${f.id === _selectedNoteId ? 'selected' : ''}" data-note-id="${_esc(f.id)}" draggable="true">
-          <span class="shard-tree-arrow leaf"></span>
-          <span class="shard-tree-file-icon">${iconSvg}</span>
-          <span class="shard-tree-name">${_esc(f.title)}</span>
+      html += `<li class="vault-tree-sub">
+        <div class="vault-tree-row sub ${f.id === _selectedNoteId ? 'selected' : ''}" data-note-id="${_esc(f.id)}" draggable="true">
+          <span class="vault-tree-arrow leaf"></span>
+          <span class="vault-tree-file-icon">${iconSvg}</span>
+          <span class="vault-tree-name">${_esc(f.title)}</span>
         </div>
       </li>`;
     }
@@ -883,11 +1127,11 @@ function _renderFolderTreeNode(node, depth = 0) {
 }
 
 function _renderFolderTree() {
-  const tree = document.getElementById('shard-folder-tree');
+  const tree = document.getElementById('vault-folder-tree');
   if (!tree) return;
   if (_isDraggingTree) return; // defer until dragend so dragged element survives
 
-  console.log('[shard] _renderFolderTree — _folders:', _folders.length, '_notes:', _notes.length);
+  console.log('[vault] _renderFolderTree — _folders:', _folders.length, '_notes:', _notes.length);
 
   // Build tree from folders, then attach notes
   const root = _buildFolderTree(_folders);
@@ -911,16 +1155,7 @@ function _renderFolderTree() {
     return;
   }
 
-  // Refresh toolbar
-  let html = `
-    <div class="shard-tree-toolbar" style="display:flex;align-items:center;gap:6px;padding:4px 6px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg);z-index:5;">
-      <button id="shard-refresh-tree" title="Refresh explorer" style="background:transparent;border:none;color:var(--fg);cursor:pointer;padding:2px 4px;border-radius:4px;display:flex;align-items:center;opacity:0.7;">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-.44-9.41L23 10"></path></svg>
-      </button>
-      <span style="font-size:11px;opacity:0.5;flex:1;">Files</span>
-    </div>
-    <ul style="padding-top:4px;">
-  `;
+  let html = '<ul style="padding-top:4px;">';
   const { childNames } = _sortTreeEntries(root);
   for (const childName of childNames) {
     html += _renderFolderTreeNode(root.children[childName]);
@@ -929,31 +1164,19 @@ function _renderFolderTree() {
   const rootFiles = [...root.files].sort((a, b) => a.title.localeCompare(b.title));
   for (const f of rootFiles) {
     const iconSvg = _getNoteIconSvg(f.id, 'file', 13);
-    html += `<li class="shard-tree-root">
-      <div class="shard-tree-row root ${f.id === _selectedNoteId ? 'selected' : ''}" data-note-id="${_esc(f.id)}" draggable="true">
-        <span class="shard-tree-arrow leaf"></span>
-        <span class="shard-tree-file-icon">${iconSvg}</span>
-        <span class="shard-tree-name">${_esc(f.title)}</span>
+    html += `<li class="vault-tree-root">
+      <div class="vault-tree-row root ${f.id === _selectedNoteId ? 'selected' : ''}" data-note-id="${_esc(f.id)}" draggable="true">
+        <span class="vault-tree-arrow leaf"></span>
+        <span class="vault-tree-file-icon">${iconSvg}</span>
+        <span class="vault-tree-name">${_esc(f.title)}</span>
       </div>
     </li>`;
   }
   html += '</ul>';
   tree.innerHTML = html;
 
-  // Wire refresh button
-  const refreshBtn = tree.querySelector('#shard-refresh-tree');
-  if (refreshBtn) {
-    refreshBtn.addEventListener('mouseenter', () => { refreshBtn.style.opacity = '1'; });
-    refreshBtn.addEventListener('mouseleave', () => { refreshBtn.style.opacity = '0.7'; });
-    refreshBtn.addEventListener('click', async () => {
-      refreshBtn.style.opacity = '0.3';
-      await _refreshFileExplorer();
-      refreshBtn.style.opacity = '';
-    });
-  }
-
   // Wire interactions — toggle classes directly for smooth animation (no re-render)
-  tree.querySelectorAll('.shard-tree-row').forEach(row => {
+  tree.querySelectorAll('.vault-tree-row').forEach(row => {
     row.addEventListener('click', (e) => {
       // Note click — skip if this row was just dragged (click fires after dragend)
       if (row.dataset.noteId) {
@@ -970,7 +1193,7 @@ function _renderFolderTree() {
       const folder = row.dataset.folder;
       if (folder) {
         const li = row.closest('li');
-        const arrow = row.querySelector('.shard-tree-arrow');
+        const arrow = row.querySelector('.vault-tree-arrow');
         const isLeaf = arrow?.classList.contains('leaf');
         if (!isLeaf && li) {
           const nowExpanded = li.classList.toggle('expanded');
@@ -993,15 +1216,15 @@ function _renderFolderTree() {
           _recentDragNoteId = row.dataset.noteId;
           e.dataTransfer.setData('text/plain', row.dataset.noteId);
         } else if (row.dataset.folder) {
-          e.dataTransfer.setData('text/x-shard-folder', row.dataset.folder);
+          e.dataTransfer.setData('text/x-vault-folder', row.dataset.folder);
         }
         e.dataTransfer.effectAllowed = 'copy';
-        tree.classList.add('shard-dragging');
+        tree.classList.add('vault-dragging');
       });
       row.addEventListener('dragend', () => {
         _isDraggingTree = false;
-        tree.classList.remove('shard-dragging');
-        tree.classList.remove('shard-root-drag-over');
+        tree.classList.remove('vault-dragging');
+        tree.classList.remove('vault-root-drag-over');
         _recentDragTimer = setTimeout(() => { _recentDragNoteId = null; }, 200);
         // Re-render after drag completes so the dragged element survives until dragend
         requestAnimationFrame(() => _renderFolderTree());
@@ -1011,7 +1234,7 @@ function _renderFolderTree() {
     // Drop target for folder rows
     if (row.dataset.folder) {
       row.addEventListener('dragover', (e) => {
-        if (e.dataTransfer.types.includes('application/x-shard-tab')) return;
+        if (e.dataTransfer.types.includes('application/x-vault-tab')) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = 'copy';
         row.classList.add('drag-over');
@@ -1020,7 +1243,7 @@ function _renderFolderTree() {
         row.classList.remove('drag-over');
       });
       row.addEventListener('dragenter', (e) => {
-        if (e.dataTransfer.types.includes('application/x-shard-tab')) return;
+        if (e.dataTransfer.types.includes('application/x-vault-tab')) return;
       });
       row.addEventListener('drop', async (e) => {
         e.preventDefault();
@@ -1030,7 +1253,7 @@ function _renderFolderTree() {
         if (!targetFolder) return;
 
         const noteId = e.dataTransfer.getData('text/plain');
-        const sourceFolder = e.dataTransfer.getData('text/x-shard-folder');
+        const sourceFolder = e.dataTransfer.getData('text/x-vault-folder');
 
         if (noteId) {
           // Drop note onto folder
@@ -1038,7 +1261,7 @@ function _renderFolderTree() {
           const oldFolder = note ? note.folder : '';
           if (note) note.folder = targetFolder;
           try {
-            const r = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(noteId)}/move`, {
+            const r = await fetch(`${API_BASE}/api/vault/notes/${encodeURIComponent(noteId)}/move`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               credentials: 'same-origin',
@@ -1047,7 +1270,7 @@ function _renderFolderTree() {
             if (!r.ok) {
               if (note) note.folder = oldFolder;
               const data = await r.json().catch(() => ({}));
-              console.error('[shard] move note failed:', data.detail || r.status);
+              console.error('[vault] move note failed:', data.detail || r.status);
             } else {
               const data = await r.json().catch(() => ({}));
               if (data.new_path && note) {
@@ -1059,7 +1282,7 @@ function _renderFolderTree() {
             }
           } catch (err) {
             if (note) note.folder = oldFolder;
-            console.error('[shard] move note error:', err);
+            console.error('[vault] move note error:', err);
           }
           _renderFolderTree();
         } else if (sourceFolder && sourceFolder !== targetFolder && !targetFolder.startsWith(sourceFolder + '/')) {
@@ -1080,7 +1303,7 @@ function _renderFolderTree() {
             else if (f.startsWith(oldPrefix + '/')) n.folder = newPrefix + f.slice(oldPrefix.length);
           });
           try {
-            const r = await fetch(`${API_BASE}/api/shard/folders/rename`, {
+            const r = await fetch(`${API_BASE}/api/vault/folders/rename`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               credentials: 'same-origin',
@@ -1090,7 +1313,7 @@ function _renderFolderTree() {
             await _loadFolders();
             await _loadNotes();
           } catch (err) {
-            console.error('[shard] move folder failed:', err);
+            console.error('[vault] move folder failed:', err);
             await _loadFolders();
             await _loadNotes();
           }
@@ -1112,7 +1335,7 @@ function _renderFolderTree() {
 
   // Blank area context menu on the tree itself
   tree.addEventListener('contextmenu', (e) => {
-    if (e.target.closest('.shard-tree-row')) return;
+    if (e.target.closest('.vault-tree-row')) return;
     e.preventDefault();
     e.stopPropagation();
     _showBlankContextMenu(e);
@@ -1122,28 +1345,28 @@ function _renderFolderTree() {
   if (!_rootDropWired) {
     _rootDropWired = true;
     tree.addEventListener('dragover', (e) => {
-      if (e.dataTransfer.types.includes('application/x-shard-tab')) return;
+      if (e.dataTransfer.types.includes('application/x-vault-tab')) return;
       // Only handle if not over a folder row (those have their own handlers)
-      if (e.target.closest('.shard-tree-row[data-folder]')) return;
+      if (e.target.closest('.vault-tree-row[data-folder]')) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = 'copy';
-      tree.classList.add('shard-root-drag-over');
+      tree.classList.add('vault-root-drag-over');
     });
     tree.addEventListener('dragleave', (e) => {
-      if (e.dataTransfer.types.includes('application/x-shard-tab')) {
-        tree.classList.remove('shard-root-drag-over');
+      if (e.dataTransfer.types.includes('application/x-vault-tab')) {
+        tree.classList.remove('vault-root-drag-over');
         return;
       }
-      if (e.target.closest('.shard-tree-row[data-folder]')) return;
-      tree.classList.remove('shard-root-drag-over');
+      if (e.target.closest('.vault-tree-row[data-folder]')) return;
+      tree.classList.remove('vault-root-drag-over');
     });
     tree.addEventListener('drop', async (e) => {
       // Only handle if dropped on empty space (not on a folder row)
-      if (e.target.closest('.shard-tree-row[data-folder]')) return;
+      if (e.target.closest('.vault-tree-row[data-folder]')) return;
       e.preventDefault();
-      tree.classList.remove('shard-root-drag-over');
+      tree.classList.remove('vault-root-drag-over');
       const noteId = e.dataTransfer.getData('text/plain');
-      const sourceFolder = e.dataTransfer.getData('text/x-shard-folder');
+      const sourceFolder = e.dataTransfer.getData('text/x-vault-folder');
 
       if (noteId) {
         // Drop note onto root
@@ -1151,7 +1374,7 @@ function _renderFolderTree() {
         const oldFolder = note ? note.folder : '';
         if (note) note.folder = '';
         try {
-          const r = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(noteId)}/move`, {
+          const r = await fetch(`${API_BASE}/api/vault/notes/${encodeURIComponent(noteId)}/move`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'same-origin',
@@ -1160,7 +1383,7 @@ function _renderFolderTree() {
           if (!r.ok) {
             if (note) note.folder = oldFolder;
             const data = await r.json().catch(() => ({}));
-            console.error('[shard] move to root failed:', data.detail || r.status);
+            console.error('[vault] move to root failed:', data.detail || r.status);
           } else {
             const data = await r.json().catch(() => ({}));
             if (data.new_path && note) {
@@ -1172,7 +1395,7 @@ function _renderFolderTree() {
           }
         } catch (err) {
           if (note) note.folder = oldFolder;
-          console.error('[shard] move to root error:', err);
+          console.error('[vault] move to root error:', err);
         }
         _renderFolderTree();
       } else if (sourceFolder) {
@@ -1192,7 +1415,7 @@ function _renderFolderTree() {
           else if (f.startsWith(oldPrefix + '/')) n.folder = newPrefix + f.slice(oldPrefix.length);
         });
         try {
-          const r = await fetch(`${API_BASE}/api/shard/folders/rename`, {
+          const r = await fetch(`${API_BASE}/api/vault/folders/rename`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'same-origin',
@@ -1202,7 +1425,7 @@ function _renderFolderTree() {
           await _loadFolders();
           await _loadNotes();
         } catch (err) {
-          console.error('[shard] move folder to root failed:', err);
+          console.error('[vault] move folder to root failed:', err);
           await _loadFolders();
           await _loadNotes();
         }
@@ -1212,38 +1435,38 @@ function _renderFolderTree() {
 }
 
 function _updateTreeSelection() {
-  const tree = document.getElementById('shard-folder-tree');
+  const tree = document.getElementById('vault-folder-tree');
   if (!tree) return;
-  tree.querySelectorAll('.shard-tree-row').forEach(row => {
+  tree.querySelectorAll('.vault-tree-row').forEach(row => {
     const shouldSelect = row.dataset.folder === _selectedFolder || row.dataset.noteId === _selectedNoteId;
     row.classList.toggle('selected', shouldSelect);
   });
 }
 
 function _showAddVaultForm() {
-  const form = document.getElementById('shard-add-vault-form');
+  const form = document.getElementById('vault-add-vault-form');
   if (form) {
     form.classList.remove('hidden');
     // Clear inputs
-    const nameInput = document.getElementById('shard-new-vault-name');
-    const pathInput = document.getElementById('shard-new-vault-path');
+    const nameInput = document.getElementById('vault-new-vault-name');
+    const pathInput = document.getElementById('vault-new-vault-path');
     if (nameInput) nameInput.value = '';
     if (pathInput) pathInput.value = '';
   }
-  const hint = document.getElementById('shard-browse-hint');
+  const hint = document.getElementById('vault-browse-hint');
   if (hint) { hint.style.display = 'none'; hint.textContent = ''; }
 }
 
 function _hideAddVaultForm() {
-  document.getElementById('shard-add-vault-form')?.classList.add('hidden');
-  const status = document.getElementById('shard-add-vault-status');
+  document.getElementById('vault-add-vault-form')?.classList.add('hidden');
+  const status = document.getElementById('vault-add-vault-status');
   if (status) status.textContent = '';
 }
 
 async function _saveNewVault() {
-  const nameInput = document.getElementById('shard-new-vault-name');
-  const pathInput = document.getElementById('shard-new-vault-path');
-  const statusEl = document.getElementById('shard-add-vault-status');
+  const nameInput = document.getElementById('vault-new-vault-name');
+  const pathInput = document.getElementById('vault-new-vault-path');
+  const statusEl = document.getElementById('vault-add-vault-status');
   const name = nameInput?.value.trim();
   const path = pathInput?.value.trim();
   if (!path) { if (statusEl) statusEl.textContent = 'Enter a vault path'; return; }
@@ -1251,7 +1474,7 @@ async function _saveNewVault() {
   if (statusEl) statusEl.textContent = 'Connecting...';
   _showLoading('Adding vault...');
   try {
-    const r = await fetch(`${API_BASE}/api/shard/connect`, {
+    const r = await fetch(`${API_BASE}/api/vault/connect`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
@@ -1277,14 +1500,14 @@ async function _saveNewVault() {
 // ── Legacy single-vault connect/disconnect (kept for compatibility) ──
 
 async function _connectVault() {
-  const pathInput = document.getElementById('shard-vault-path');
-  const statusEl = document.getElementById('shard-connect-status');
+  const pathInput = document.getElementById('vault-vault-path');
+  const statusEl = document.getElementById('vault-connect-status');
   const path = pathInput?.value.trim();
   if (!path) { if (statusEl) statusEl.textContent = 'Enter a vault path'; return; }
 
   if (statusEl) statusEl.textContent = 'Connecting...';
   try {
-    const r = await fetch(`${API_BASE}/api/shard/connect`, {
+    const r = await fetch(`${API_BASE}/api/vault/connect`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
@@ -1305,7 +1528,7 @@ async function _connectVault() {
 
 async function _disconnectVault() {
   try {
-    await fetch(`${API_BASE}/api/shard/disconnect`, { method: 'POST', credentials: 'same-origin' });
+    await fetch(`${API_BASE}/api/vault/disconnect`, { method: 'POST', credentials: 'same-origin' });
     _selectedVaultId = null;
     await _loadVaults();
   } catch (e) { /* ignore */ }
@@ -1316,7 +1539,7 @@ async function _removeVault(vaultId) {
   if (!vault) return;
   if (!confirm(`Remove vault "${_esc(vault.name)}" from Odysseus?\n\nNotes stay on disk. This only removes the connection.`)) return;
   try {
-    const r = await fetch(`${API_BASE}/api/shard/vaults/${encodeURIComponent(vaultId)}`, {
+    const r = await fetch(`${API_BASE}/api/vault/vaults/${encodeURIComponent(vaultId)}`, {
       method: 'DELETE',
       credentials: 'same-origin',
     });
@@ -1325,7 +1548,7 @@ async function _removeVault(vaultId) {
       await _loadVaults();
     }
   } catch (e) {
-    console.error('[shard] remove vault failed', e);
+    console.error('[vault] remove vault failed', e);
   }
 }
 
@@ -1334,8 +1557,8 @@ async function _removeVault(vaultId) {
 function _switchTab(tab) {
   _activeTab = tab;
   _renderNoteTabs();
-  document.querySelectorAll('[data-shard-content]').forEach(p => {
-    const isActive = p.dataset.shardContent === tab;
+  document.querySelectorAll('[data-vault-content]').forEach(p => {
+    const isActive = p.dataset.vaultContent === tab;
     p.classList.toggle('hidden', !isActive);
   });
   if (tab === 'permissions') _renderPermissions();
@@ -1371,15 +1594,15 @@ function _navigateToNote(noteId, addToHistory = true, openNewTab = false) {
   _renderNoteTabs();
   _renderBreadcrumb(note || null);
   _updateNavButtons();
-  document.querySelectorAll('[data-shard-content]').forEach(p => {
-    p.classList.toggle('hidden', p.dataset.shardContent !== 'note');
+  document.querySelectorAll('[data-vault-content]').forEach(p => {
+    p.classList.toggle('hidden', p.dataset.vaultContent !== 'note');
   });
   _renderFolderTree();
   _updateTreeSelection();
   _selectNote(noteId);
   // Persist last opened note for this vault
   if (_selectedVaultId) {
-    try { localStorage.setItem(`shard-last-note-${_selectedVaultId}`, noteId); } catch {}
+    try { localStorage.setItem(`vault-last-note-${_selectedVaultId}`, noteId); } catch {}
   }
 }
 
@@ -1393,34 +1616,49 @@ function _openGraphView() {
   _renderNoteTabs();
   _renderBreadcrumb(null);
   _updateNavButtons();
-  document.querySelectorAll('[data-shard-content]').forEach(p => {
-    p.classList.toggle('hidden', p.dataset.shardContent !== 'graph');
+  document.querySelectorAll('[data-vault-content]').forEach(p => {
+    p.classList.toggle('hidden', p.dataset.vaultContent !== 'graph');
   });
-  const container = document.getElementById('shard-main-graph-canvas');
+  const container = document.getElementById('vault-main-graph-canvas');
   if (container) {
-    import('./shardGraphCanvas.js').then(mod => {
-      mod.renderShardGraph(container, _selectedVaultId);
+    import('./vaultGraphCanvas.js').then(mod => {
+      mod.renderVaultGraph(container, _selectedVaultId);
     });
   }
 }
 
 function _goBack() {
-  if (_historyIndex > 0) {
+  while (_historyIndex > 0) {
     _historyIndex--;
-    _navigateToNote(_historyStack[_historyIndex], false);
+    const noteId = _historyStack[_historyIndex];
+    if (_notes.some(n => n.id === noteId)) {
+      _navigateToNote(noteId, false);
+      return;
+    }
+    // Note was deleted; prune it from the stack
+    _historyStack.splice(_historyIndex, 1);
   }
+  _updateNavButtons();
 }
 
 function _goForward() {
-  if (_historyIndex < _historyStack.length - 1) {
+  while (_historyIndex < _historyStack.length - 1) {
     _historyIndex++;
-    _navigateToNote(_historyStack[_historyIndex], false);
+    const noteId = _historyStack[_historyIndex];
+    if (_notes.some(n => n.id === noteId)) {
+      _navigateToNote(noteId, false);
+      return;
+    }
+    // Note was deleted; prune it from the stack
+    _historyStack.splice(_historyIndex, 1);
+    _historyIndex--;
   }
+  _updateNavButtons();
 }
 
 function _updateModeButtons() {
-  const readBtn = document.getElementById('shard-mode-read');
-  const editBtn = document.getElementById('shard-mode-edit');
+  const readBtn = document.getElementById('vault-mode-read');
+  const editBtn = document.getElementById('vault-mode-edit');
   if (!readBtn || !editBtn) return;
   const secondMode = _sourceModeEnabled ? 'edit' : 'live';
   editBtn.dataset.viewMode = secondMode;
@@ -1436,7 +1674,7 @@ let _modeTooltipEl = null;
 function _ensureModeTooltip() {
   if (_modeTooltipEl) return _modeTooltipEl;
   _modeTooltipEl = document.createElement('div');
-  _modeTooltipEl.className = 'shard-mode-tooltip';
+  _modeTooltipEl.className = 'vault-mode-tooltip';
   document.body.appendChild(_modeTooltipEl);
   return _modeTooltipEl;
 }
@@ -1444,7 +1682,7 @@ function _showModeTooltip(icon) {
   const tip = _ensureModeTooltip();
   const current = _previewMode === 'preview' ? 'Reading' : _previewMode === 'live' ? 'Live Preview' : 'Source';
   const target  = _previewMode === 'preview' ? (_editModePref === 'edit' ? 'Source' : 'Live Preview') : 'Reading';
-  tip.innerHTML = `<div class="shard-tooltip-line"><strong>Current View:</strong> ${current}</div><div class="shard-tooltip-line">Click for: ${target}</div>`;
+  tip.innerHTML = `<div class="vault-tooltip-line"><strong>Current View:</strong> ${current}</div><div class="vault-tooltip-line">Click for: ${target}</div>`;
   tip.style.display = 'block';
   const rect = icon.getBoundingClientRect();
   const tRect = tip.getBoundingClientRect();
@@ -1484,14 +1722,14 @@ function _closeCurrentTab() {
   _selectedNoteId = null;
   _historyStack = [];
   _historyIndex = -1;
-  document.getElementById('shard-preview').innerHTML = '';
-  document.getElementById('shard-preview').style.display = 'none';
-  const viewModes = document.getElementById('shard-view-modes');
+  document.getElementById('vault-preview').innerHTML = '';
+  document.getElementById('vault-preview').style.display = 'none';
+  const viewModes = document.getElementById('vault-view-modes');
   if (viewModes) viewModes.style.display = 'none';
-  const noteMenuBtn = document.getElementById('shard-note-menu-btn');
+  const noteMenuBtn = document.getElementById('vault-note-menu-btn');
   if (noteMenuBtn) noteMenuBtn.style.display = 'none';
-  const backBtn = document.getElementById('shard-back-btn');
-  const forwardBtn = document.getElementById('shard-forward-btn');
+  const backBtn = document.getElementById('vault-back-btn');
+  const forwardBtn = document.getElementById('vault-forward-btn');
   if (backBtn) backBtn.style.display = 'none';
   if (forwardBtn) forwardBtn.style.display = 'none';
   _updateRightPanelVisibility();
@@ -1501,26 +1739,29 @@ function _closeCurrentTab() {
 }
 
 function _updateRightPanelVisibility() {
-  const pane = document.getElementById('shard-right-pane');
+  const pane = document.getElementById('vault-right-pane');
   if (!pane) return;
-  const stack = document.getElementById('shard-right-stack');
+  const stack = document.getElementById('vault-right-stack');
   if (!stack) return;
+  const pane3 = document.querySelector('.vault-3pane');
 
   // Check if any panel group is visible
-  const visiblePanels = stack.querySelectorAll('.shard-panel-group:not(.hidden)');
+  const visiblePanels = stack.querySelectorAll('.vault-panel-group:not(.hidden)');
   if (visiblePanels.length === 0) {
     pane.classList.add('hidden');
+    if (pane3) pane3.classList.add('vault-right-hidden');
     return;
   }
 
   pane.classList.remove('hidden');
+  if (pane3) pane3.classList.remove('vault-right-hidden');
 
   // Update placeholders for each visible panel
   for (const panelEl of visiblePanels) {
     const panelId = panelEl.dataset.panelId;
-    const placeholder = panelEl.querySelector('.shard-panel-placeholder, .shard-right-placeholder');
-    const tabsContainer = panelEl.querySelector('.shard-right-tabs');
-    const panesContainer = panelEl.querySelector('.shard-right-panes');
+    const placeholder = panelEl.querySelector('.vault-panel-placeholder, .vault-right-placeholder');
+    const tabsContainer = panelEl.querySelector('.vault-right-tabs');
+    const panesContainer = panelEl.querySelector('.vault-right-panes');
     if (!_selectedNoteId) {
       if (placeholder) placeholder.classList.remove('hidden');
       if (tabsContainer) tabsContainer.classList.add('hidden');
@@ -1534,33 +1775,33 @@ function _updateRightPanelVisibility() {
 }
 
 function _renderNoteTabs() {
-  const bar = document.getElementById('shard-note-tabs');
+  const bar = document.getElementById('vault-note-tabs');
   if (!bar) return;
   if (!_openTabs.length) {
-    bar.innerHTML = `<button class="shard-tab-new" title="New note">+</button>`;
+    bar.innerHTML = `<button class="vault-tab-new" title="New note">+</button>`;
     return;
   }
   const html = _openTabs.map(noteId => {
     if (noteId === '__graph__') {
       const active = noteId === _selectedNoteId ? 'active' : '';
       const icon = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>`;
-      return `<button class="shard-tab ${active}" data-note-id="__graph__" title="Graph view">
+      return `<button class="vault-tab ${active}" data-note-id="__graph__" title="Graph view">
         <span style="display:inline-flex;align-items:center;flex-shrink:0;margin-right:4px;">${icon}</span>
         <span style="flex:1;overflow:hidden;text-overflow:ellipsis;min-width:0;text-align:left;">Graph view</span>
-        <span class="shard-tab-close" data-note-id="__graph__">&times;</span>
+        <span class="vault-tab-close" data-note-id="__graph__">&times;</span>
       </button>`;
     }
     const note = _notes.find(n => n.id === noteId);
     const title = _esc(note ? note.title : noteId);
     const active = noteId === _selectedNoteId ? 'active' : '';
     const icon = note ? _getNoteIconSvg(note.id, 'file', 11) : '';
-    return `<button class="shard-tab ${active}" data-note-id="${_esc(noteId)}" title="${title}">
+    return `<button class="vault-tab ${active}" data-note-id="${_esc(noteId)}" title="${title}">
       <span style="display:inline-flex;align-items:center;flex-shrink:0;margin-right:4px;">${icon}</span>
       <span style="flex:1;overflow:hidden;text-overflow:ellipsis;min-width:0;text-align:left;">${title}</span>
-      <span class="shard-tab-close" data-note-id="${_esc(noteId)}">&times;</span>
+      <span class="vault-tab-close" data-note-id="${_esc(noteId)}">&times;</span>
     </button>`;
   }).join('');
-  bar.innerHTML = html + `<button class="shard-tab-new" title="New note">+</button>`;
+  bar.innerHTML = html + `<button class="vault-tab-new" title="New note">+</button>`;
 }
 
 async function _showNewNotePrompt() {
@@ -1575,12 +1816,12 @@ async function _showNewNotePrompt() {
   }
   // Determine target folder based on newNoteLocation setting
   let targetFolder = '';
-  const loc = _shardSettings.filesAndLinks.newNoteLocation;
+  const loc = _vaultSettings.filesAndLinks.newNoteLocation;
   if (loc === 'same-folder') {
     const currentNote = _notes.find(n => n.id === _selectedNoteId);
     targetFolder = currentNote ? (currentNote.folder || '') : '';
   } else if (loc === 'folder') {
-    targetFolder = _shardSettings.filesAndLinks.newNoteFolder || '';
+    targetFolder = _vaultSettings.filesAndLinks.newNoteFolder || '';
   }
 
   // Optimistic UI: create note immediately
@@ -1606,7 +1847,7 @@ async function _showNewNotePrompt() {
 
   // Backend call
   try {
-    const r = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(name)}/edit`, {
+    const r = await fetch(`${API_BASE}/api/vault/notes/${encodeURIComponent(name)}/edit`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content: '' }),
@@ -1616,7 +1857,7 @@ async function _showNewNotePrompt() {
 
     if (targetFolder) {
       try {
-        const moveR = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(name)}/move`, {
+        const moveR = await fetch(`${API_BASE}/api/vault/notes/${encodeURIComponent(name)}/move`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'same-origin',
@@ -1635,13 +1876,13 @@ async function _showNewNotePrompt() {
         await _loadFolders();
         _renderFolderTree();
       } catch (moveErr) {
-        console.error('[shard] move new note failed:', moveErr);
+        console.error('[vault] move new note failed:', moveErr);
       }
     }
     delete optimisticNote._optimistic;
     _autoRenameNoteId = optimisticNote.id;
   } catch (e) {
-    console.error('[shard] create note failed', e);
+    console.error('[vault] create note failed', e);
     const idx = _notes.findIndex(n => n.id === name || n.rel_path === name);
     if (idx !== -1) _notes.splice(idx, 1);
     _renderFolderTree();
@@ -1652,7 +1893,7 @@ async function _showNewNotePrompt() {
 }
 
 function _renderBreadcrumb(note) {
-  const el = document.getElementById('shard-breadcrumb');
+  const el = document.getElementById('vault-breadcrumb');
   if (!el) return;
   if (!note) {
     el.innerHTML = '';
@@ -1661,12 +1902,12 @@ function _renderBreadcrumb(note) {
   const parts = (note.folder || '').split('/').filter(Boolean);
   const pathParts = parts.map((part, i) => {
     const path = parts.slice(0, i + 1).join('/');
-    return `<span class="shard-breadcrumb-part" data-folder="${_esc(path)}">${_esc(part)}</span>`;
-  }).join('<span class="shard-breadcrumb-sep">/</span>');
-  const title = `<span class="shard-breadcrumb-current">${_esc(note.title)}</span>`;
-  const sep = parts.length ? '<span class="shard-breadcrumb-sep">/</span>' : '';
+    return `<span class="vault-breadcrumb-part" data-folder="${_esc(path)}">${_esc(part)}</span>`;
+  }).join('<span class="vault-breadcrumb-sep">/</span>');
+  const title = `<span class="vault-breadcrumb-current">${_esc(note.title)}</span>`;
+  const sep = parts.length ? '<span class="vault-breadcrumb-sep">/</span>' : '';
   el.innerHTML = (pathParts ? pathParts + sep : '') + title;
-  el.querySelectorAll('.shard-breadcrumb-part').forEach(p => {
+  el.querySelectorAll('.vault-breadcrumb-part').forEach(p => {
     p.addEventListener('click', () => {
       _selectedFolder = p.dataset.folder;
       _renderFolderTree();
@@ -1677,8 +1918,8 @@ function _renderBreadcrumb(note) {
 
 function _fitBreadcrumb(el) {
   if (!el) return;
-  const parts = Array.from(el.querySelectorAll('.shard-breadcrumb-part'));
-  const current = el.querySelector('.shard-breadcrumb-current');
+  const parts = Array.from(el.querySelectorAll('.vault-breadcrumb-part'));
+  const current = el.querySelector('.vault-breadcrumb-current');
   // Reset any previous constraints
   parts.forEach(p => { p.style.maxWidth = ''; });
   if (current) current.style.maxWidth = '';
@@ -1707,8 +1948,8 @@ function _fitBreadcrumb(el) {
 }
 
 function _updateNavButtons() {
-  const back = document.getElementById('shard-back-btn');
-  const forward = document.getElementById('shard-forward-btn');
+  const back = document.getElementById('vault-back-btn');
+  const forward = document.getElementById('vault-forward-btn');
   if (back) back.disabled = _historyIndex <= 0;
   if (forward) forward.disabled = _historyIndex >= _historyStack.length - 1;
 }
@@ -1718,11 +1959,11 @@ function _updateNavButtons() {
 let _activeLeftTab = 'files';
 
 function _getPanelConfig(panelId) {
-  return (_shardSettings.panels || []).find(p => p.id === panelId);
+  return (_vaultSettings.panels || []).find(p => p.id === panelId);
 }
 
 function _getPanelForTab(tabName) {
-  return (_shardSettings.panels || []).find(p => p.tabs.includes(tabName));
+  return (_vaultSettings.panels || []).find(p => Array.isArray(p.tabs) && p.tabs.includes(tabName));
 }
 
 function _getPanelIdForTab(tabName) {
@@ -1731,21 +1972,24 @@ function _getPanelIdForTab(tabName) {
 }
 
 function _getPanelTabsContainer(panelId) {
-  const panelEl = document.querySelector(`.shard-panel-group[data-panel-id="${_esc(panelId)}"]`);
+  if (panelId === 'left-1') {
+    return document.getElementById('vault-left-tabs');
+  }
+  const panelEl = document.querySelector(`.vault-panel-group[data-panel-id="${_esc(panelId)}"]`);
   if (!panelEl) return null;
-  return panelEl.querySelector('.shard-right-tabs, .shard-sidebar-tabs, .shard-panel-tabs');
+  return panelEl.querySelector('.vault-right-tabs, .vault-sidebar-tabs, .vault-panel-tabs');
 }
 
 function _getPanelPanesContainer(panelId) {
-  const panelEl = document.querySelector(`.shard-panel-group[data-panel-id="${_esc(panelId)}"]`);
+  const panelEl = document.querySelector(`.vault-panel-group[data-panel-id="${_esc(panelId)}"]`);
   if (!panelEl) return null;
-  return panelEl.querySelector('.shard-right-panes, .shard-sidebar-panes, .shard-panel-panes');
+  return panelEl.querySelector('.vault-right-panes, .vault-sidebar-panes, .vault-panel-panes');
 }
 
 function _getPanelPlaceholder(panelId) {
-  const panelEl = document.querySelector(`.shard-panel-group[data-panel-id="${_esc(panelId)}"]`);
+  const panelEl = document.querySelector(`.vault-panel-group[data-panel-id="${_esc(panelId)}"]`);
   if (!panelEl) return null;
-  return panelEl.querySelector('.shard-panel-placeholder, .shard-right-placeholder');
+  return panelEl.querySelector('.vault-panel-placeholder, .vault-right-placeholder');
 }
 
 function _getActiveTabForPanel(panelId) {
@@ -1774,10 +2018,10 @@ function _switchTabInPanel(tab, panelId) {
 }
 
 function _updatePanelVisibility(panelId) {
-  const panelEl = document.querySelector(`.shard-panel-group[data-panel-id="${_esc(panelId)}"]`);
+  const panelEl = document.querySelector(`.vault-panel-group[data-panel-id="${_esc(panelId)}"]`);
   if (!panelEl) return;
   const panel = _getPanelConfig(panelId);
-  if (!panel) { panelEl.classList.add('hidden'); return; }
+  if (!panel || !Array.isArray(panel.tabs)) { panelEl.classList.add('hidden'); _syncResizeHandles(); return; }
 
   const hasVisibleTab = panel.tabs.some(tab => {
     const tabBtn = panelEl.querySelector(`[data-tab="${_esc(tab)}"]`);
@@ -1789,12 +2033,40 @@ function _updatePanelVisibility(panelId) {
   } else {
     panelEl.classList.remove('hidden');
   }
+
+  // Sync resize handle visibility adjacent to this panel
+  _syncResizeHandles();
+}
+
+function _syncResizeHandles() {
+  const stack = document.getElementById('vault-right-stack');
+  if (!stack) return;
+
+  // Vertical handles in the main stack
+  stack.querySelectorAll('.vault-panel-resize-v').forEach(handle => {
+    const prev = handle.previousElementSibling;
+    const next = handle.nextElementSibling;
+    const prevVisible = prev && prev.classList.contains('vault-panel-group') && !prev.classList.contains('hidden');
+    const nextVisible = next && next.classList.contains('vault-panel-group') && !next.classList.contains('hidden');
+    handle.classList.toggle('hidden', !(prevVisible && nextVisible));
+  });
+
+  // Horizontal handles inside rows
+  document.querySelectorAll('.vault-panel-row').forEach(row => {
+    row.querySelectorAll('.vault-panel-resize-h').forEach(handle => {
+      const prev = handle.previousElementSibling;
+      const next = handle.nextElementSibling;
+      const prevVisible = prev && prev.classList.contains('vault-panel-group') && !prev.classList.contains('hidden');
+      const nextVisible = next && next.classList.contains('vault-panel-group') && !next.classList.contains('hidden');
+      handle.classList.toggle('hidden', !(prevVisible && nextVisible));
+    });
+  });
 }
 
 function _renderPanel(panelId, note) {
   const panel = _getPanelConfig(panelId);
   if (!panel) return;
-  const panelEl = document.querySelector(`.shard-panel-group[data-panel-id="${_esc(panelId)}"]`);
+  const panelEl = document.querySelector(`.vault-panel-group[data-panel-id="${_esc(panelId)}"]`);
   if (!panelEl) return;
 
   _updatePanelVisibility(panelId);
@@ -1864,7 +2136,7 @@ function _renderRightPaneContent(tab, note, panesContainer) {
 }
 
 function _renderAllPanels(note) {
-  for (const panel of (_shardSettings.panels || [])) {
+  for (const panel of (_vaultSettings.panels || [])) {
     if (panel.side === 'right') {
       _renderPanel(panel.id, note);
     } else if (panel.side === 'left') {
@@ -1877,13 +2149,13 @@ function _renderAllPanels(note) {
 
 function _createPanel(side, tabs, activeTab, options) {
   console.log('[createPanel] side:', side, 'tabs:', tabs);
-  const panels = _shardSettings.panels || [];
+  const panels = _vaultSettings.panels || [];
   const maxNum = panels.filter(p => p.side === side).length;
   const id = `${side}-${maxNum + 1}`;
   const newPanel = { id, side, tabs: tabs || [], activeTab: activeTab || (tabs ? tabs[0] : null) };
   panels.push(newPanel);
-  _shardSettings.panels = panels;
-  _saveShardSettings();
+  _vaultSettings.panels = panels;
+  _saveVaultSettings();
 
   if (side === 'right') {
     _buildRightPanelDOM(newPanel, options);
@@ -1895,32 +2167,32 @@ function _createPanel(side, tabs, activeTab, options) {
 }
 
 function _buildRightPanelDOM(panel, options) {
-  const stack = document.getElementById('shard-right-stack');
+  const stack = document.getElementById('vault-right-stack');
   if (!stack) return;
 
   const group = document.createElement('div');
-  group.className = 'shard-panel-group';
+  group.className = 'vault-panel-group';
   group.dataset.panelId = panel.id;
 
   const placeholder = document.createElement('div');
-  placeholder.className = 'shard-panel-placeholder';
+  placeholder.className = 'vault-panel-placeholder';
   placeholder.dataset.panelId = panel.id;
   placeholder.textContent = 'Select a note to see panel content.';
   group.appendChild(placeholder);
 
   const tabsContainer = document.createElement('div');
-  tabsContainer.className = 'shard-right-tabs';
+  tabsContainer.className = 'vault-right-tabs';
   tabsContainer.dataset.panelId = panel.id;
   group.appendChild(tabsContainer);
 
   const panesContainer = document.createElement('div');
-  panesContainer.className = 'shard-right-panes';
+  panesContainer.className = 'vault-right-panes';
   panesContainer.dataset.panelId = panel.id;
   group.appendChild(panesContainer);
 
   // Wire events
   tabsContainer.addEventListener('click', (e) => {
-    const tab = e.target.closest('.shard-right-tab');
+    const tab = e.target.closest('.vault-right-tab');
     if (!tab) return;
     _switchRightTab(tab.dataset.tab, panel.id);
   });
@@ -1932,16 +2204,16 @@ function _buildRightPanelDOM(panel, options) {
   const edge = options?.edge;
   const targetPanelId = options?.targetPanelId;
   if (edge && targetPanelId) {
-    const targetGroup = stack.querySelector(`.shard-panel-group[data-panel-id="${_esc(targetPanelId)}"]`);
+    const targetGroup = stack.querySelector(`.vault-panel-group[data-panel-id="${_esc(targetPanelId)}"]`);
     if (targetGroup) {
       if (edge === 'top' || edge === 'bottom') {
         // Vertical placement
         const isBefore = edge === 'top';
         const sibling = isBefore ? targetGroup.previousElementSibling : targetGroup.nextElementSibling;
-        const needsHandle = !(sibling && sibling.classList.contains('shard-panel-resize-v'));
+        const needsHandle = !(sibling && sibling.classList.contains('vault-panel-resize-v'));
         if (needsHandle) {
           const handle = document.createElement('div');
-          handle.className = 'shard-panel-resize-v';
+          handle.className = 'vault-panel-resize-v';
           if (isBefore) {
             stack.insertBefore(handle, targetGroup);
             stack.insertBefore(group, handle);
@@ -1957,11 +2229,11 @@ function _buildRightPanelDOM(panel, options) {
       } else if (edge === 'left' || edge === 'right') {
         // Horizontal placement - put panels in a row
         const isBefore = edge === 'left';
-        const parentRow = targetGroup.closest('.shard-panel-row');
+        const parentRow = targetGroup.closest('.vault-panel-row');
         if (parentRow) {
           // Already in a row - insert beside target
           const hHandle = document.createElement('div');
-          hHandle.className = 'shard-panel-resize-h';
+          hHandle.className = 'vault-panel-resize-h';
           if (isBefore) {
             parentRow.insertBefore(hHandle, targetGroup);
             parentRow.insertBefore(group, hHandle);
@@ -1972,9 +2244,9 @@ function _buildRightPanelDOM(panel, options) {
         } else {
           // Create a new row containing target and new panel
           const row = document.createElement('div');
-          row.className = 'shard-panel-row';
+          row.className = 'vault-panel-row';
           const hHandle = document.createElement('div');
-          hHandle.className = 'shard-panel-resize-h';
+          hHandle.className = 'vault-panel-resize-h';
           // Move target into row, then add handle and new panel
           targetGroup.parentNode.insertBefore(row, targetGroup);
           row.appendChild(targetGroup);
@@ -1992,10 +2264,10 @@ function _buildRightPanelDOM(panel, options) {
   }
 
   // Default: append to bottom of stack with vertical resize handle
-  const existingPanels = stack.querySelectorAll('.shard-panel-group');
+  const existingPanels = stack.querySelectorAll('.vault-panel-group');
   if (existingPanels.length > 0) {
     const resizeHandle = document.createElement('div');
-    resizeHandle.className = 'shard-panel-resize-v';
+    resizeHandle.className = 'vault-panel-resize-v';
     stack.appendChild(resizeHandle);
   }
   stack.appendChild(group);
@@ -2013,19 +2285,27 @@ function _moveTabToPanel(tabName, fromPanelId, toPanelId) {
   if (!fromPanel || !toPanel) { console.log('[moveTabToPanel] missing panel config'); return; }
 
   // Update settings
-  fromPanel.tabs = fromPanel.tabs.filter(t => t !== tabName);
-  if (!toPanel.tabs.includes(tabName)) toPanel.tabs.push(tabName);
+  if (Array.isArray(fromPanel.tabs)) {
+    fromPanel.tabs = fromPanel.tabs.filter(t => t !== tabName);
+  } else {
+    fromPanel.tabs = [];
+  }
+  if (Array.isArray(toPanel.tabs)) {
+    if (!toPanel.tabs.includes(tabName)) toPanel.tabs.push(tabName);
+  } else {
+    toPanel.tabs = [tabName];
+  }
 
   // If the moved tab was the active tab of the source panel, switch to another tab
   if (fromPanel.activeTab === tabName) {
-    fromPanel.activeTab = fromPanel.tabs[0] || null;
+    fromPanel.activeTab = (Array.isArray(fromPanel.tabs) && fromPanel.tabs[0]) || null;
   }
   // Ensure destination has an active tab
   if (!toPanel.activeTab) {
     toPanel.activeTab = tabName;
   }
 
-  _saveShardSettings();
+  _saveVaultSettings();
 
   // Physically move DOM elements
   const fromTabsContainer = _getPanelTabsContainer(fromPanelId);
@@ -2080,27 +2360,28 @@ function _moveTabToNewPanel(tabName, fromPanelId, edge, targetPanelId) {
 }
 
 function _rebuildPanelsFromSettings() {
-  const stack = document.getElementById('shard-right-stack');
+  const stack = document.getElementById('vault-right-stack');
   if (!stack) return;
-  const panels = (_shardSettings.panels || []).filter(p => p.side === 'right');
+  const panels = (_vaultSettings.panels || []).filter(p => p.side === 'right');
   if (panels.length <= 1) return; // Default HTML already handles single panel
 
-  const defaultGroup = stack.querySelector('.shard-panel-group');
-  const defaultTabs = defaultGroup?.querySelector('.shard-right-tabs');
-  const defaultPanes = defaultGroup?.querySelector('.shard-right-panes');
+  const defaultGroup = stack.querySelector('.vault-panel-group');
+  const defaultTabs = defaultGroup?.querySelector('.vault-right-tabs');
+  const defaultPanes = defaultGroup?.querySelector('.vault-right-panes');
   if (!defaultTabs || !defaultPanes) return;
 
   // Build missing panel DOMs first (stacked vertically)
   for (let i = 1; i < panels.length; i++) {
     const panel = panels[i];
-    let group = stack.querySelector(`.shard-panel-group[data-panel-id="${_esc(panel.id)}"]`);
+    if (!Array.isArray(panel.tabs)) continue;
+    let group = stack.querySelector(`.vault-panel-group[data-panel-id="${_esc(panel.id)}"]`);
     if (!group) {
       _buildRightPanelDOM(panel);
-      group = stack.querySelector(`.shard-panel-group[data-panel-id="${_esc(panel.id)}"]`);
+      group = stack.querySelector(`.vault-panel-group[data-panel-id="${_esc(panel.id)}"]`);
     }
     if (!group) continue;
-    const tabsContainer = group.querySelector('.shard-right-tabs');
-    const panesContainer = group.querySelector('.shard-right-panes');
+    const tabsContainer = group.querySelector('.vault-right-tabs');
+    const panesContainer = group.querySelector('.vault-right-panes');
     // Move this panel's tabs and panes from the default group
     for (const tabName of panel.tabs) {
       const tabBtn = defaultTabs.querySelector(`[data-tab="${_esc(tabName)}"]`);
@@ -2115,42 +2396,45 @@ function _rebuildPanelsFromSettings() {
 
   // Ensure first panel's remaining tabs are unhidden
   const first = panels[0];
-  const firstGroup = stack.querySelector(`.shard-panel-group[data-panel-id="${_esc(first.id)}"]`);
-  if (firstGroup) {
-    const tc = firstGroup.querySelector('.shard-right-tabs');
-    if (tc) {
-      for (const tabName of first.tabs) {
-        const btn = tc.querySelector(`[data-tab="${_esc(tabName)}"]`);
-        if (btn) btn.classList.remove('hidden');
+  if (first && Array.isArray(first.tabs)) {
+    const firstGroup = stack.querySelector(`.vault-panel-group[data-panel-id="${_esc(first.id)}"]`);
+    if (firstGroup) {
+      const tc = firstGroup.querySelector('.vault-right-tabs');
+      if (tc) {
+        for (const tabName of first.tabs) {
+          const btn = tc.querySelector(`[data-tab="${_esc(tabName)}"]`);
+          if (btn) btn.classList.remove('hidden');
+        }
       }
     }
   }
 }
 
 function _destroyPanel(panelId) {
-  const panels = _shardSettings.panels || [];
+  const panels = _vaultSettings.panels || [];
   const idx = panels.findIndex(p => p.id === panelId);
   if (idx === -1) return;
   const panel = panels[idx];
 
   // Move all tabs back to the first panel on the same side
   const firstPanel = panels.find(p => p.side === panel.side && p.id !== panelId);
-  if (firstPanel) {
+  if (firstPanel && Array.isArray(panel.tabs)) {
+    if (!Array.isArray(firstPanel.tabs)) firstPanel.tabs = [];
     for (const tab of panel.tabs) {
       if (!firstPanel.tabs.includes(tab)) firstPanel.tabs.push(tab);
     }
   }
 
   panels.splice(idx, 1);
-  _shardSettings.panels = panels;
-  _saveShardSettings();
+  _vaultSettings.panels = panels;
+  _saveVaultSettings();
 
   // Remove DOM
-  const panelEl = document.querySelector(`.shard-panel-group[data-panel-id="${_esc(panelId)}"]`);
+  const panelEl = document.querySelector(`.vault-panel-group[data-panel-id="${_esc(panelId)}"]`);
   if (panelEl) {
     // Also remove preceding resize handle if present
     const prev = panelEl.previousElementSibling;
-    if (prev && prev.classList.contains('shard-panel-resize-v')) prev.remove();
+    if (prev && prev.classList.contains('vault-panel-resize-v')) prev.remove();
     panelEl.remove();
   }
 
@@ -2163,10 +2447,10 @@ function _switchLeftTab(tab) {
   _activeLeftTab = tab;
   const panel = _getPanelConfig('left-1');
   if (panel) _setActiveTabForPanel('left-1', tab);
-  document.querySelectorAll('#shard-left-tabs .shard-sidebar-tab').forEach(btn => {
+  document.querySelectorAll('#vault-left-tabs .vault-sidebar-tab').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.tab === tab);
   });
-  document.querySelectorAll('.shard-sidebar-pane').forEach(pane => {
+  document.querySelectorAll('.vault-sidebar-pane').forEach(pane => {
     pane.classList.toggle('hidden', pane.dataset.pane !== tab);
   });
 
@@ -2189,18 +2473,18 @@ function _registerRibbonItem(id, title, iconSvg, action, pluginId = null) {
 }
 
 function _renderRibbon() {
-  const ribbon = document.getElementById('shard-ribbon-bar');
-  const pane3 = document.querySelector('.shard-3pane');
+  const ribbon = document.getElementById('vault-ribbon-bar');
+  const pane3 = document.querySelector('.vault-3pane');
   if (!ribbon) return;
 
-  const showRibbon = _shardSettings?.appearance?.showRibbon !== false;
-  const hiddenItems = new Set(_shardSettings?.appearance?.ribbonHiddenItems || []);
+  const showRibbon = _vaultSettings?.appearance?.showRibbon !== false;
+  const hiddenItems = new Set(_vaultSettings?.appearance?.ribbonHiddenItems || []);
 
   // Show/hide ribbon container and adjust grid layout
   ribbon.style.display = showRibbon ? '' : 'none';
   if (pane3) {
-    if (showRibbon) pane3.classList.remove('shard-ribbon-hidden');
-    else pane3.classList.add('shard-ribbon-hidden');
+    if (showRibbon) pane3.classList.remove('vault-ribbon-hidden');
+    else pane3.classList.add('vault-ribbon-hidden');
   }
   if (!showRibbon) return;
 
@@ -2218,7 +2502,7 @@ function _renderRibbon() {
   }
 
   // Sort by ribbonOrder if present, otherwise use registry insertion order
-  const order = _shardSettings?.appearance?.ribbonOrder || [];
+  const order = _vaultSettings?.appearance?.ribbonOrder || [];
   const items = Array.from(_ribbonRegistry.values());
   items.sort((a, b) => {
     const ai = order.indexOf(a.id);
@@ -2237,12 +2521,12 @@ function _renderRibbon() {
     // Add separator between items from different plugins
     if (lastPluginId !== null && lastPluginId !== item.pluginId) {
       const s = document.createElement('div');
-      s.className = 'shard-ribbon-sep';
+      s.className = 'vault-ribbon-sep';
       ribbon.appendChild(s);
     }
     lastPluginId = item.pluginId;
     const b = document.createElement('div');
-    b.className = 'shard-ribbon-btn';
+    b.className = 'vault-ribbon-btn';
     b.title = item.title;
     b.draggable = true;
     b.dataset.ribbonId = item.id;
@@ -2303,9 +2587,9 @@ function _renderRibbon() {
       }
 
       // Persist order
-      const allIds = Array.from(ribbon.querySelectorAll('.shard-ribbon-btn')).map(el => el.dataset.ribbonId);
-      _shardSettings.appearance.ribbonOrder = allIds;
-      _saveShardSettings();
+      const allIds = Array.from(ribbon.querySelectorAll('.vault-ribbon-btn')).map(el => el.dataset.ribbonId);
+      _vaultSettings.appearance.ribbonOrder = allIds;
+      _saveVaultSettings();
     });
 
     ribbon.appendChild(b);
@@ -2316,10 +2600,10 @@ function _renderRibbon() {
 let _ribbonMenu = null;
 function _showRibbonMenu(x, y) {
   if (_ribbonMenu) { _ribbonMenu.remove(); _ribbonMenu = null; }
-  const hiddenItems = new Set(_shardSettings?.appearance?.ribbonHiddenItems || []);
+  const hiddenItems = new Set(_vaultSettings?.appearance?.ribbonHiddenItems || []);
 
   const menu = document.createElement('div');
-  menu.className = 'shard-ribbon-menu';
+  menu.className = 'vault-ribbon-menu';
   const items = Array.from(_ribbonRegistry.values());
   if (items.length === 0) return;
 
@@ -2328,16 +2612,16 @@ function _showRibbonMenu(x, y) {
     const isHidden = hiddenItems.has(item.id);
     const checkClass = isHidden ? '' : 'is-checked';
     html += `
-      <div class="shard-ribbon-menu-item shard-note-menu-check ${checkClass}" data-ribbon-action="toggle-item" data-ribbon-id="${item.id}">
-        <span class="shard-ribbon-menu-icon">${item.iconSvg.replace(/width="18" height="18"/g, 'width="14" height="14"')}</span>
+      <div class="vault-ribbon-menu-item vault-note-menu-check ${checkClass}" data-ribbon-action="toggle-item" data-ribbon-id="${item.id}">
+        <span class="vault-ribbon-menu-icon">${item.iconSvg.replace(/width="18" height="18"/g, 'width="14" height="14"')}</span>
         <span>${_esc(item.title)}</span>
-        <span class="shard-note-menu-checkmark"></span>
+        <span class="vault-note-menu-checkmark"></span>
       </div>`;
   }
-  html += `<div class="shard-ribbon-menu-divider"></div>`;
+  html += `<div class="vault-ribbon-menu-divider"></div>`;
   html += `
-    <div class="shard-ribbon-menu-item" data-ribbon-action="hide-ribbon">
-      <span class="shard-ribbon-menu-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg></span>
+    <div class="vault-ribbon-menu-item" data-ribbon-action="hide-ribbon">
+      <span class="vault-ribbon-menu-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg></span>
       <span>Hide ribbon</span>
     </div>`;
   menu.innerHTML = html;
@@ -2361,11 +2645,11 @@ function _showRibbonMenu(x, y) {
     row.addEventListener('click', (e) => {
       e.stopPropagation();
       const id = row.dataset.ribbonId;
-      const set = new Set(_shardSettings.appearance.ribbonHiddenItems || []);
+      const set = new Set(_vaultSettings.appearance.ribbonHiddenItems || []);
       if (set.has(id)) set.delete(id);
       else set.add(id);
-      _shardSettings.appearance.ribbonHiddenItems = Array.from(set);
-      _saveShardSettings();
+      _vaultSettings.appearance.ribbonHiddenItems = Array.from(set);
+      _saveVaultSettings();
       _renderRibbon();
       // Refresh menu to swap checkmark
       _ribbonMenu?.remove();
@@ -2375,22 +2659,22 @@ function _showRibbonMenu(x, y) {
   });
   // Wire "Hide ribbon" click
   menu.querySelector('div[data-ribbon-action="hide-ribbon"]')?.addEventListener('click', () => {
-    _shardSettings.appearance.showRibbon = false;
-    _saveShardSettings();
+    _vaultSettings.appearance.showRibbon = false;
+    _saveVaultSettings();
     _renderRibbon();
     _ribbonMenu?.remove();
     _ribbonMenu = null;
   });
 
   _ribbonMenu = menu;
-  console.log('[shard] ribbon menu stored in _ribbonMenu');
+  console.log('[vault] ribbon menu stored in _ribbonMenu');
 }
 
 // Close ribbon menu on outside click (delayed to avoid closing on the same click that opened it)
 let _ribbonMenuClickAway = null;
 function _ribbonMenuClose(e) {
   if (_ribbonMenu && !_ribbonMenu.contains(e.target)) {
-    console.log('[shard] ribbon menu closing via outside click');
+    console.log('[vault] ribbon menu closing via outside click');
     _ribbonMenu.remove();
     _ribbonMenu = null;
     document.removeEventListener('click', _ribbonMenuClose);
@@ -2398,11 +2682,11 @@ function _ribbonMenuClose(e) {
   }
 }
 document.addEventListener('contextmenu', (e) => {
-  const ribbon = e.target.closest('#shard-ribbon-bar');
+  const ribbon = e.target.closest('#vault-ribbon-bar');
   if (ribbon) {
     e.preventDefault();
     e.stopPropagation();
-    console.log('[shard] ribbon contextmenu triggered');
+    console.log('[vault] ribbon contextmenu triggered');
     _showRibbonMenu(e.clientX, e.clientY);
     // Delay click-away so the same right-click doesn't immediately close it
     if (_ribbonMenuClickAway) clearTimeout(_ribbonMenuClickAway);
@@ -2443,9 +2727,9 @@ function _showTabContextMenu(e, panelId) {
       ];
 
   const menu = document.createElement('div');
-  menu.className = 'shard-ribbon-menu';
+  menu.className = 'vault-ribbon-menu';
   let html = '';
-  const hiddenRight = new Set(_shardSettings.appearance?.hiddenRightTabs || []);
+  const hiddenRight = new Set(_vaultSettings.appearance?.hiddenRightTabs || []);
   for (const def of tabDefs) {
     let enabled;
     if (def.pid === null) {
@@ -2455,18 +2739,18 @@ function _showTabContextMenu(e, panelId) {
     }
     const checkClass = enabled ? 'is-checked' : '';
     html += `
-      <div class="shard-ribbon-menu-item shard-note-menu-check ${checkClass}" data-tab-pid="${_esc(def.pid ?? '')}" data-tab-name="${_esc(def.tab)}">
+      <div class="vault-ribbon-menu-item vault-note-menu-check ${checkClass}" data-tab-pid="${_esc(def.pid ?? '')}" data-tab-name="${_esc(def.tab)}">
         <span>${_esc(def.label)}</span>
-        <span class="shard-note-menu-checkmark"></span>
+        <span class="vault-note-menu-checkmark"></span>
       </div>`;
   }
   // Add "Move to new panel" if user right-clicked on a specific tab
-  const clickedTab = e.target.closest('.shard-right-tab, .shard-sidebar-tab');
+  const clickedTab = e.target.closest('.vault-right-tab, .vault-sidebar-tab');
   const clickedTabName = clickedTab?.dataset.tab;
   if (clickedTabName) {
-    html += `<div class="shard-ribbon-menu-divider"></div>`;
+    html += `<div class="vault-ribbon-menu-divider"></div>`;
     html += `
-      <div class="shard-ribbon-menu-item" data-action="move-to-new-panel" data-tab-name="${_esc(clickedTabName)}">
+      <div class="vault-ribbon-menu-item" data-action="move-to-new-panel" data-tab-name="${_esc(clickedTabName)}">
         <span>Move "${_esc(clickedTab.querySelector('span')?.textContent || clickedTabName)}" to new panel</span>
       </div>`;
   }
@@ -2496,11 +2780,11 @@ function _showTabContextMenu(e, panelId) {
 
       // Non-plugin tab (e.g., local-graph)
       if (!pid) {
-        const hiddenSet = new Set(_shardSettings.appearance?.hiddenRightTabs || []);
+        const hiddenSet = new Set(_vaultSettings.appearance?.hiddenRightTabs || []);
         if (hiddenSet.has(tabName)) hiddenSet.delete(tabName);
         else hiddenSet.add(tabName);
-        _shardSettings.appearance.hiddenRightTabs = Array.from(hiddenSet);
-        _saveShardSettings();
+        _vaultSettings.appearance.hiddenRightTabs = Array.from(hiddenSet);
+        _saveVaultSettings();
         _syncPluginTabs();
         if (isRight && _selectedNoteId) {
           const note = _notes.find(n => n.id === _selectedNoteId);
@@ -2522,13 +2806,13 @@ function _showTabContextMenu(e, panelId) {
           await _pluginManager.enable(pid);
         }
       } catch (err) {
-        console.error('[shard] failed to toggle plugin', pid, err);
+        console.error('[vault] failed to toggle plugin', pid, err);
         return;
       }
-      _shardSettings.enabledPlugins = CORE_PLUGINS
+      _vaultSettings.enabledPlugins = CORE_PLUGINS
         .filter(p => _pluginManager.isEnabled(p.id))
         .map(p => p.id);
-      _saveShardSettings();
+      _saveVaultSettings();
       _syncPluginTabs();
       // Re-render pane content so panel doesn't appear empty/closed
       if (isRight && _selectedNoteId) {
@@ -2571,36 +2855,36 @@ function _showTabContextMenu(e, panelId) {
 /** Ribbon configuration dialog */
 function _openRibbonConfigDialog() {
   // Remove existing dialog if any
-  const existing = document.getElementById('shard-ribbon-config-overlay');
+  const existing = document.getElementById('vault-ribbon-config-overlay');
   if (existing) existing.remove();
 
   const overlay = document.createElement('div');
-  overlay.id = 'shard-ribbon-config-overlay';
-  overlay.className = 'shard-ribbon-config-overlay';
+  overlay.id = 'vault-ribbon-config-overlay';
+  overlay.className = 'vault-ribbon-config-overlay';
   overlay.innerHTML = `
-    <div class="shard-ribbon-config-dialog">
-      <div class="shard-ribbon-config-header">
+    <div class="vault-ribbon-config-dialog">
+      <div class="vault-ribbon-config-header">
         <h3>Ribbon menu</h3>
-        <button type="button" class="close-btn" id="shard-ribbon-config-close">&#x2715;</button>
+        <button type="button" class="close-btn" id="vault-ribbon-config-close">&#x2715;</button>
       </div>
-      <div class="shard-ribbon-config-body">
-        <div class="shard-ribbon-config-desc">Choose what items you want to be active in the ribbon. Drag and drop to change the order.</div>
-        <div id="shard-ribbon-config-active-list"></div>
-        <div class="shard-ribbon-config-section-title">Other ribbon items</div>
-        <div id="shard-ribbon-config-available-list"></div>
+      <div class="vault-ribbon-config-body">
+        <div class="vault-ribbon-config-desc">Choose what items you want to be active in the ribbon. Drag and drop to change the order.</div>
+        <div id="vault-ribbon-config-active-list"></div>
+        <div class="vault-ribbon-config-section-title">Other ribbon items</div>
+        <div id="vault-ribbon-config-available-list"></div>
       </div>
-      <div class="shard-ribbon-config-footer">
-        <button type="button" id="shard-ribbon-config-done">Done</button>
+      <div class="vault-ribbon-config-footer">
+        <button type="button" id="vault-ribbon-config-done">Done</button>
       </div>
     </div>
   `;
-  const modal = document.getElementById('shard-modal');
+  const modal = document.getElementById('vault-modal');
   (modal || document.body).appendChild(overlay);
   overlay.style.pointerEvents = 'auto';
 
   const close = () => { overlay.remove(); };
-  overlay.querySelector('#shard-ribbon-config-close').addEventListener('click', close);
-  overlay.querySelector('#shard-ribbon-config-done').addEventListener('click', close);
+  overlay.querySelector('#vault-ribbon-config-close').addEventListener('click', close);
+  overlay.querySelector('#vault-ribbon-config-done').addEventListener('click', close);
   overlay.addEventListener('click', (e) => {
     if (e.target === overlay) close();
   });
@@ -2609,11 +2893,11 @@ function _openRibbonConfigDialog() {
 }
 
 function _renderRibbonConfigLists() {
-  const activeContainer = document.getElementById('shard-ribbon-config-active-list');
-  const availableContainer = document.getElementById('shard-ribbon-config-available-list');
+  const activeContainer = document.getElementById('vault-ribbon-config-active-list');
+  const availableContainer = document.getElementById('vault-ribbon-config-available-list');
   if (!activeContainer || !availableContainer) return;
 
-  const hiddenItems = new Set(_shardSettings?.appearance?.ribbonHiddenItems || []);
+  const hiddenItems = new Set(_vaultSettings?.appearance?.ribbonHiddenItems || []);
   const allItems = Array.from(_ribbonRegistry.values());
   const activeItems = allItems.filter(i => !hiddenItems.has(i.id));
   const availableItems = allItems.filter(i => hiddenItems.has(i.id));
@@ -2622,12 +2906,12 @@ function _renderRibbonConfigLists() {
   if (activeItems.length === 0) {
     activeContainer.innerHTML = '<div style="padding:8px;text-align:center;opacity:0.5;font-size:12px;">No active ribbon items.</div>';
   } else {
-    activeContainer.innerHTML = `<div class="shard-ribbon-config-section-title">Active</div>`;
+    activeContainer.innerHTML = `<div class="vault-ribbon-config-section-title">Active</div>`;
     const list = document.createElement('div');
-    list.className = 'shard-ribbon-config-list';
+    list.className = 'vault-ribbon-config-list';
     activeItems.forEach((item, idx) => {
       const row = document.createElement('div');
-      row.className = 'shard-ribbon-config-item';
+      row.className = 'vault-ribbon-config-item';
       row.draggable = true;
       row.dataset.ribbonId = item.id;
       row.innerHTML = `
@@ -2646,10 +2930,10 @@ function _renderRibbonConfigLists() {
     list.querySelectorAll('button[data-ribbon-action="remove"]').forEach(btn => {
       btn.addEventListener('click', () => {
         const id = btn.dataset.ribbonId;
-        const set = new Set(_shardSettings.appearance.ribbonHiddenItems || []);
+        const set = new Set(_vaultSettings.appearance.ribbonHiddenItems || []);
         set.add(id);
-        _shardSettings.appearance.ribbonHiddenItems = Array.from(set);
-        _saveShardSettings();
+        _vaultSettings.appearance.ribbonHiddenItems = Array.from(set);
+        _saveVaultSettings();
         _renderRibbon();
         _renderRibbonConfigLists();
       });
@@ -2657,7 +2941,7 @@ function _renderRibbonConfigLists() {
 
     // Drag-and-drop reordering for active items
     let draggedId = null;
-    list.querySelectorAll('.shard-ribbon-config-item').forEach(item => {
+    list.querySelectorAll('.vault-ribbon-config-item').forEach(item => {
       item.addEventListener('dragstart', (e) => {
         draggedId = item.dataset.ribbonId;
         item.classList.add('dragging');
@@ -2684,7 +2968,7 @@ function _renderRibbonConfigLists() {
         item.style.borderTop = '';
         item.style.borderBottom = '';
         if (!draggedId || draggedId === item.dataset.ribbonId) return;
-        const allIds = Array.from(list.querySelectorAll('.shard-ribbon-config-item')).map(el => el.dataset.ribbonId);
+        const allIds = Array.from(list.querySelectorAll('.vault-ribbon-config-item')).map(el => el.dataset.ribbonId);
         const fromIdx = allIds.indexOf(draggedId);
         const toIdx = allIds.indexOf(item.dataset.ribbonId);
         if (fromIdx === -1 || toIdx === -1) return;
@@ -2696,14 +2980,14 @@ function _renderRibbonConfigLists() {
         const finalIdx = e.clientY < midY ? insertIdx : insertIdx + 1;
         allIds.splice(finalIdx, 0, draggedId);
         // Save order and hidden items
-        _shardSettings.appearance.ribbonOrder = allIds;
+        _vaultSettings.appearance.ribbonOrder = allIds;
         const newHidden = new Set();
         const activeSet = new Set(allIds);
         _ribbonRegistry.forEach((_, id) => {
           if (!activeSet.has(id)) newHidden.add(id);
         });
-        _shardSettings.appearance.ribbonHiddenItems = Array.from(newHidden);
-        _saveShardSettings();
+        _vaultSettings.appearance.ribbonHiddenItems = Array.from(newHidden);
+        _saveVaultSettings();
         _renderRibbon();
         _renderRibbonConfigLists();
       });
@@ -2715,10 +2999,10 @@ function _renderRibbonConfigLists() {
     availableContainer.innerHTML = '<div style="padding:8px;text-align:center;opacity:0.5;font-size:12px;">All ribbon items are active.</div>';
   } else {
     const list = document.createElement('div');
-    list.className = 'shard-ribbon-config-list';
+    list.className = 'vault-ribbon-config-list';
     availableItems.forEach(item => {
       const row = document.createElement('div');
-      row.className = 'shard-ribbon-config-item';
+      row.className = 'vault-ribbon-config-item';
       row.dataset.ribbonId = item.id;
       row.innerHTML = `
         <span class="item-icon">${item.iconSvg.replace(/width="18" height="18"/g, 'width="16" height="16"')}</span>
@@ -2735,10 +3019,10 @@ function _renderRibbonConfigLists() {
     list.querySelectorAll('button[data-ribbon-action="add"]').forEach(btn => {
       btn.addEventListener('click', () => {
         const id = btn.dataset.ribbonId;
-        const set = new Set(_shardSettings.appearance.ribbonHiddenItems || []);
+        const set = new Set(_vaultSettings.appearance.ribbonHiddenItems || []);
         set.delete(id);
-        _shardSettings.appearance.ribbonHiddenItems = Array.from(set);
-        _saveShardSettings();
+        _vaultSettings.appearance.ribbonHiddenItems = Array.from(set);
+        _saveVaultSettings();
         _renderRibbon();
         _renderRibbonConfigLists();
       });
@@ -2774,6 +3058,7 @@ let _searchState = {
   collapse: false,
   context: false,
   explain: true,
+  semantic: false,
   fileStates: new Map(), // noteId -> boolean (true=collapsed, false=expanded); overrides default
   lastQuery: '',
 };
@@ -2781,7 +3066,7 @@ let _searchHistoryTimer = null;
 
 // -- Settings ------------------------------------------------
 
-let _shardSettings = {
+let _vaultSettings = {
   enabledPlugins: CORE_PLUGINS.map(m => m.id),
   editor: {
     defaultView: 'live',
@@ -2918,24 +3203,24 @@ let _shardSettings = {
   },
 };
 
-function _loadShardSettings() {
+function _loadVaultSettings() {
   try {
-    const raw = localStorage.getItem('shard-settings');
+    const raw = localStorage.getItem('vault-settings');
     if (raw) {
       const parsed = JSON.parse(raw);
-      _shardSettings = { ..._shardSettings, ...parsed };
+      _vaultSettings = { ..._vaultSettings, ...parsed };
       ['editor', 'filesAndLinks', 'appearance', 'hotkeys', 'plugins'].forEach(key => {
-        if (parsed[key]) _shardSettings[key] = { ..._shardSettings[key], ...parsed[key] };
+        if (parsed[key]) _vaultSettings[key] = { ..._vaultSettings[key], ...parsed[key] };
       });
     }
-  } catch (e) { console.warn('[shard] load settings failed', e); }
+  } catch (e) { console.warn('[vault] load settings failed', e); }
 }
 
-function _saveShardSettings() {
-  try { localStorage.setItem('shard-settings', JSON.stringify(_shardSettings)); } catch {}
+function _saveVaultSettings() {
+  try { localStorage.setItem('vault-settings', JSON.stringify(_vaultSettings)); } catch {}
 }
 
-const SHARD_COMMANDS = [
+const VAULT_COMMANDS = [
   {id:'quick-switcher',label:'Open quick switcher',impl:true},
   {id:'cycle-view-mode',label:'Cycle view mode',impl:true},
   {id:'new-note',label:'New note',impl:true},
@@ -3058,7 +3343,7 @@ const SHARD_COMMANDS = [
   {id:'split-right',label:'Split right',impl:false},
   {id:'split-up',label:'Split up',impl:false},
   {id:'tags-open',label:'Tags: Open tag pane',impl:false},
-  {id:'templates-insert',label:'Templates: Insert template',impl:false},
+  {id:'templates-insert',label:'Templates: Insert template',impl:true},
   {id:'toggle-bold',label:'Toggle bold',impl:true},
   {id:'toggle-checklist-status',label:'Toggle checklist status',impl:true},
   {id:'toggle-code',label:'Toggle code',impl:true},
@@ -3115,8 +3400,8 @@ const SHARD_COMMANDS = [
   {id:'table-move-row-down',label:'Table: Move row down',impl:false},
   {id:'table-move-row-up',label:'Table: Move row up',impl:false},
   {id:'tags-view-show-tags',label:'Tags view: Show tags',impl:false},
-  {id:'templates-insert-current-date',label:'Templates: Insert current date',impl:false},
-  {id:'templates-insert-current-time',label:'Templates: Insert current time',impl:false},
+  {id:'templates-insert-current-date',label:'Templates: Insert current date',impl:true},
+  {id:'templates-insert-current-time',label:'Templates: Insert current time',impl:true},
   {id:'toggle-blockquote',label:'Toggle blockquote',impl:true},
   {id:'toggle-bullet-list',label:'Toggle bullet list',impl:true},
   {id:'toggle-fold-current-line',label:'Toggle fold on the current line',impl:false},
@@ -3139,7 +3424,7 @@ function _getAllCommands() {
   const pluginCmds = _pluginManager ? Array.from(_pluginManager._instances.values()).flatMap(p =>
     (p._commands || []).map(c => ({ id: c.id, label: c.name || c.id, callback: c.callback, impl: true }))
   ) : [];
-  return [...SHARD_COMMANDS, ...pluginCmds];
+  return [...VAULT_COMMANDS, ...pluginCmds];
 }
 
 function _formatCombo(combo) {
@@ -3153,7 +3438,7 @@ function _formatCombo(combo) {
   }).join(' + ');
 }
 
-function _matchesShardCombo(e, combo) {
+function _matchesVaultCombo(e, combo) {
   if (!combo) return false;
   const parts = combo.split('+');
   const needCtrl = parts.includes('ctrl');
@@ -3161,7 +3446,7 @@ function _matchesShardCombo(e, combo) {
   const needShift = parts.includes('shift');
   const needMeta = parts.includes('meta');
   const key = parts.filter(p => !['ctrl', 'alt', 'shift', 'meta'].includes(p))[0] || '';
-  // On Mac, meta (Cmd) counts as ctrl for shard shortcuts; on Win/Linux, Ctrl counts as ctrl
+  // On Mac, meta (Cmd) counts as ctrl for vault shortcuts; on Win/Linux, Ctrl counts as ctrl
   const hasCtrl = IS_MAC ? (e.metaKey || e.ctrlKey) : e.ctrlKey;
   if (needCtrl !== hasCtrl) return false;
   if (needAlt !== e.altKey) return false;
@@ -3183,12 +3468,12 @@ function _normalizeCapturedCombo(e) {
   return modifiers.join('+');
 }
 
-function _getActiveShardEditor() {
-  const modal = document.getElementById('shard-modal');
+function _getActiveVaultEditor() {
+  const modal = document.getElementById('vault-modal');
   if (!modal || modal.classList.contains('hidden')) return null;
   const activeLp = modal.querySelector('.lp-line.active .lp-source[contenteditable="true"]');
   if (activeLp) return { el: activeLp, mode: 'live' };
-  const sourceDiv = modal.querySelector('.shard-source-view[contenteditable="true"]');
+  const sourceDiv = modal.querySelector('.vault-source-view[contenteditable="true"]');
   if (sourceDiv) return { el: sourceDiv, mode: 'source' };
   return null;
 }
@@ -3219,7 +3504,7 @@ function _getCurrentLineRange(editor) {
 
 function _toggleInlineWrap(prefix, suffix) {
   suffix = suffix || prefix;
-  const editor = _getActiveShardEditor();
+  const editor = _getActiveVaultEditor();
   if (!editor) return;
   const sel = window.getSelection();
   if (!sel.rangeCount) return;
@@ -3248,7 +3533,7 @@ function _toggleInlineWrap(prefix, suffix) {
 }
 
 function _toggleLinePrefix(prefix) {
-  const editor = _getActiveShardEditor();
+  const editor = _getActiveVaultEditor();
   if (!editor) return;
   const lineRange = _getCurrentLineRange(editor);
   if (!lineRange) return;
@@ -3262,7 +3547,7 @@ function _toggleLinePrefix(prefix) {
 }
 
 function _toggleHeading(level) {
-  const editor = _getActiveShardEditor();
+  const editor = _getActiveVaultEditor();
   if (!editor) return;
   const lineRange = _getCurrentLineRange(editor);
   if (!lineRange) return;
@@ -3301,7 +3586,7 @@ function _toggleHeading(level) {
 }
 
 function _removeHeadingPrefix() {
-  const editor = _getActiveShardEditor();
+  const editor = _getActiveVaultEditor();
   if (!editor) return;
   const lineRange = _getCurrentLineRange(editor);
   if (!lineRange) return;
@@ -3314,7 +3599,7 @@ function _removeHeadingPrefix() {
 }
 
 function _toggleIndent(delta) {
-  const editor = _getActiveShardEditor();
+  const editor = _getActiveVaultEditor();
   if (!editor) return;
   const lineRange = _getCurrentLineRange(editor);
   if (!lineRange) return;
@@ -3333,7 +3618,7 @@ function _toggleIndent(delta) {
 }
 
 function _toggleCheckboxStatus() {
-  const editor = _getActiveShardEditor();
+  const editor = _getActiveVaultEditor();
   if (!editor) return;
   const lineRange = _getCurrentLineRange(editor);
   if (!lineRange) return;
@@ -3356,7 +3641,7 @@ function _toggleCheckboxStatus() {
 }
 
 function _clearFormatting() {
-  const editor = _getActiveShardEditor();
+  const editor = _getActiveVaultEditor();
   if (!editor) return;
   const sel = window.getSelection();
   if (!sel.rangeCount) return;
@@ -3375,7 +3660,7 @@ function _clearFormatting() {
 }
 
 function _moveLine(delta) {
-  const editor = _getActiveShardEditor();
+  const editor = _getActiveVaultEditor();
   if (!editor || editor.mode !== 'source') return;
   const sel = window.getSelection();
   if (!sel.rangeCount) return;
@@ -3418,22 +3703,22 @@ function _setCursorOffset(container, offset) {
 }
 
 function _zoom(delta) {
-  let fs = _shardSettings.appearance.fontSize || 16;
+  let fs = _vaultSettings.appearance.fontSize || 16;
   fs = Math.max(10, Math.min(32, fs + delta));
-  _shardSettings.appearance.fontSize = fs;
-  _saveShardSettings();
-  document.documentElement.style.setProperty('--shard-font-size', fs + 'px');
+  _vaultSettings.appearance.fontSize = fs;
+  _saveVaultSettings();
+  document.documentElement.style.setProperty('--vault-font-size', fs + 'px');
 }
 
 function _insertBlock(text) {
-  const editor = _getActiveShardEditor();
+  const editor = _getActiveVaultEditor();
   if (!editor) return;
   document.execCommand('insertText', false, text);
   editor.el.focus();
 }
 
 function _followLinkUnderCursor() {
-  const editor = _getActiveShardEditor();
+  const editor = _getActiveVaultEditor();
   if (!editor) return;
   const sel = window.getSelection();
   const text = sel.toString() || _getCurrentLineRange(editor)?.toString() || '';
@@ -3478,17 +3763,17 @@ function _runCommandById(cmdId) {
       return true;
     }
     case 'fold-all':
-      document.querySelectorAll('#shard-preview details').forEach(d => d.open = false);
+      document.querySelectorAll('#vault-preview details').forEach(d => d.open = false);
       return true;
     case 'unfold-all':
-      document.querySelectorAll('#shard-preview details').forEach(d => d.open = true);
+      document.querySelectorAll('#vault-preview details').forEach(d => d.open = true);
       return true;
     case 'graph-view': {
       _openGraphView();
       return true;
     }
     case 'open-local-graph': {
-      const localGraphTab = document.querySelector('.shard-right-tabs [data-tab="local-graph"]');
+      const localGraphTab = document.querySelector('.vault-right-tabs [data-tab="local-graph"]');
       if (localGraphTab) localGraphTab.click();
       return true;
     }
@@ -3497,6 +3782,9 @@ function _runCommandById(cmdId) {
       if (dailyPlugin?._commands?.[0]) dailyPlugin._commands[0].callback();
       return true;
     }
+    case 'templates-insert': _insertTemplate(); return true;
+    case 'templates-insert-current-date': _insertCurrentDate(); return true;
+    case 'templates-insert-current-time': _insertCurrentTime(); return true;
     case 'navigate-back': _goBack(); return true;
     case 'navigate-forward': _goForward(); return true;
     case 'close-current-tab': _closeCurrentTab(); return true;
@@ -3562,15 +3850,15 @@ function _runCommandById(cmdId) {
     case 'insert-math-block': _insertBlock('$$\n\n$$'); return true;
     case 'move-line-down': _moveLine(1); return true;
     case 'move-line-up': _moveLine(-1); return true;
-    case 'open-settings': _openShardSettings(); return true;
+    case 'open-settings': _openVaultSettings(); return true;
     case 'rename-file': {
       if (_selectedNoteId) _promptRenameNote(_selectedNoteId);
       return true;
     }
-    case 'reset-zoom': { _zoom(16 - (_shardSettings.appearance.fontSize || 16)); return true; }
+    case 'reset-zoom': { _zoom(16 - (_vaultSettings.appearance.fontSize || 16)); return true; }
     case 'save-current-file': {
       const note = _notes.find(n => n.id === _selectedNoteId);
-      const sourceDiv = document.querySelector('.shard-source-view[contenteditable="true"]');
+      const sourceDiv = document.querySelector('.vault-source-view[contenteditable="true"]');
       if (sourceDiv && note) _flushSourceEdit(sourceDiv, note);
       return true;
     }
@@ -3585,13 +3873,21 @@ function _runCommandById(cmdId) {
     case 'add-internal-link': _toggleInlineWrap('[[', ']]'); return true;
     case 'add-embed': _toggleInlineWrap('![[', ']]'); return true;
     case 'toggle-left-sidebar': {
-      const leftPane = document.querySelector('.shard-left-pane');
-      if (leftPane) leftPane.classList.toggle('hidden');
+      const leftPane = document.querySelector('.vault-left-pane');
+      const pane3L = document.querySelector('.vault-3pane');
+      if (leftPane) {
+        leftPane.classList.toggle('hidden');
+        if (pane3L) pane3L.classList.toggle('vault-left-hidden', leftPane.classList.contains('hidden'));
+      }
       return true;
     }
     case 'toggle-right-sidebar': {
-      const rightPane = document.querySelector('.shard-right-pane');
-      if (rightPane) rightPane.classList.toggle('hidden');
+      const rightPane = document.querySelector('.vault-right-pane');
+      const pane3R = document.querySelector('.vault-3pane');
+      if (rightPane) {
+        rightPane.classList.toggle('hidden');
+        if (pane3R) pane3R.classList.toggle('vault-right-hidden', rightPane.classList.contains('hidden'));
+      }
       return true;
     }
     default: {
@@ -3612,7 +3908,7 @@ function _renderHotkeySettings() {
   const container = document.querySelector('[data-settings-pane="hotkeys"]');
   if (!container) return;
   let commands = _getAllCommands();
-  const hotkeys = _shardSettings.hotkeys || {};
+  const hotkeys = _vaultSettings.hotkeys || {};
 
   // Determine sort mode from data attribute
   const sortMode = container.dataset.sort || 'az';
@@ -3632,34 +3928,34 @@ function _renderHotkeySettings() {
   const sortLabels = { az: 'A–Z', za: 'Z–A', bound: 'Bound first' };
 
   container.innerHTML = `
-    <div class="shard-settings-group">
+    <div class="vault-settings-group">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-        <h6 class="shard-settings-group-title" style="margin:0;">Keyboard shortcuts</h6>
+        <h6 class="vault-settings-group-title" style="margin:0;">Keyboard shortcuts</h6>
         <span style="font-size:11px;opacity:0.5;">${commands.length} commands</span>
       </div>
       <div style="display:flex;gap:8px;margin-bottom:10px;">
-        <input type="text" id="shard-hotkeys-filter" placeholder="Search Hotkeys" style="flex:1;padding:6px 10px;font-size:13px;background:var(--bg-raised);border:1px solid var(--border);border-radius:6px;color:var(--fg);box-sizing:border-box;" autocomplete="off" spellcheck="false">
+        <input type="text" id="vault-hotkeys-filter" placeholder="Search Hotkeys" style="flex:1;padding:6px 10px;font-size:13px;background:var(--bg-raised);border:1px solid var(--border);border-radius:6px;color:var(--fg);box-sizing:border-box;" autocomplete="off" spellcheck="false">
         <div style="position:relative;">
-          <button type="button" id="shard-hotkeys-sort" title="Sort commands" style="padding:6px 10px;font-size:12px;background:var(--bg-raised);border:1px solid var(--border);border-radius:6px;color:var(--fg);cursor:pointer;white-space:nowrap;">&#x2195;</button>
-          <div id="shard-hotkeys-sort-dropdown" style="display:none;position:absolute;right:0;top:calc(100% + 4px);background:var(--bg-raised);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.15);z-index:9999;min-width:140px;overflow:hidden;">
+          <button type="button" id="vault-hotkeys-sort" title="Sort commands" style="padding:6px 10px;font-size:12px;background:var(--bg-raised);border:1px solid var(--border);border-radius:6px;color:var(--fg);cursor:pointer;white-space:nowrap;">&#x2195;</button>
+          <div id="vault-hotkeys-sort-dropdown" style="display:none;position:absolute;right:0;top:calc(100% + 4px);background:var(--bg-raised);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.15);z-index:9999;min-width:140px;overflow:hidden;">
             <button type="button" data-sort="az" style="display:block;width:100%;text-align:left;padding:6px 10px;font-size:12px;background:transparent;border:none;color:var(--fg);cursor:pointer;${sortMode === 'az' ? 'background:color-mix(in srgb,var(--accent,var(--red,#4a9eff)) 10%,transparent);' : ''}">A–Z</button>
             <button type="button" data-sort="za" style="display:block;width:100%;text-align:left;padding:6px 10px;font-size:12px;background:transparent;border:none;color:var(--fg);cursor:pointer;${sortMode === 'za' ? 'background:color-mix(in srgb,var(--accent,var(--red,#4a9eff)) 10%,transparent);' : ''}">Z–A</button>
             <button type="button" data-sort="bound" style="display:block;width:100%;text-align:left;padding:6px 10px;font-size:12px;background:transparent;border:none;color:var(--fg);cursor:pointer;${sortMode === 'bound' ? 'background:color-mix(in srgb,var(--accent,var(--red,#4a9eff)) 10%,transparent);' : ''}">Bound first</button>
           </div>
         </div>
       </div>
-      <div id="shard-hotkeys-list" style="display:flex;flex-direction:column;gap:4px;max-height:400px;overflow-y:auto;">
+      <div id="vault-hotkeys-list" style="display:flex;flex-direction:column;gap:4px;max-height:400px;overflow-y:auto;">
         ${commands.map(cmd => {
           const combo = hotkeys[cmd.id] || '';
           const display = _formatCombo(combo) || '—';
           const disabled = cmd.impl === false;
-          return `<div class="shard-settings-row shard-hotkey-row ${disabled ? 'shard-hotkey-disabled' : ''}" style="gap:12px;${disabled ? 'opacity:0.4;' : 'cursor:pointer;'}" data-cmd-id="${_esc(cmd.id)}" data-impl="${cmd.impl !== false}">
-            <div class="shard-settings-info" style="flex:1;${disabled ? 'font-style:italic;' : ''}">
+          return `<div class="vault-settings-row vault-hotkey-row ${disabled ? 'vault-hotkey-disabled' : ''}" style="gap:12px;${disabled ? 'opacity:0.4;' : 'cursor:pointer;'}" data-cmd-id="${_esc(cmd.id)}" data-impl="${cmd.impl !== false}">
+            <div class="vault-settings-info" style="flex:1;${disabled ? 'font-style:italic;' : ''}">
               <span>${_esc(cmd.label)}</span>
               ${disabled ? '<span style="font-size:10px;opacity:0.6;margin-left:6px;">(not yet hooked up)</span>' : ''}
             </div>
-            <kbd class="shard-hotkey-kbd" style="font-family:monospace;font-size:12px;padding:2px 8px;border-radius:4px;background:var(--bg-raised);border:1px solid var(--border);min-width:80px;text-align:center;cursor:pointer;user-select:none;${disabled ? 'pointer-events:none;' : ''}">${_esc(display)}</kbd>
-            <button type="button" class="shard-hotkey-clear" style="background:none;border:none;color:var(--fg);opacity:0.5;cursor:pointer;font-size:12px;padding:2px 6px;${disabled ? 'pointer-events:none;' : ''}" title="Clear shortcut">&#x2715;</button>
+            <kbd class="vault-hotkey-kbd" style="font-family:monospace;font-size:12px;padding:2px 8px;border-radius:4px;background:var(--bg-raised);border:1px solid var(--border);min-width:80px;text-align:center;cursor:pointer;user-select:none;${disabled ? 'pointer-events:none;' : ''}">${_esc(display)}</kbd>
+            <button type="button" class="vault-hotkey-clear" style="background:none;border:none;color:var(--fg);opacity:0.5;cursor:pointer;font-size:12px;padding:2px 6px;${disabled ? 'pointer-events:none;' : ''}" title="Clear shortcut">&#x2715;</button>
           </div>`;
         }).join('')}
       </div>
@@ -3667,8 +3963,8 @@ function _renderHotkeySettings() {
   `;
 
   // Sort dropdown
-  const sortBtn = document.getElementById('shard-hotkeys-sort');
-  const sortDropdown = document.getElementById('shard-hotkeys-sort-dropdown');
+  const sortBtn = document.getElementById('vault-hotkeys-sort');
+  const sortDropdown = document.getElementById('vault-hotkeys-sort-dropdown');
   if (sortBtn && sortDropdown) {
     const _closeSortDropdown = (e) => {
       if (!sortDropdown.contains(e.target) && !sortBtn.contains(e.target)) {
@@ -3698,12 +3994,12 @@ function _renderHotkeySettings() {
   }
 
   // Filter logic
-  const filterInput = document.getElementById('shard-hotkeys-filter');
+  const filterInput = document.getElementById('vault-hotkeys-filter');
   if (filterInput) {
     filterInput.addEventListener('input', () => {
       const q = filterInput.value.trim().toLowerCase();
-      container.querySelectorAll('.shard-hotkey-row').forEach(row => {
-        const label = row.querySelector('.shard-settings-info span')?.textContent.toLowerCase() || '';
+      container.querySelectorAll('.vault-hotkey-row').forEach(row => {
+        const label = row.querySelector('.vault-settings-info span')?.textContent.toLowerCase() || '';
         row.style.display = label.includes(q) ? '' : 'none';
       });
     });
@@ -3723,17 +4019,17 @@ function _renderHotkeySettings() {
       _clickOutsideHandler = null;
     }
     _capturingCmd = null;
-    container.querySelectorAll('.shard-hotkey-kbd').forEach(k => {
+    container.querySelectorAll('.vault-hotkey-kbd').forEach(k => {
       k.style.borderColor = 'var(--border)';
       k.style.background = 'var(--bg-raised)';
     });
   };
 
-  container.querySelectorAll('.shard-settings-row[data-cmd-id]').forEach(row => {
+  container.querySelectorAll('.vault-settings-row[data-cmd-id]').forEach(row => {
     if (row.dataset.impl === 'false') return; // Skip binding for unimplemented commands
     const cmdId = row.dataset.cmdId;
-    const kbd = row.querySelector('.shard-hotkey-kbd');
-    const clearBtn = row.querySelector('.shard-hotkey-clear');
+    const kbd = row.querySelector('.vault-hotkey-kbd');
+    const clearBtn = row.querySelector('.vault-hotkey-clear');
 
     kbd.addEventListener('click', () => {
       if (_capturingCmd === cmdId) { stopCapture(); return; }
@@ -3762,8 +4058,8 @@ function _renderHotkeySettings() {
           return;
         }
         if (e.key === 'Backspace' || e.key === 'Delete') {
-          delete _shardSettings.hotkeys[cmdId];
-          _saveShardSettings();
+          delete _vaultSettings.hotkeys[cmdId];
+          _saveVaultSettings();
           stopCapture();
           _renderHotkeySettings();
           return;
@@ -3773,14 +4069,14 @@ function _renderHotkeySettings() {
         if (!combo) return; // Lone modifier or invalid
 
         // Check for conflicts
-        const conflict = Object.entries(_shardSettings.hotkeys || {}).find(([id, c]) => id !== cmdId && c === combo);
+        const conflict = Object.entries(_vaultSettings.hotkeys || {}).find(([id, c]) => id !== cmdId && c === combo);
         if (conflict) {
           showToast(`Conflict: ${_getAllCommands().find(c => c.id === conflict[0])?.label || conflict[0]} already uses ${_formatCombo(combo)}`);
           return;
         }
 
-        _shardSettings.hotkeys[cmdId] = combo;
-        _saveShardSettings();
+        _vaultSettings.hotkeys[cmdId] = combo;
+        _saveVaultSettings();
         stopCapture();
         _renderHotkeySettings();
       };
@@ -3789,32 +4085,32 @@ function _renderHotkeySettings() {
 
     clearBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      delete _shardSettings.hotkeys[cmdId];
-      _saveShardSettings();
+      delete _vaultSettings.hotkeys[cmdId];
+      _saveVaultSettings();
       _renderHotkeySettings();
     });
   });
 }
 
 function _applyMonospaceFont() {
-  const modal = document.getElementById('shard-modal');
+  const modal = document.getElementById('vault-modal');
   if (!modal) return;
-  const on = _shardSettings.appearance.monospaceFont === true;
-  const before = modal.classList.contains('shard-monospace-font');
+  const on = _vaultSettings.appearance.monospaceFont === true;
+  const before = modal.classList.contains('vault-monospace-font');
   if (on) {
-    modal.classList.add('shard-monospace-font');
+    modal.classList.add('vault-monospace-font');
   } else {
-    modal.classList.remove('shard-monospace-font');
+    modal.classList.remove('vault-monospace-font');
   }
-  const after = modal.classList.contains('shard-monospace-font');
+  const after = modal.classList.contains('vault-monospace-font');
 
   // Belt-and-suspenders: also set inline font-family on key vault content
   // elements so the change is visible even if CSS specificity has edge cases.
   const monoFont = "'Fira Code', 'Consolas', monospace";
   const targets = [
-    modal.querySelector('#shard-preview'),
-    modal.querySelector('#shard-folder-tree'),
-    ...modal.querySelectorAll('.shard-source-view, .shard-live-view, .shard-reading-view'),
+    modal.querySelector('#vault-preview'),
+    modal.querySelector('#vault-folder-tree'),
+    ...modal.querySelectorAll('.vault-source-view, .vault-live-view, .vault-reading-view'),
   ].filter(Boolean);
   for (const el of targets) {
     if (on) {
@@ -3827,20 +4123,20 @@ function _applyMonospaceFont() {
 }
 
 function _applyReadableLineLength() {
-  const preview = document.getElementById('shard-preview');
+  const preview = document.getElementById('vault-preview');
   if (!preview) return;
-  if (_shardSettings.editor.readableLineLength) {
-    preview.classList.add('shard-readable-line');
+  if (_vaultSettings.editor.readableLineLength) {
+    preview.classList.add('vault-readable-line');
   } else {
-    preview.classList.remove('shard-readable-line');
+    preview.classList.remove('vault-readable-line');
   }
 }
 
 function _switchSettingsPane(section) {
-  document.querySelectorAll('.shard-settings-nav-item').forEach(el => {
+  document.querySelectorAll('.vault-settings-nav-item').forEach(el => {
     el.classList.toggle('active', el.dataset.settingsSection === section);
   });
-  document.querySelectorAll('.shard-settings-section').forEach(el => {
+  document.querySelectorAll('.vault-settings-section').forEach(el => {
     el.classList.toggle('hidden', el.dataset.settingsPane !== section);
   });
 }
@@ -3849,31 +4145,31 @@ let _selectedPluginSettings = 'backlinks';
 
 function _switchPluginSettingsPane(pluginId) {
   _selectedPluginSettings = pluginId;
-  const contentEl = document.querySelector('.shard-plugin-settings-content');
+  const contentEl = document.querySelector('.vault-plugin-settings-content');
   // If no pane exists for this plugin, inject a fallback
-  let pane = document.querySelector(`.shard-plugin-settings-pane[data-plugin-pane="${_esc(pluginId)}"]`);
+  let pane = document.querySelector(`.vault-plugin-settings-pane[data-plugin-pane="${_esc(pluginId)}"]`);
   if (!pane && contentEl) {
     const plugin = CORE_PLUGINS.find(p => p.id === pluginId);
     const title = plugin ? plugin.name : pluginId;
     pane = document.createElement('div');
-    pane.className = 'shard-plugin-settings-pane';
+    pane.className = 'vault-plugin-settings-pane';
     pane.dataset.pluginPane = pluginId;
-    pane.innerHTML = `<h3 class="shard-plugin-title">${_esc(title)}</h3><p style="opacity:0.6;font-size:13px;margin-top:8px;">This plugin has no settings.</p>`;
+    pane.innerHTML = `<h3 class="vault-plugin-title">${_esc(title)}</h3><p style="opacity:0.6;font-size:13px;margin-top:8px;">This plugin has no settings.</p>`;
     contentEl.appendChild(pane);
   }
-  document.querySelectorAll('.shard-plugin-settings-pane').forEach(el => {
+  document.querySelectorAll('.vault-plugin-settings-pane').forEach(el => {
     el.classList.toggle('hidden', el.dataset.pluginPane !== pluginId);
   });
-  document.querySelectorAll('.shard-plugin-settings-sidebar-item').forEach(el => {
+  document.querySelectorAll('.vault-plugin-settings-sidebar-item').forEach(el => {
     el.classList.toggle('active', el.dataset.pluginId === pluginId);
   });
 }
 
 function _renderPluginSettings(query = '') {
-  const container = document.getElementById('shard-settings-plugins-list');
-  const countEl = document.getElementById('shard-plugins-count');
+  const container = document.getElementById('vault-settings-plugins-list');
+  const countEl = document.getElementById('vault-plugins-count');
   if (!container || !_pluginManager) return;
-  const enabled = new Set(_shardSettings.enabledPlugins || []);
+  const enabled = new Set(_vaultSettings.enabledPlugins || []);
   const q = query.toLowerCase().trim();
   const filtered = CORE_PLUGINS.filter(p =>
     !q || p.name.toLowerCase().includes(q) || p.description.toLowerCase().includes(q)
@@ -3882,15 +4178,15 @@ function _renderPluginSettings(query = '') {
   container.innerHTML = filtered.map(p => {
     const isOn = enabled.has(p.id);
     const isActive = _selectedPluginSettings === p.id;
-    return `<button type="button" class="shard-plugin-settings-sidebar-item ${isActive ? 'active' : ''}" data-plugin-id="${_esc(p.id)}" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;border:none;background:none;color:var(--fg);cursor:pointer;width:100%;text-align:left;font-size:13px;">
+    return `<button type="button" class="vault-plugin-settings-sidebar-item ${isActive ? 'active' : ''}" data-plugin-id="${_esc(p.id)}" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;border:none;background:none;color:var(--fg);cursor:pointer;width:100%;text-align:left;font-size:13px;">
       <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(p.name)}</span>
       <label class="admin-switch" style="flex-shrink:0;">
-        <input type="checkbox" class="shard-plugin-toggle" data-plugin-id="${_esc(p.id)}" ${isOn ? 'checked' : ''}>
+        <input type="checkbox" class="vault-plugin-toggle" data-plugin-id="${_esc(p.id)}" ${isOn ? 'checked' : ''}>
         <span class="admin-slider" style="background:${isOn ? 'var(--red)' : 'color-mix(in srgb, var(--fg) 50%, transparent)'};"></span>
       </label>
     </button>`;
   }).join('');
-  container.querySelectorAll('.shard-plugin-settings-sidebar-item').forEach(item => {
+  container.querySelectorAll('.vault-plugin-settings-sidebar-item').forEach(item => {
     item.addEventListener('click', () => {
       const pid = item.dataset.pluginId;
       _switchPluginSettingsPane(pid);
@@ -3899,7 +4195,7 @@ function _renderPluginSettings(query = '') {
   container.querySelectorAll('.admin-switch').forEach(label => {
     label.addEventListener('click', (e) => { e.stopPropagation(); });
   });
-  container.querySelectorAll('.shard-plugin-toggle').forEach(toggle => {
+  container.querySelectorAll('.vault-plugin-toggle').forEach(toggle => {
     toggle.addEventListener('change', async () => {
       const pid = toggle.dataset.pluginId;
       const on = toggle.checked;
@@ -3912,24 +4208,24 @@ function _renderPluginSettings(query = '') {
           showToast(`${_esc(pid)} disabled`);
         }
       } catch (err) {
-        console.error(`[shard] plugin toggle ${pid} failed:`, err);
+        console.error(`[vault] plugin toggle ${pid} failed:`, err);
         showToast(`Failed to toggle ${pid}`);
         toggle.checked = !on;
         return;
       }
-      _shardSettings.enabledPlugins = CORE_PLUGINS
+      _vaultSettings.enabledPlugins = CORE_PLUGINS
         .filter(p => _pluginManager.isEnabled(p.id))
         .map(p => p.id);
-      _saveShardSettings();
+      _saveVaultSettings();
       _syncPluginTabs();
       const leftMap = { bookmarks: 'bookmarks', tags: 'tags', search: 'search' };
       const rightMap = { backlinks: 'backlinks', 'outgoing-links': 'outgoing', unlinked: 'unlinked', outline: 'outline', orphans: 'orphans' };
       if (!on && leftMap[pid] && _activeLeftTab === leftMap[pid]) {
-        const fallback = Array.from(document.querySelectorAll('.shard-sidebar-tabs .shard-sidebar-tab:not(.hidden)')).map(b => b.dataset.tab)[0];
+        const fallback = Array.from(document.querySelectorAll('.vault-sidebar-tabs .vault-sidebar-tab:not(.hidden)')).map(b => b.dataset.tab)[0];
         if (fallback) _switchLeftTab(fallback);
       }
       if (!on && rightMap[pid] && _activeRightTab === rightMap[pid]) {
-        const fallback = Array.from(document.querySelectorAll('.shard-right-tabs .shard-right-tab:not(.hidden)')).map(b => b.dataset.tab)[0];
+        const fallback = Array.from(document.querySelectorAll('.vault-right-tabs .vault-right-tab:not(.hidden)')).map(b => b.dataset.tab)[0];
         if (fallback) {
           const panel = _getPanelForTab(fallback);
           _switchRightTab(fallback, panel?.id);
@@ -3942,91 +4238,175 @@ function _renderPluginSettings(query = '') {
       }
       if (_selectedNoteId) _selectNote(_selectedNoteId);
       // Re-render sidebar to update toggle visual state
-      _renderPluginSettings(document.getElementById('shard-plugin-search')?.value || '');
+      _renderPluginSettings(document.getElementById('vault-plugin-search')?.value || '');
     });
   });
 }
 
-function _openShardSettings() {
-  _loadShardSettings();
-  const dialog = document.getElementById('shard-settings-dialog');
+function _renderCommunityPluginsPane() {
+  const container = document.getElementById('vault-community-plugins-container');
+  if (!container) return;
+  container.innerHTML = '';
+
+  // Section: Installed community plugins
+  const installed = getInstalledPlugins();
+  const installedIds = Object.keys(installed);
+
+  if (installedIds.length > 0) {
+    const instHeader = document.createElement('h6');
+    instHeader.className = 'vault-settings-group-title';
+    instHeader.textContent = 'Installed plugins';
+    container.appendChild(instHeader);
+
+    installedIds.forEach(id => {
+      const entry = installed[id];
+      const row = document.createElement('div');
+      row.className = 'vault-settings-row';
+      row.style.gap = '12px';
+
+      const info = document.createElement('div');
+      info.style.flex = '1';
+      const name = entry.manifest?.name || id;
+      const version = entry.manifest?.version ? `v${entry.manifest.version}` : '';
+      info.innerHTML = `<span>${_esc(name)} <span style="opacity:0.5;font-size:11px;">${_esc(version)}</span></span>`;
+
+      const actions = document.createElement('div');
+      actions.style.display = 'flex';
+      actions.style.gap = '6px';
+
+      const toggleBtn = document.createElement('button');
+      toggleBtn.className = 'admin-btn-sm';
+      toggleBtn.type = 'button';
+      const isEnabled = entry.enabled;
+      toggleBtn.textContent = isEnabled ? 'Disable' : 'Enable';
+      toggleBtn.addEventListener('click', async () => {
+        try {
+          if (isEnabled) {
+            await disableCommunityPlugin(id);
+          } else {
+            await loadCommunityPlugin(id);
+          }
+          _renderCommunityPluginsPane();
+        } catch (err) {
+          showToast(`Plugin error: ${err.message}`);
+        }
+      });
+
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'admin-btn-sm admin-btn-delete';
+      removeBtn.type = 'button';
+      removeBtn.textContent = 'Uninstall';
+      removeBtn.addEventListener('click', () => {
+        uninstallPlugin(id);
+        _renderCommunityPluginsPane();
+        showToast(`${_esc(name)} uninstalled`);
+      });
+
+      actions.appendChild(toggleBtn);
+      actions.appendChild(removeBtn);
+      row.appendChild(info);
+      row.appendChild(actions);
+      container.appendChild(row);
+    });
+  }
+
+  // Section: Browse / Install
+  const browseHeader = document.createElement('h6');
+  browseHeader.className = 'vault-settings-group-title';
+  browseHeader.style.marginTop = '16px';
+  browseHeader.textContent = 'Browse Obsidian community plugins';
+  container.appendChild(browseHeader);
+
+  const browseContainer = document.createElement('div');
+  browseContainer.id = 'vault-community-plugins-browser';
+  container.appendChild(browseContainer);
+
+  renderPluginBrowser(browseContainer, () => {
+    _renderCommunityPluginsPane();
+  });
+}
+
+function _openVaultSettings() {
+  _loadVaultSettings();
+  const dialog = document.getElementById('vault-settings-dialog');
   if (!dialog) return;
   dialog.classList.remove('hidden');
-  const set = _shardSettings;
+  const set = _vaultSettings;
   const getEl = id => document.getElementById(id);
-  if (getEl('shard-set-default-view')) getEl('shard-set-default-view').value = set.editor.defaultView;
-  if (getEl('shard-set-readable-line')) getEl('shard-set-readable-line').checked = set.editor.readableLineLength;
-  if (getEl('shard-set-strict-breaks')) getEl('shard-set-strict-breaks').checked = set.editor.strictLineBreaks;
-  if (getEl('shard-set-fold-heading')) getEl('shard-set-fold-heading').checked = set.editor.foldHeading;
-  if (getEl('shard-set-fold-indent')) getEl('shard-set-fold-indent').checked = set.editor.foldIndent;
-  if (getEl('shard-set-line-numbers')) getEl('shard-set-line-numbers').checked = set.editor.showLineNumbers;
-  if (getEl('shard-set-auto-brackets')) getEl('shard-set-auto-brackets').checked = set.editor.autoPairBrackets;
-  if (getEl('shard-set-auto-md')) getEl('shard-set-auto-md').checked = set.editor.autoPairMarkdown;
-  if (getEl('shard-set-smart-lists')) getEl('shard-set-smart-lists').checked = set.editor.smartLists;
-  if (getEl('shard-set-indent-tabs')) getEl('shard-set-indent-tabs').checked = set.editor.indentWithTabs;
-  if (getEl('shard-set-vim')) getEl('shard-set-vim').checked = set.editor.vimBindings;
-  if (getEl('shard-set-inline-title')) getEl('shard-set-inline-title').checked = set.appearance.showInlineTitle;
-  if (getEl('shard-set-monospace-font')) getEl('shard-set-monospace-font').checked = set.appearance.monospaceFont;
-  if (getEl('shard-set-show-ribbon')) getEl('shard-set-show-ribbon').checked = set.appearance.showRibbon !== false;
-  if (getEl('shard-set-wikilinks')) getEl('shard-set-wikilinks').checked = set.filesAndLinks.useWikilinks;
-  if (getEl('shard-set-link-format')) getEl('shard-set-link-format').value = set.filesAndLinks.linkFormat;
-  if (getEl('shard-set-confirm-delete')) getEl('shard-set-confirm-delete').checked = set.filesAndLinks.confirmDelete;
-  if (getEl('shard-set-auto-links')) getEl('shard-set-auto-links').checked = set.filesAndLinks.autoUpdateLinks;
-  if (getEl('shard-set-confirm-auto-links')) getEl('shard-set-confirm-auto-links').checked = set.filesAndLinks.confirmAutoUpdateLinks !== false;
-  if (getEl('shard-set-new-note-loc')) getEl('shard-set-new-note-loc').value = set.filesAndLinks.newNoteLocation;
-  if (getEl('shard-set-new-note-folder')) getEl('shard-set-new-note-folder').value = set.filesAndLinks.newNoteFolder;
-  if (getEl('shard-set-new-attach-loc')) getEl('shard-set-new-attach-loc').value = set.filesAndLinks.newAttachmentLocation;
-  if (getEl('shard-set-new-attach-folder')) getEl('shard-set-new-attach-folder').value = set.filesAndLinks.newAttachmentFolder;
-  if (getEl('shard-set-always-focus')) getEl('shard-set-always-focus').checked = set.editor.alwaysFocusNewTabs;
-  if (getEl('shard-set-show-edit-mode')) getEl('shard-set-show-edit-mode').checked = set.editor.showEditingModeInStatusBar;
-  if (getEl('shard-set-properties')) getEl('shard-set-properties').value = set.editor.propertiesInDocument;
-  if (getEl('shard-set-indent-guides')) getEl('shard-set-indent-guides').checked = set.editor.indentationGuides;
-  if (getEl('shard-set-rtl')) getEl('shard-set-rtl').checked = set.editor.rtl;
-  if (getEl('shard-set-spellcheck')) getEl('shard-set-spellcheck').checked = set.editor.spellcheck;
-  if (getEl('shard-set-indent-width')) getEl('shard-set-indent-width').value = set.editor.indentVisualWidth;
-  if (getEl('shard-set-convert-html')) getEl('shard-set-convert-html').checked = set.editor.convertPastedHtml;
-  if (getEl('shard-set-default-file-open')) getEl('shard-set-default-file-open').value = set.filesAndLinks.defaultFileToOpen;
-  const specificFileRow = document.getElementById('shard-specific-file-row');
-  const specificFileInput = document.getElementById('shard-set-specific-file');
+  if (getEl('vault-set-default-view')) getEl('vault-set-default-view').value = set.editor.defaultView;
+  if (getEl('vault-set-readable-line')) getEl('vault-set-readable-line').checked = set.editor.readableLineLength;
+  if (getEl('vault-set-strict-breaks')) getEl('vault-set-strict-breaks').checked = set.editor.strictLineBreaks;
+  if (getEl('vault-set-fold-heading')) getEl('vault-set-fold-heading').checked = set.editor.foldHeading;
+  if (getEl('vault-set-fold-indent')) getEl('vault-set-fold-indent').checked = set.editor.foldIndent;
+  if (getEl('vault-set-line-numbers')) getEl('vault-set-line-numbers').checked = set.editor.showLineNumbers;
+  if (getEl('vault-set-auto-brackets')) getEl('vault-set-auto-brackets').checked = set.editor.autoPairBrackets;
+  if (getEl('vault-set-auto-md')) getEl('vault-set-auto-md').checked = set.editor.autoPairMarkdown;
+  if (getEl('vault-set-smart-lists')) getEl('vault-set-smart-lists').checked = set.editor.smartLists;
+  if (getEl('vault-set-indent-tabs')) getEl('vault-set-indent-tabs').checked = set.editor.indentWithTabs;
+  if (getEl('vault-set-vim')) getEl('vault-set-vim').checked = set.editor.vimBindings;
+  if (getEl('vault-set-inline-title')) getEl('vault-set-inline-title').checked = set.appearance.showInlineTitle;
+  if (getEl('vault-set-monospace-font')) getEl('vault-set-monospace-font').checked = set.appearance.monospaceFont;
+  if (getEl('vault-set-show-ribbon')) getEl('vault-set-show-ribbon').checked = set.appearance.showRibbon !== false;
+  if (getEl('vault-set-wikilinks')) getEl('vault-set-wikilinks').checked = set.filesAndLinks.useWikilinks;
+  if (getEl('vault-set-link-format')) getEl('vault-set-link-format').value = set.filesAndLinks.linkFormat;
+  if (getEl('vault-set-confirm-delete')) getEl('vault-set-confirm-delete').checked = set.filesAndLinks.confirmDelete;
+  if (getEl('vault-set-auto-links')) getEl('vault-set-auto-links').checked = set.filesAndLinks.autoUpdateLinks;
+  if (getEl('vault-set-confirm-auto-links')) getEl('vault-set-confirm-auto-links').checked = set.filesAndLinks.confirmAutoUpdateLinks !== false;
+  if (getEl('vault-set-new-note-loc')) getEl('vault-set-new-note-loc').value = set.filesAndLinks.newNoteLocation;
+  if (getEl('vault-set-new-note-folder')) getEl('vault-set-new-note-folder').value = set.filesAndLinks.newNoteFolder;
+  if (getEl('vault-set-new-attach-loc')) getEl('vault-set-new-attach-loc').value = set.filesAndLinks.newAttachmentLocation;
+  if (getEl('vault-set-new-attach-folder')) getEl('vault-set-new-attach-folder').value = set.filesAndLinks.newAttachmentFolder;
+  if (getEl('vault-set-always-focus')) getEl('vault-set-always-focus').checked = set.editor.alwaysFocusNewTabs;
+  if (getEl('vault-set-show-edit-mode')) getEl('vault-set-show-edit-mode').checked = set.editor.showEditingModeInStatusBar;
+  if (getEl('vault-set-properties')) getEl('vault-set-properties').value = set.editor.propertiesInDocument;
+  if (getEl('vault-set-indent-guides')) getEl('vault-set-indent-guides').checked = set.editor.indentationGuides;
+  if (getEl('vault-set-rtl')) getEl('vault-set-rtl').checked = set.editor.rtl;
+  if (getEl('vault-set-spellcheck')) getEl('vault-set-spellcheck').checked = set.editor.spellcheck;
+  if (getEl('vault-set-indent-width')) getEl('vault-set-indent-width').value = set.editor.indentVisualWidth;
+  if (getEl('vault-set-convert-html')) getEl('vault-set-convert-html').checked = set.editor.convertPastedHtml;
+  if (getEl('vault-set-default-file-open')) getEl('vault-set-default-file-open').value = set.filesAndLinks.defaultFileToOpen;
+  const specificFileRow = document.getElementById('vault-specific-file-row');
+  const specificFileInput = document.getElementById('vault-set-specific-file');
   if (specificFileRow && specificFileInput) {
     specificFileRow.classList.toggle('hidden', set.filesAndLinks.defaultFileToOpen !== 'specific-file');
     const selectedNote = _notes.find(n => n.id === set.filesAndLinks.defaultSpecificFile);
     specificFileInput.value = selectedNote ? (selectedNote.title || selectedNote.id) : '';
     specificFileInput.dataset.noteId = set.filesAndLinks.defaultSpecificFile || '';
   }
-  if (getEl('shard-set-detect-ext')) getEl('shard-set-detect-ext').checked = set.filesAndLinks.detectAllFileExtensions;
-  if (getEl('shard-set-tab-title-bar')) getEl('shard-set-tab-title-bar').checked = set.appearance.showTabTitleBar;
-  if (getEl('shard-set-backlinks-bottom')) getEl('shard-set-backlinks-bottom').checked = set.appearance.showBacklinksAtBottom;
+  if (getEl('vault-set-detect-ext')) getEl('vault-set-detect-ext').checked = set.filesAndLinks.detectAllFileExtensions;
+  if (getEl('vault-set-tab-title-bar')) getEl('vault-set-tab-title-bar').checked = set.appearance.showTabTitleBar;
+  if (getEl('vault-set-backlinks-bottom')) getEl('vault-set-backlinks-bottom').checked = set.appearance.showBacklinksAtBottom;
   // Plugin settings
   const ps = set.plugins || {};
-  if (getEl('shard-plugin-set-backlinks-bottom')) getEl('shard-plugin-set-backlinks-bottom').checked = ps.backlinks?.showBacklinksAtBottom ?? false;
-  if (getEl('shard-plugin-set-dn-date-format')) getEl('shard-plugin-set-dn-date-format').value = ps['daily-notes']?.dateFormat ?? 'YYYY-MM-DD';
-  if (getEl('shard-plugin-set-dn-location')) getEl('shard-plugin-set-dn-location').value = ps['daily-notes']?.newFileLocation ?? '';
-  if (getEl('shard-plugin-set-dn-template')) getEl('shard-plugin-set-dn-template').value = ps['daily-notes']?.templateFileLocation ?? '';
-  if (getEl('shard-plugin-set-qs-existing')) getEl('shard-plugin-set-qs-existing').checked = ps['quick-switcher']?.showExistingOnly ?? false;
-  if (getEl('shard-plugin-set-qs-attachments')) getEl('shard-plugin-set-qs-attachments').checked = ps['quick-switcher']?.showAttachments ?? true;
-  if (getEl('shard-plugin-set-tmpl-folder')) getEl('shard-plugin-set-tmpl-folder').value = ps.templates?.templateFolderLocation ?? '';
-  if (getEl('shard-plugin-set-tmpl-date')) getEl('shard-plugin-set-tmpl-date').value = ps.templates?.dateFormat ?? 'DD-MM-YYYY';
-  if (getEl('shard-plugin-set-tmpl-time')) getEl('shard-plugin-set-tmpl-time').value = ps.templates?.timeFormat ?? 'HH:mm';
+  if (getEl('vault-plugin-set-backlinks-bottom')) getEl('vault-plugin-set-backlinks-bottom').checked = ps.backlinks?.showBacklinksAtBottom ?? false;
+  if (getEl('vault-plugin-set-dn-date-format')) getEl('vault-plugin-set-dn-date-format').value = ps['daily-notes']?.dateFormat ?? 'YYYY-MM-DD';
+  if (getEl('vault-plugin-set-dn-location')) getEl('vault-plugin-set-dn-location').value = ps['daily-notes']?.newFileLocation ?? '';
+  if (getEl('vault-plugin-set-dn-template')) getEl('vault-plugin-set-dn-template').value = ps['daily-notes']?.templateFileLocation ?? '';
+  if (getEl('vault-plugin-set-qs-existing')) getEl('vault-plugin-set-qs-existing').checked = ps['quick-switcher']?.showExistingOnly ?? false;
+  if (getEl('vault-plugin-set-qs-attachments')) getEl('vault-plugin-set-qs-attachments').checked = ps['quick-switcher']?.showAttachments ?? true;
+  if (getEl('vault-plugin-set-tmpl-folder')) getEl('vault-plugin-set-tmpl-folder').value = ps.templates?.templateFolderLocation ?? '';
+  if (getEl('vault-plugin-set-tmpl-date')) getEl('vault-plugin-set-tmpl-date').value = ps.templates?.dateFormat ?? 'DD-MM-YYYY';
+  if (getEl('vault-plugin-set-tmpl-time')) getEl('vault-plugin-set-tmpl-time').value = ps.templates?.timeFormat ?? 'HH:mm';
   _renderPluginSettings();
   _switchPluginSettingsPane(_selectedPluginSettings);
   _renderHotkeySettings();
+  _renderCommunityPluginsPane();
   _applyMonospaceFont();
   _applyReadableLineLength();
   _switchSettingsPane('editor');
 }
 
-function _closeShardSettings() {
-  document.getElementById('shard-settings-dialog')?.classList.add('hidden');
+function _closeVaultSettings() {
+  document.getElementById('vault-settings-dialog')?.classList.add('hidden');
 }
 
-function _wireShardSettings() {
-  document.getElementById('shard-settings-cog')?.addEventListener('click', (e) => {
+function _wireVaultSettings() {
+  document.getElementById('vault-settings-cog')?.addEventListener('click', (e) => {
     e.stopPropagation();
-    _openShardSettings();
+    _openVaultSettings();
   });
-  document.getElementById('shard-settings-close')?.addEventListener('click', _closeShardSettings);
-  document.querySelectorAll('.shard-settings-nav-item').forEach(item => {
+  document.getElementById('vault-settings-close')?.addEventListener('click', _closeVaultSettings);
+  document.querySelectorAll('.vault-settings-nav-item').forEach(item => {
     item.addEventListener('click', () => {
       if (!item.disabled) _switchSettingsPane(item.dataset.settingsSection);
     });
@@ -4036,12 +4416,12 @@ function _wireShardSettings() {
     if (!el) return;
     el.addEventListener('change', () => {
       const keys = path.split('.');
-      let target = _shardSettings;
+      let target = _vaultSettings;
       for (let i = 0; i < keys.length - 1; i++) target = target[keys[i]];
       target[keys[keys.length - 1]] = el.checked;
-      _saveShardSettings();
+      _saveVaultSettings();
       if (path === 'appearance.fontSize') {
-        document.documentElement.style.setProperty('--shard-font-size', el.value + 'px');
+        document.documentElement.style.setProperty('--vault-font-size', el.value + 'px');
       }
       if (path === 'appearance.monospaceFont') {
         _applyMonospaceFont();
@@ -4059,10 +4439,10 @@ function _wireShardSettings() {
     if (!el) return;
     el.addEventListener('change', () => {
       const keys = path.split('.');
-      let target = _shardSettings;
+      let target = _vaultSettings;
       for (let i = 0; i < keys.length - 1; i++) target = target[keys[i]];
       target[keys[keys.length - 1]] = el.value;
-      _saveShardSettings();
+      _saveVaultSettings();
       if (path === 'editor.defaultView') {
         _previewMode = el.value === 'live' ? 'live' : el.value === 'source' ? 'edit' : 'preview';
         _editModePref = el.value === 'source' ? 'edit' : 'live';
@@ -4075,49 +4455,49 @@ function _wireShardSettings() {
     if (!el) return;
     el.addEventListener('input', () => {
       const keys = path.split('.');
-      let target = _shardSettings;
+      let target = _vaultSettings;
       for (let i = 0; i < keys.length - 1; i++) target = target[keys[i]];
       target[keys[keys.length - 1]] = parseInt(el.value, 10);
-      _saveShardSettings();
+      _saveVaultSettings();
       const valEl = document.getElementById(valId);
       if (valEl) valEl.textContent = el.value;
       if (path === 'appearance.fontSize') {
-        document.documentElement.style.setProperty('--shard-font-size', el.value + 'px');
+        document.documentElement.style.setProperty('--vault-font-size', el.value + 'px');
       }
     });
   };
-  bindToggle('shard-set-readable-line', 'editor.readableLineLength');
-  bindToggle('shard-set-strict-breaks', 'editor.strictLineBreaks');
-  bindToggle('shard-set-fold-heading', 'editor.foldHeading');
-  bindToggle('shard-set-fold-indent', 'editor.foldIndent');
-  bindToggle('shard-set-always-focus', 'editor.alwaysFocusNewTabs');
-  bindToggle('shard-set-show-edit-mode', 'editor.showEditingModeInStatusBar');
-  bindSelect('shard-set-properties', 'editor.propertiesInDocument');
-  bindToggle('shard-set-indent-guides', 'editor.indentationGuides');
-  bindToggle('shard-set-rtl', 'editor.rtl');
-  bindToggle('shard-set-spellcheck', 'editor.spellcheck');
-  bindToggle('shard-set-convert-html', 'editor.convertPastedHtml');
-  bindToggle('shard-set-detect-ext', 'filesAndLinks.detectAllFileExtensions');
-  bindToggle('shard-set-tab-title-bar', 'appearance.showTabTitleBar');
-  bindToggle('shard-set-backlinks-bottom', 'appearance.showBacklinksAtBottom');
-  const indentWidthInput = document.getElementById('shard-set-indent-width');
+  bindToggle('vault-set-readable-line', 'editor.readableLineLength');
+  bindToggle('vault-set-strict-breaks', 'editor.strictLineBreaks');
+  bindToggle('vault-set-fold-heading', 'editor.foldHeading');
+  bindToggle('vault-set-fold-indent', 'editor.foldIndent');
+  bindToggle('vault-set-always-focus', 'editor.alwaysFocusNewTabs');
+  bindToggle('vault-set-show-edit-mode', 'editor.showEditingModeInStatusBar');
+  bindSelect('vault-set-properties', 'editor.propertiesInDocument');
+  bindToggle('vault-set-indent-guides', 'editor.indentationGuides');
+  bindToggle('vault-set-rtl', 'editor.rtl');
+  bindToggle('vault-set-spellcheck', 'editor.spellcheck');
+  bindToggle('vault-set-convert-html', 'editor.convertPastedHtml');
+  bindToggle('vault-set-detect-ext', 'filesAndLinks.detectAllFileExtensions');
+  bindToggle('vault-set-tab-title-bar', 'appearance.showTabTitleBar');
+  bindToggle('vault-set-backlinks-bottom', 'appearance.showBacklinksAtBottom');
+  const indentWidthInput = document.getElementById('vault-set-indent-width');
   if (indentWidthInput) {
     indentWidthInput.addEventListener('change', () => {
-      _shardSettings.editor.indentVisualWidth = parseInt(indentWidthInput.value, 10) || 4;
-      _saveShardSettings();
+      _vaultSettings.editor.indentVisualWidth = parseInt(indentWidthInput.value, 10) || 4;
+      _saveVaultSettings();
     });
   }
-  const defaultFileOpenSelect = document.getElementById('shard-set-default-file-open');
+  const defaultFileOpenSelect = document.getElementById('vault-set-default-file-open');
   if (defaultFileOpenSelect) {
     defaultFileOpenSelect.addEventListener('change', () => {
-      _shardSettings.filesAndLinks.defaultFileToOpen = defaultFileOpenSelect.value;
-      const row = document.getElementById('shard-specific-file-row');
+      _vaultSettings.filesAndLinks.defaultFileToOpen = defaultFileOpenSelect.value;
+      const row = document.getElementById('vault-specific-file-row');
       if (row) row.classList.toggle('hidden', defaultFileOpenSelect.value !== 'specific-file');
-      _saveShardSettings();
+      _saveVaultSettings();
     });
   }
-  const specificFileInput = document.getElementById('shard-set-specific-file');
-  const specificFileSuggestions = document.getElementById('shard-specific-file-suggestions');
+  const specificFileInput = document.getElementById('vault-set-specific-file');
+  const specificFileSuggestions = document.getElementById('vault-specific-file-suggestions');
   if (specificFileInput && specificFileSuggestions) {
     const _showSuggestions = (query) => {
       const q = query.toLowerCase().trim();
@@ -4128,18 +4508,18 @@ function _wireShardSettings() {
         return;
       }
       specificFileSuggestions.innerHTML = matches.map(n =>
-        `<div class="shard-note-menu-item" data-note-id="${_esc(n.id)}"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(n.title || n.id)}</span></div>`
+        `<div class="vault-note-menu-item" data-note-id="${_esc(n.id)}"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(n.title || n.id)}</span></div>`
       ).join('');
       specificFileSuggestions.classList.remove('hidden');
-      specificFileSuggestions.querySelectorAll('.shard-note-menu-item').forEach(item => {
+      specificFileSuggestions.querySelectorAll('.vault-note-menu-item').forEach(item => {
         item.addEventListener('click', (e) => {
           e.stopPropagation();
           const noteId = item.dataset.noteId;
           const note = _notes.find(n => n.id === noteId);
           specificFileInput.value = note ? (note.title || note.id) : noteId;
           specificFileInput.dataset.noteId = noteId;
-          _shardSettings.filesAndLinks.defaultSpecificFile = noteId;
-          _saveShardSettings();
+          _vaultSettings.filesAndLinks.defaultSpecificFile = noteId;
+          _saveVaultSettings();
           specificFileSuggestions.classList.add('hidden');
         });
       });
@@ -4162,20 +4542,20 @@ function _wireShardSettings() {
       }
     });
   }
-  const lineNumToggle = document.getElementById('shard-set-line-numbers');
+  const lineNumToggle = document.getElementById('vault-set-line-numbers');
   if (lineNumToggle) {
     lineNumToggle.addEventListener('change', () => {
-      _shardSettings.editor.showLineNumbers = lineNumToggle.checked;
-      _saveShardSettings();
+      _vaultSettings.editor.showLineNumbers = lineNumToggle.checked;
+      _saveVaultSettings();
       if (_selectedNoteId) _selectNote(_selectedNoteId);
     });
   }
-  bindToggle('shard-set-auto-brackets', 'editor.autoPairBrackets');
-  bindToggle('shard-set-auto-md', 'editor.autoPairMarkdown');
-  bindToggle('shard-set-smart-lists', 'editor.smartLists');
-  bindToggle('shard-set-indent-tabs', 'editor.indentWithTabs');
-  bindToggle('shard-set-vim', 'editor.vimBindings');
-  const pluginSearchInput = document.getElementById('shard-plugin-search');
+  bindToggle('vault-set-auto-brackets', 'editor.autoPairBrackets');
+  bindToggle('vault-set-auto-md', 'editor.autoPairMarkdown');
+  bindToggle('vault-set-smart-lists', 'editor.smartLists');
+  bindToggle('vault-set-indent-tabs', 'editor.indentWithTabs');
+  bindToggle('vault-set-vim', 'editor.vimBindings');
+  const pluginSearchInput = document.getElementById('vault-plugin-search');
   if (pluginSearchInput) {
     pluginSearchInput.addEventListener('input', () => {
       _renderPluginSettings(pluginSearchInput.value);
@@ -4186,77 +4566,77 @@ function _wireShardSettings() {
     const el = document.getElementById(id);
     if (!el) return;
     el.addEventListener('change', () => {
-      if (!_shardSettings.plugins[pluginId]) _shardSettings.plugins[pluginId] = {};
-      _shardSettings.plugins[pluginId][key] = el.checked;
-      _saveShardSettings();
+      if (!_vaultSettings.plugins[pluginId]) _vaultSettings.plugins[pluginId] = {};
+      _vaultSettings.plugins[pluginId][key] = el.checked;
+      _saveVaultSettings();
     });
   };
   const wirePluginInput = (id, pluginId, key) => {
     const el = document.getElementById(id);
     if (!el) return;
     el.addEventListener('change', () => {
-      if (!_shardSettings.plugins[pluginId]) _shardSettings.plugins[pluginId] = {};
-      _shardSettings.plugins[pluginId][key] = el.value;
-      _saveShardSettings();
+      if (!_vaultSettings.plugins[pluginId]) _vaultSettings.plugins[pluginId] = {};
+      _vaultSettings.plugins[pluginId][key] = el.value;
+      _saveVaultSettings();
     });
   };
-  wirePluginToggle('shard-plugin-set-backlinks-bottom', 'backlinks', 'showBacklinksAtBottom');
-  wirePluginInput('shard-plugin-set-dn-date-format', 'daily-notes', 'dateFormat');
-  wirePluginInput('shard-plugin-set-dn-location', 'daily-notes', 'newFileLocation');
-  wirePluginInput('shard-plugin-set-dn-template', 'daily-notes', 'templateFileLocation');
-  wirePluginToggle('shard-plugin-set-qs-existing', 'quick-switcher', 'showExistingOnly');
-  wirePluginToggle('shard-plugin-set-qs-attachments', 'quick-switcher', 'showAttachments');
-  wirePluginInput('shard-plugin-set-tmpl-folder', 'templates', 'templateFolderLocation');
-  wirePluginInput('shard-plugin-set-tmpl-date', 'templates', 'dateFormat');
-  wirePluginInput('shard-plugin-set-tmpl-time', 'templates', 'timeFormat');
-  const inlineTitleToggle = document.getElementById('shard-set-inline-title');
+  wirePluginToggle('vault-plugin-set-backlinks-bottom', 'backlinks', 'showBacklinksAtBottom');
+  wirePluginInput('vault-plugin-set-dn-date-format', 'daily-notes', 'dateFormat');
+  wirePluginInput('vault-plugin-set-dn-location', 'daily-notes', 'newFileLocation');
+  wirePluginInput('vault-plugin-set-dn-template', 'daily-notes', 'templateFileLocation');
+  wirePluginToggle('vault-plugin-set-qs-existing', 'quick-switcher', 'showExistingOnly');
+  wirePluginToggle('vault-plugin-set-qs-attachments', 'quick-switcher', 'showAttachments');
+  wirePluginInput('vault-plugin-set-tmpl-folder', 'templates', 'templateFolderLocation');
+  wirePluginInput('vault-plugin-set-tmpl-date', 'templates', 'dateFormat');
+  wirePluginInput('vault-plugin-set-tmpl-time', 'templates', 'timeFormat');
+  const inlineTitleToggle = document.getElementById('vault-set-inline-title');
   if (inlineTitleToggle) {
     inlineTitleToggle.addEventListener('change', () => {
-      _shardSettings.appearance.showInlineTitle = inlineTitleToggle.checked;
-      _saveShardSettings();
+      _vaultSettings.appearance.showInlineTitle = inlineTitleToggle.checked;
+      _saveVaultSettings();
       if (_selectedNoteId) _selectNote(_selectedNoteId);
     });
   }
-  bindToggle('shard-set-monospace-font', 'appearance.monospaceFont');
-  bindToggle('shard-set-show-ribbon', 'appearance.showRibbon');
-  const showRibbonToggle = document.getElementById('shard-set-show-ribbon');
+  bindToggle('vault-set-monospace-font', 'appearance.monospaceFont');
+  bindToggle('vault-set-show-ribbon', 'appearance.showRibbon');
+  const showRibbonToggle = document.getElementById('vault-set-show-ribbon');
   if (showRibbonToggle) {
     showRibbonToggle.addEventListener('change', () => _renderRibbon());
   }
-  document.getElementById('shard-set-ribbon-config-btn')?.addEventListener('click', () => {
+  document.getElementById('vault-set-ribbon-config-btn')?.addEventListener('click', () => {
     _openRibbonConfigDialog();
   });
-  bindToggle('shard-set-wikilinks', 'filesAndLinks.useWikilinks');
-  bindToggle('shard-set-confirm-delete', 'filesAndLinks.confirmDelete');
-  bindToggle('shard-set-auto-links', 'filesAndLinks.autoUpdateLinks');
-  bindToggle('shard-set-confirm-auto-links', 'filesAndLinks.confirmAutoUpdateLinks');
-  bindSelect('shard-set-default-view', 'editor.defaultView');
-  bindSelect('shard-set-link-format', 'filesAndLinks.linkFormat');
-  bindSelect('shard-set-new-note-loc', 'filesAndLinks.newNoteLocation');
-  bindSelect('shard-set-new-attach-loc', 'filesAndLinks.newAttachmentLocation');
-  const newNoteFolderInput = document.getElementById('shard-set-new-note-folder');
+  bindToggle('vault-set-wikilinks', 'filesAndLinks.useWikilinks');
+  bindToggle('vault-set-confirm-delete', 'filesAndLinks.confirmDelete');
+  bindToggle('vault-set-auto-links', 'filesAndLinks.autoUpdateLinks');
+  bindToggle('vault-set-confirm-auto-links', 'filesAndLinks.confirmAutoUpdateLinks');
+  bindSelect('vault-set-default-view', 'editor.defaultView');
+  bindSelect('vault-set-link-format', 'filesAndLinks.linkFormat');
+  bindSelect('vault-set-new-note-loc', 'filesAndLinks.newNoteLocation');
+  bindSelect('vault-set-new-attach-loc', 'filesAndLinks.newAttachmentLocation');
+  const newNoteFolderInput = document.getElementById('vault-set-new-note-folder');
   if (newNoteFolderInput) {
     newNoteFolderInput.addEventListener('change', () => {
-      _shardSettings.filesAndLinks.newNoteFolder = newNoteFolderInput.value;
-      _saveShardSettings();
+      _vaultSettings.filesAndLinks.newNoteFolder = newNoteFolderInput.value;
+      _saveVaultSettings();
     });
   }
-  const newAttachFolderInput = document.getElementById('shard-set-new-attach-folder');
+  const newAttachFolderInput = document.getElementById('vault-set-new-attach-folder');
   if (newAttachFolderInput) {
     newAttachFolderInput.addEventListener('change', () => {
-      _shardSettings.filesAndLinks.newAttachmentFolder = newAttachFolderInput.value;
-      _saveShardSettings();
+      _vaultSettings.filesAndLinks.newAttachmentFolder = newAttachFolderInput.value;
+      _saveVaultSettings();
     });
   }
   // Settings dialog drag
-  const settingsHeader = document.getElementById('shard-settings-header');
-  const settingsCard = document.querySelector('.shard-settings-dialog-card');
+  const settingsHeader = document.getElementById('vault-settings-header');
+  const settingsCard = document.querySelector('.vault-settings-dialog-card');
   if (settingsHeader && settingsCard) {
     let isDragging = false;
     let dragStartX = 0, dragStartY = 0;
     let cardStartX = 0, cardStartY = 0;
     settingsHeader.addEventListener('mousedown', (e) => {
-      if (e.target.closest('#shard-settings-close')) return;
+      if (e.target.closest('#vault-settings-close')) return;
       isDragging = true;
       dragStartX = e.clientX;
       dragStartY = e.clientY;
@@ -4284,11 +4664,11 @@ function _wireShardSettings() {
 
   // Settings dialog resize — uses same edge/corner mechanic as other Odysseus windows
   if (settingsCard) {
-    const settingsHeader = settingsCard.querySelector('.shard-settings-header');
+    const settingsHeader = settingsCard.querySelector('.vault-settings-header');
     makeWindowResizable(settingsCard, {
       minWidth: 400,
       minHeight: 300,
-      storageKey: 'winsize-shard-settings',
+      storageKey: 'winsize-vault-settings',
       cursorTargets: settingsHeader ? [settingsCard, settingsHeader] : [settingsCard]
     });
   }
@@ -4299,21 +4679,21 @@ function _wireShardSettings() {
 
 let _cssSnippets = [];
 try {
-  const raw = localStorage.getItem('shard-css-snippets');
+  const raw = localStorage.getItem('vault-css-snippets');
   if (raw) _cssSnippets = JSON.parse(raw);
 } catch {}
 
 function _persistCssSnippets() {
-  try { localStorage.setItem('shard-css-snippets', JSON.stringify(_cssSnippets)); } catch {}
+  try { localStorage.setItem('vault-css-snippets', JSON.stringify(_cssSnippets)); } catch {}
 }
 
 function _injectCssSnippets() {
   // Remove existing injected snippets
-  document.querySelectorAll('style.shard-css-snippet').forEach(el => el.remove());
+  document.querySelectorAll('style.vault-css-snippet').forEach(el => el.remove());
   const enabled = _cssSnippets.filter(s => s.enabled);
   for (const s of enabled) {
     const style = document.createElement('style');
-    style.className = 'shard-css-snippet';
+    style.className = 'vault-css-snippet';
     style.dataset.snippetId = s.id;
     style.textContent = s.content;
     document.head.appendChild(style);
@@ -4323,27 +4703,27 @@ function _injectCssSnippets() {
 let _snippetEditingId = null;
 
 function _renderSnippetsList() {
-  const list = document.getElementById('shard-snippets-list');
-  const editor = document.getElementById('shard-snippet-editor');
+  const list = document.getElementById('vault-snippets-list');
+  const editor = document.getElementById('vault-snippet-editor');
   if (!list) return;
   if (_cssSnippets.length === 0) {
     list.innerHTML = '<div style="padding:8px;text-align:center;opacity:0.5;font-size:12px;">No snippets yet. Click "+ New snippet" to create one.</div>';
   } else {
     list.innerHTML = _cssSnippets.map(s => `
-      <div class="shard-settings-row" style="gap:10px;">
+      <div class="vault-settings-row" style="gap:10px;">
         <label class="admin-switch" style="flex-shrink:0;">
-          <input type="checkbox" class="shard-snippet-toggle" data-snippet-id="${_esc(s.id)}" ${s.enabled ? 'checked' : ''}>
+          <input type="checkbox" class="vault-snippet-toggle" data-snippet-id="${_esc(s.id)}" ${s.enabled ? 'checked' : ''}>
           <span class="admin-slider"></span>
         </label>
-        <div class="shard-settings-info" style="flex:1;cursor:pointer;" data-snippet-edit="${_esc(s.id)}">
+        <div class="vault-settings-info" style="flex:1;cursor:pointer;" data-snippet-edit="${_esc(s.id)}">
           <span>${_esc(s.name || 'Untitled')}</span>
-          <span class="shard-settings-desc">${s.content.length} chars</span>
+          <span class="vault-settings-desc">${s.content.length} chars</span>
         </div>
-        <button type="button" class="shard-snippet-edit-btn admin-btn-sm" data-snippet-id="${_esc(s.id)}">Edit</button>
+        <button type="button" class="vault-snippet-edit-btn admin-btn-sm" data-snippet-id="${_esc(s.id)}">Edit</button>
       </div>
     `).join('');
     // Wire toggles
-    list.querySelectorAll('.shard-snippet-toggle').forEach(toggle => {
+    list.querySelectorAll('.vault-snippet-toggle').forEach(toggle => {
       toggle.addEventListener('change', () => {
         const id = toggle.dataset.snippetId;
         const s = _cssSnippets.find(x => x.id === id);
@@ -4351,7 +4731,7 @@ function _renderSnippetsList() {
       });
     });
     // Wire edit buttons
-    list.querySelectorAll('.shard-snippet-edit-btn').forEach(btn => {
+    list.querySelectorAll('.vault-snippet-edit-btn').forEach(btn => {
       btn.addEventListener('click', () => _openSnippetEditor(btn.dataset.snippetId));
     });
     list.querySelectorAll('[data-snippet-edit]').forEach(row => {
@@ -4363,10 +4743,10 @@ function _renderSnippetsList() {
 }
 
 function _openSnippetEditor(id) {
-  const list = document.getElementById('shard-snippets-list');
-  const editor = document.getElementById('shard-snippet-editor');
-  const nameInput = document.getElementById('shard-snippet-name');
-  const contentInput = document.getElementById('shard-snippet-content');
+  const list = document.getElementById('vault-snippets-list');
+  const editor = document.getElementById('vault-snippet-editor');
+  const nameInput = document.getElementById('vault-snippet-name');
+  const contentInput = document.getElementById('vault-snippet-content');
   if (!editor || !nameInput || !contentInput) return;
   _snippetEditingId = id || null;
   if (id) {
@@ -4387,8 +4767,8 @@ function _closeSnippetEditor() {
 }
 
 function _saveSnippet() {
-  const nameInput = document.getElementById('shard-snippet-name');
-  const contentInput = document.getElementById('shard-snippet-content');
+  const nameInput = document.getElementById('vault-snippet-name');
+  const contentInput = document.getElementById('vault-snippet-content');
   if (!nameInput || !contentInput) return;
   const name = nameInput.value.trim() || 'Untitled';
   const content = contentInput.value;
@@ -4414,10 +4794,10 @@ function _deleteSnippet() {
 
 function _wireSnippetSettings() {
   // CSS snippets are managed in their dedicated Snippets settings pane
-  document.getElementById('shard-snippet-add')?.addEventListener('click', () => _openSnippetEditor(null));
-  document.getElementById('shard-snippet-back')?.addEventListener('click', _closeSnippetEditor);
-  document.getElementById('shard-snippet-save')?.addEventListener('click', _saveSnippet);
-  document.getElementById('shard-snippet-delete')?.addEventListener('click', _deleteSnippet);
+  document.getElementById('vault-snippet-add')?.addEventListener('click', () => _openSnippetEditor(null));
+  document.getElementById('vault-snippet-back')?.addEventListener('click', _closeSnippetEditor);
+  document.getElementById('vault-snippet-save')?.addEventListener('click', _saveSnippet);
+  document.getElementById('vault-snippet-delete')?.addEventListener('click', _deleteSnippet);
 }
 
 function _getSearchRegex(query, caseSensitive) {
@@ -4466,10 +4846,10 @@ function _sortNotes(notes, sortBy) {
   }
 }
 
-function _renderSearchPane(query = '') {
-  const resultsEl = document.getElementById('shard-search-results');
-  const explainEl = document.getElementById('shard-search-explain-bar');
-  const clearBtn = document.getElementById('shard-search-clear');
+async function _renderSearchPane(query = '') {
+  const resultsEl = document.getElementById('vault-search-results');
+  const explainEl = document.getElementById('vault-search-explain-bar');
+  const clearBtn = document.getElementById('vault-search-clear');
   if (clearBtn) clearBtn.classList.toggle('hidden', !query.trim());
   if (!resultsEl) return;
 
@@ -4486,6 +4866,63 @@ function _renderSearchPane(query = '') {
   }
   _toggleSearchEmpty(false);
 
+  // ── Semantic search branch ────────────────────────────────
+  if (_searchState.semantic && !query.toLowerCase().startsWith('tag:')) {
+    resultsEl.innerHTML = '<div style="padding:20px;text-align:center;opacity:0.5;font-size:12px;">Searching by meaning...</div>';
+    try {
+      const resp = await fetch(`${API_BASE}/api/vault/semantic-search`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ query: query.trim(), top_k: 20 }),
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      const matches = data.results || [];
+
+      if (explainEl) {
+        if (_searchState.explain) {
+          explainEl.textContent = `${matches.length} semantic results — "${query}"`;
+          explainEl.classList.remove('hidden');
+        } else {
+          explainEl.classList.add('hidden');
+        }
+      }
+
+      if (!matches.length) {
+        resultsEl.innerHTML = '<div style="padding:10px;text-align:center;opacity:0.5;font-size:12px;">No results</div>';
+        return;
+      }
+
+      resultsEl.innerHTML = matches.map(n => {
+        const score = n.score != null ? Math.round(n.score * 100) : 0;
+        const preview = (n.content || '').split('\n').slice(0, 3).join('\n');
+        const override = _searchState.fileStates.get(n.id);
+        const isCollapsed = override !== undefined ? override : _searchState.collapse;
+        const chevron = isCollapsed ? '>' : '>';
+        const matchesHtml = _searchState.context
+          ? `<div class="vault-search-match raw">${_esc(preview)}</div>`
+          : `<div class="vault-search-match">${_esc(preview.slice(0, 160))}</div>`;
+
+        return `<div class="vault-search-file">
+          <div class="vault-search-file-header ${isCollapsed ? 'collapsed' : ''}" data-note-id="${_esc(n.id)}">
+            <span class="vault-search-chevron">${chevron}</span>
+            <span>${_esc(n.title)}</span>
+            <span class="vault-search-file-count" title="Relevance score">${score}%</span>
+          </div>
+          <div class="vault-search-matches" ${isCollapsed ? 'style="display:none"' : ''}>${matchesHtml}</div>
+        </div>`;
+      }).join('');
+
+      _wireSearchResultClicks(resultsEl, query);
+      return;
+    } catch (err) {
+      resultsEl.innerHTML = `<div style="padding:10px;text-align:center;opacity:0.5;font-size:12px;">Semantic search failed: ${_esc(err.message)}</div>`;
+      return;
+    }
+  }
+
+  // ── Keyword search branch (existing logic) ─────────────────
   // Parse tag: prefix
   let isTagSearch = false;
   let searchQuery = query;
@@ -4528,7 +4965,7 @@ function _renderSearchPane(query = '') {
     const matchCount = fileMatches.length;
     const override = _searchState.fileStates.get(n.id);
     const isCollapsed = override !== undefined ? override : _searchState.collapse;
-    const chevron = isCollapsed ? '&#9654;' : '&#9660;';
+    const chevron = isCollapsed ? '>' : '>';
 
     // Render matches (always build HTML; visibility controlled by display:none)
     // Cap at 15 per file to prevent lag on broad searches
@@ -4539,8 +4976,8 @@ function _renderSearchPane(query = '') {
     if (matchCount > 0) {
       matchesHtml = displayedMatches.map(m => {
         const display = _searchState.context
-          ? `<div class="shard-search-match raw">${_highlightText(m.text, regex)}</div>`
-          : `<div class="shard-search-match">${_highlightText(m.text, regex)}</div>`;
+          ? `<div class="vault-search-match raw">${_highlightText(m.text, regex)}</div>`
+          : `<div class="vault-search-match">${_highlightText(m.text, regex)}</div>`;
         return display;
       }).join('');
       if (hiddenCount > 0) {
@@ -4550,34 +4987,38 @@ function _renderSearchPane(query = '') {
       // Title-only match — show first few lines as context
       const preview = (n.content || '').split('\n').slice(0, 3).join('\n');
       matchesHtml = _searchState.context
-        ? `<div class="shard-search-match raw">${_esc(preview)}</div>`
-        : `<div class="shard-search-match">${_esc(preview.slice(0, 160))}</div>`;
+        ? `<div class="vault-search-match raw">${_esc(preview)}</div>`
+        : `<div class="vault-search-match">${_esc(preview.slice(0, 160))}</div>`;
     }
 
-    return `<div class="shard-search-file">
-      <div class="shard-search-file-header ${isCollapsed ? 'collapsed' : ''}" data-note-id="${_esc(n.id)}">
-        <span class="shard-search-chevron">${chevron}</span>
+    return `<div class="vault-search-file">
+      <div class="vault-search-file-header ${isCollapsed ? 'collapsed' : ''}" data-note-id="${_esc(n.id)}">
+        <span class="vault-search-chevron">${chevron}</span>
         <span>${_esc(n.title)}</span>
-        <span class="shard-search-file-count">${matchCount || (isTagSearch ? (n.tags || []).length : 0)}</span>
+        <span class="vault-search-file-count">${matchCount || (isTagSearch ? (n.tags || []).length : 0)}</span>
       </div>
-      <div class="shard-search-matches" ${isCollapsed ? 'style="display:none"' : ''}>${matchesHtml}</div>
+      <div class="vault-search-matches" ${isCollapsed ? 'style="display:none"' : ''}>${matchesHtml}</div>
     </div>`;
   }).join('');
 
+  _wireSearchResultClicks(resultsEl, query);
+}
+
+function _wireSearchResultClicks(resultsEl, query) {
   // Wire click on headers (toggle collapse + navigate on title click)
-  resultsEl.querySelectorAll('.shard-search-file-header').forEach(header => {
+  resultsEl.querySelectorAll('.vault-search-file-header').forEach(header => {
     header.addEventListener('click', (e) => {
       const noteId = header.dataset.noteId;
       // Click on chevron toggles collapse; click on title navigates
-      const isChevron = e.target.closest('.shard-search-chevron');
+      const isChevron = e.target.closest('.vault-search-chevron');
       if (isChevron) {
         const matchesDiv = header.nextElementSibling;
         const wasCollapsed = matchesDiv.style.display === 'none';
         const nowCollapsed = !wasCollapsed;
         matchesDiv.style.display = wasCollapsed ? '' : 'none';
         header.classList.toggle('collapsed', nowCollapsed);
-        const chevronEl = header.querySelector('.shard-search-chevron');
-        chevronEl.innerHTML = wasCollapsed ? '&#9660;' : '&#9654;';
+        const chevronEl = header.querySelector('.vault-search-chevron');
+        chevronEl.innerHTML = wasCollapsed ? '>' : '>';
         _searchState.fileStates.set(noteId, nowCollapsed);
       } else {
         _navigateToNote(noteId);
@@ -4590,7 +5031,7 @@ function _renderSearchPane(query = '') {
   _searchHistoryTimer = setTimeout(() => _addSearchHistory(query), 2000);
 
   // Right-click context menus on search results
-  resultsEl.querySelectorAll('.shard-search-file-header').forEach(header => {
+  resultsEl.querySelectorAll('.vault-search-file-header').forEach(header => {
     header.addEventListener('contextmenu', (e) => {
       _showFileContextMenu(e, header.dataset.noteId);
     });
@@ -4601,12 +5042,12 @@ function _renderSearchPane(query = '') {
 
 let _searchHistory = [];
 try {
-  const raw = localStorage.getItem('shard-search-history');
+  const raw = localStorage.getItem('vault-search-history');
   if (raw) _searchHistory = JSON.parse(raw);
 } catch {}
 
 function _persistSearchHistory() {
-  try { localStorage.setItem('shard-search-history', JSON.stringify(_searchHistory.slice(0, 20))); } catch {}
+  try { localStorage.setItem('vault-search-history', JSON.stringify(_searchHistory.slice(0, 20))); } catch {}
 }
 
 function _addSearchHistory(query) {
@@ -4618,7 +5059,7 @@ function _addSearchHistory(query) {
 }
 
 function _renderSearchHistory() {
-  const el = document.getElementById('shard-search-history');
+  const el = document.getElementById('vault-search-history');
   if (!el) return;
   if (!_searchHistory.length) {
     el.innerHTML = '<div style="padding:4px 6px;opacity:0.4;font-size:12px;">No recent searches</div>';
@@ -4627,24 +5068,24 @@ function _renderSearchHistory() {
   el.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2px;">
       <span></span>
-      <button class="shard-search-history-clear" title="Clear history" style="background:transparent;border:none;color:var(--fg);opacity:0.4;cursor:pointer;padding:2px;font-size:11px;">
+      <button class="vault-search-history-clear" title="Clear history" style="background:transparent;border:none;color:var(--fg);opacity:0.4;cursor:pointer;padding:2px;font-size:11px;">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </div>
   ` + _searchHistory.map(q =>
-    `<div class="shard-search-history-item" data-query="${_esc(q)}">
+    `<div class="vault-search-history-item" data-query="${_esc(q)}">
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
       <span>${_esc(q)}</span>
     </div>`
   ).join('');
-  el.querySelector('.shard-search-history-clear')?.addEventListener('click', () => {
+  el.querySelector('.vault-search-history-clear')?.addEventListener('click', () => {
     _searchHistory = [];
     _persistSearchHistory();
     _renderSearchHistory();
   });
-  el.querySelectorAll('.shard-search-history-item').forEach(item => {
+  el.querySelectorAll('.vault-search-history-item').forEach(item => {
     item.addEventListener('click', () => {
-      const input = document.getElementById('shard-search-input');
+      const input = document.getElementById('vault-search-input');
       if (input) {
         input.value = item.dataset.query;
         _renderSearchPane(item.dataset.query);
@@ -4654,7 +5095,7 @@ function _renderSearchHistory() {
 }
 
 function _toggleSearchEmpty(show) {
-  const emptyEl = document.getElementById('shard-search-empty');
+  const emptyEl = document.getElementById('vault-search-empty');
   if (emptyEl) emptyEl.classList.toggle('hidden', !show);
   if (show) _renderSearchHistory();
 }
@@ -4662,12 +5103,12 @@ function _toggleSearchEmpty(show) {
 let _bookmarks = new Set();
 
 try {
-  const raw = localStorage.getItem('shard-bookmarks');
+  const raw = localStorage.getItem('vault-bookmarks');
   if (raw) _bookmarks = new Set(JSON.parse(raw));
 } catch {}
 
 function _persistBookmarks() {
-  try { localStorage.setItem('shard-bookmarks', JSON.stringify([..._bookmarks])); } catch {}
+  try { localStorage.setItem('vault-bookmarks', JSON.stringify([..._bookmarks])); } catch {}
 }
 
 function _toggleBookmark(noteId) {
@@ -4705,12 +5146,12 @@ const _NOTE_ICON_PACK = {
 
 let _noteIcons = {};
 try {
-  const raw = localStorage.getItem('shard-note-icons');
+  const raw = localStorage.getItem('vault-note-icons');
   if (raw) _noteIcons = JSON.parse(raw);
 } catch {}
 
 function _persistNoteIcons() {
-  try { localStorage.setItem('shard-note-icons', JSON.stringify(_noteIcons)); } catch {}
+  try { localStorage.setItem('vault-note-icons', JSON.stringify(_noteIcons)); } catch {}
 }
 
 function _setNoteIcon(noteId, iconKey) {
@@ -4728,12 +5169,12 @@ function _getNoteIconSvg(noteId, fallbackKey = 'file', size = 13) {
 
 let _folderIcons = {};
 try {
-  const raw = localStorage.getItem('shard-folder-icons');
+  const raw = localStorage.getItem('vault-folder-icons');
   if (raw) _folderIcons = JSON.parse(raw);
 } catch {}
 
 function _persistFolderIcons() {
-  try { localStorage.setItem('shard-folder-icons', JSON.stringify(_folderIcons)); } catch {}
+  try { localStorage.setItem('vault-folder-icons', JSON.stringify(_folderIcons)); } catch {}
 }
 
 function _setFolderIcon(folderPath, iconKey) {
@@ -4750,7 +5191,7 @@ function _getFolderIconSvg(folderPath, fallbackKey = 'folder', size = 13) {
 }
 
 function _renderBookmarksPane() {
-  const el = document.getElementById('shard-bookmarks-list');
+  const el = document.getElementById('vault-bookmarks-list');
   if (!el) return;
   const items = [..._bookmarks].map(id => _notes.find(n => n.id === id)).filter(Boolean);
   if (!items.length) {
@@ -4759,18 +5200,18 @@ function _renderBookmarksPane() {
   }
   el.innerHTML = items.map(n => {
     const icon = _getNoteIconSvg(n.id, 'file', 12);
-    return `<div class="shard-bookmark-item" data-note-id="${_esc(n.id)}">
+    return `<div class="vault-bookmark-item" data-note-id="${_esc(n.id)}">
       <span style="display:inline-flex;align-items:center;flex-shrink:0;">${icon}</span>
       ${_esc(n.title)}
     </div>`;
   }).join('');
-  el.querySelectorAll('.shard-bookmark-item').forEach(item => {
+  el.querySelectorAll('.vault-bookmark-item').forEach(item => {
     item.addEventListener('click', () => _navigateToNote(item.dataset.noteId));
   });
 }
 
 function _renderTagsPane() {
-  const el = document.getElementById('shard-tags-cloud');
+  const el = document.getElementById('vault-tags-cloud');
   if (!el) return;
   const counts = {};
   _notes.forEach(n => {
@@ -4782,12 +5223,12 @@ function _renderTagsPane() {
     return;
   }
   el.innerHTML = tags.map(([tag, count]) =>
-    `<span class="shard-tag-chip" data-tag="${_esc(tag)}">${_esc(tag)}<span class="shard-tag-count">${count}</span></span>`
+    `<span class="vault-tag-chip" data-tag="${_esc(tag)}">${_esc(tag)}<span class="vault-tag-count">${count}</span></span>`
   ).join('');
-  el.querySelectorAll('.shard-tag-chip').forEach(chip => {
+  el.querySelectorAll('.vault-tag-chip').forEach(chip => {
     chip.addEventListener('click', () => {
       _searchQuery = chip.dataset.tag;
-      document.getElementById('shard-search-input').value = 'tag:' + chip.dataset.tag;
+      document.getElementById('vault-search-input').value = 'tag:' + chip.dataset.tag;
       _switchLeftTab('search');
       _renderSearchPane('tag:' + chip.dataset.tag);
     });
@@ -4798,7 +5239,7 @@ function _renderTagsPane() {
 
 function _restoreCachedNotes(vaultId) {
   try {
-    const cached = localStorage.getItem(`shard-notes-${vaultId}`);
+    const cached = localStorage.getItem(`vault-notes-${vaultId}`);
     if (cached) {
       const { notes, ts } = JSON.parse(cached);
       if (Date.now() - ts < 10 * 60 * 1000) { // 10 min TTL
@@ -4814,13 +5255,13 @@ function _restoreCachedNotes(vaultId) {
 }
 
 async function _loadNotes() {
-  const list = document.getElementById('shard-note-list');
+  const list = document.getElementById('vault-note-list');
   try {
     const qs = new URLSearchParams();
     if (_selectedVaultId) qs.set('vault_id', _selectedVaultId);
     if (_searchQuery) qs.set('q', _searchQuery);
     qs.set('limit', '9999');
-    const r = await fetch(`${API_BASE}/api/shard/notes?${qs.toString()}`);
+    const r = await fetch(`${API_BASE}/api/vault/notes?${qs.toString()}`);
     if (!r.ok) {
       const d = await r.json().catch(() => ({}));
       if (list) list.innerHTML = `<div style="padding:20px;text-align:center;opacity:0.5;font-size:12px;">Error loading notes: ${d.detail || r.status}</div>`;
@@ -4837,10 +5278,10 @@ async function _loadNotes() {
     _populateVaultDropdown();
     // Cache
     try {
-      localStorage.setItem(`shard-notes-${_selectedVaultId}`, JSON.stringify({ notes: _notes, ts: Date.now() }));
+      localStorage.setItem(`vault-notes-${_selectedVaultId}`, JSON.stringify({ notes: _notes, ts: Date.now() }));
     } catch {}
   } catch (e) {
-    console.error('Shard load failed', e);
+    console.error('Vault load failed', e);
     if (list) list.innerHTML = '<div style="padding:20px;text-align:center;opacity:0.5;font-size:12px;">Failed to load notes. Click Refresh to resync.</div>';
     _notes = [];
   }
@@ -4849,7 +5290,7 @@ async function _loadNotes() {
 // ── List View ────────────────────────────────────────────────
 
 function _renderNoteList() {
-  const list = document.getElementById('shard-note-list');
+  const list = document.getElementById('vault-note-list');
   if (!list) return;
 
   let filtered = _notes;
@@ -4877,17 +5318,17 @@ function _renderNoteList() {
   }
 
   list.innerHTML = filtered.map(n => `
-    <div class="shard-note-card ${n.id === _selectedNoteId ? 'selected' : ''}" data-id="${n.id}">
-      <div class="shard-note-card-title">${_esc(n.title)}</div>
-      <div class="shard-note-card-preview">${_esc(n.content?.slice(0, 120) || '')}</div>
-      <div class="shard-note-card-meta">
-        ${(n.tags || []).map(t => `<span class="shard-tag">${_esc(t)}</span>`).join('')}
-        <span class="shard-note-date">${n.last_modified_src?.slice(0, 10) || ''}</span>
+    <div class="vault-note-card ${n.id === _selectedNoteId ? 'selected' : ''}" data-id="${n.id}">
+      <div class="vault-note-card-title">${_esc(n.title)}</div>
+      <div class="vault-note-card-preview">${_esc(n.content?.slice(0, 120) || '')}</div>
+      <div class="vault-note-card-meta">
+        ${(n.tags || []).map(t => `<span class="vault-tag">${_esc(t)}</span>`).join('')}
+        <span class="vault-note-date">${n.last_modified_src?.slice(0, 10) || ''}</span>
       </div>
     </div>
   `).join('');
 
-  list.querySelectorAll('.shard-note-card').forEach(card => {
+  list.querySelectorAll('.vault-note-card').forEach(card => {
     card.addEventListener('click', (e) => _navigateToNote(card.dataset.id, true, e.ctrlKey || e.metaKey));
   });
 }
@@ -4927,6 +5368,18 @@ function _serializeFrontmatter(fm) {
 function _getNoteFullRaw(note) {
   const serialized = _serializeFrontmatter(note.frontmatter || {});
   return note.content ? serialized + '\n' + note.content : serialized;
+}
+
+function _stripFrontmatterFromContent(content) {
+  if (!content) return content;
+  const lines = content.split('\n');
+  if (lines[0]?.trim() === '---') {
+    const endIdx = lines.findIndex((l, idx) => idx > 0 && l.trim() === '---');
+    if (endIdx > 0) {
+      return lines.slice(endIdx + 1).join('\n').replace(/^\n+/, '');
+    }
+  }
+  return content;
 }
 
 async function _flushSourceEdit(sourceDiv, note) {
@@ -4990,8 +5443,9 @@ function _findUniqueUntitled(base, existing, ext = '') {
 async function _saveNoteContent(note, isRetry = false) {
   const serialized = _serializeFrontmatter(note.frontmatter || {});
   const fullContent = note.content ? serialized + '\n' + note.content : serialized;
+  console.log('[vault save] note.id:', note.id, 'content:', JSON.stringify(note.content), 'fullContent length:', fullContent.length);
   try {
-    const r = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(note.id)}/edit`, {
+    const r = await fetch(`${API_BASE}/api/vault/notes/${encodeURIComponent(note.id)}/edit`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
@@ -5010,13 +5464,13 @@ async function _saveNoteContent(note, isRetry = false) {
     } else {
       let errText = '';
       try { const d = await r.json(); errText = d.detail || JSON.stringify(d); } catch {}
-      console.error('[shard] save property failed', r.status, errText);
+      console.error('[vault] save property failed', r.status, errText);
       if (!isRetry) {
         setTimeout(() => _saveNoteContent(note, true), 2000);
       }
     }
   } catch (e) {
-    console.error('[shard] save property error', e);
+    console.error('[vault] save property error', e);
     if (!isRetry) {
       setTimeout(() => _saveNoteContent(note, true), 2000);
     }
@@ -5089,9 +5543,9 @@ function _gatherPropertyTypes() {
 
 function _buildTagChip(text, key) {
   const isTag = key.toLowerCase() === 'tags';
-  return `<span class="shard-prop-chip${isTag ? ' is-tag' : ''}" data-chip="${_esc(text)}" data-prop-key="${_esc(key)}" spellcheck="false">
-    <span class="shard-prop-chip-text">${_esc(text)}</span>
-    <span class="shard-prop-chip-x" data-action="remove-chip" title="Remove">&times;</span>
+  return `<span class="vault-prop-chip${isTag ? ' is-tag' : ''}" data-chip="${_esc(text)}" data-prop-key="${_esc(key)}" spellcheck="false">
+    <span class="vault-prop-chip-text">${_esc(text)}</span>
+    <span class="vault-prop-chip-x" data-action="remove-chip" title="Remove">&times;</span>
   </span>`;
 }
 
@@ -5146,30 +5600,30 @@ function _buildPropertiesHtml(frontmatter, note) {
     let valHtml;
     if (Array.isArray(v)) {
       const chips = v.map(item => _buildTagChip(String(item), k)).join('');
-      valHtml = `<span class="shard-prop-val" data-prop-key="${_esc(k)}" data-type="array" data-prop-type="${propType}" spellcheck="false">${chips}<span class="shard-prop-chip-input" contenteditable="plaintext-only" spellcheck="false"></span></span>`;
+      valHtml = `<span class="vault-prop-val" data-prop-key="${_esc(k)}" data-type="array" data-prop-type="${propType}" spellcheck="false">${chips}<span class="vault-prop-chip-input" contenteditable="plaintext-only" spellcheck="false"></span></span>`;
     } else if (v && typeof v === 'object') {
-      valHtml = `<span class="shard-prop-val" contenteditable="plaintext-only" spellcheck="false" data-prop-key="${_esc(k)}" data-prop-type="${propType}">${_esc(JSON.stringify(v))}</span>`;
+      valHtml = `<span class="vault-prop-val" contenteditable="plaintext-only" spellcheck="false" data-prop-key="${_esc(k)}" data-prop-type="${propType}">${_esc(JSON.stringify(v))}</span>`;
     } else if (propType === 'url') {
       const url = String(v ?? '');
-      valHtml = `<a class="shard-prop-val shard-prop-url" href="${_esc(url)}" target="_blank" rel="noopener noreferrer" data-prop-key="${_esc(k)}" data-prop-type="${propType}">${_esc(url)}</a>`;
+      valHtml = `<a class="vault-prop-val vault-prop-url" href="${_esc(url)}" target="_blank" rel="noopener noreferrer" data-prop-key="${_esc(k)}" data-prop-type="${propType}">${_esc(url)}</a>`;
     } else {
-      valHtml = `<span class="shard-prop-val" contenteditable="plaintext-only" spellcheck="false" data-prop-key="${_esc(k)}" data-prop-type="${propType}">${_esc(String(v ?? ''))}</span>`;
+      valHtml = `<span class="vault-prop-val" contenteditable="plaintext-only" spellcheck="false" data-prop-key="${_esc(k)}" data-prop-type="${propType}">${_esc(String(v ?? ''))}</span>`;
     }
-    return `<div class="shard-prop-row" data-prop-key="${_esc(k)}">
-      <span class="shard-prop-icon" data-prop-key="${_esc(k)}" title="Property options">${icon}</span>
-      <span class="shard-prop-key" spellcheck="false">${_esc(k)}</span>
+    return `<div class="vault-prop-row" data-prop-key="${_esc(k)}">
+      <span class="vault-prop-icon" data-prop-key="${_esc(k)}" title="Property options">${icon}</span>
+      <span class="vault-prop-key" spellcheck="false">${_esc(k)}</span>
       ${valHtml}
     </div>`;
   }).join('');
-  const addBtn = note ? `<button class="shard-prop-add-main" data-add-prop spellcheck="false"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add property</button>` : '';
+  const addBtn = note ? `<button class="vault-prop-add-main" data-add-prop spellcheck="false"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add property</button>` : '';
   const collapsedClass = _propsCollapsed ? 'collapsed' : '';
-  return `<div class="shard-properties-inline ${collapsedClass}" data-properties-container><h4 class="shard-prop-header">Properties<span class="shard-prop-chevron"></span></h4><div class="shard-prop-grid">${rows || ''}</div>${addBtn}</div>`;
+  return `<div class="vault-properties-inline ${collapsedClass}" data-properties-container><h4 class="vault-prop-header">Properties<span class="vault-prop-chevron"></span></h4><div class="vault-prop-grid">${rows || ''}</div>${addBtn}</div>`;
 }
 
 async function _selectNote(id) {
   _selectedNoteId = id;
 
-  const preview = document.getElementById('shard-preview');
+  const preview = document.getElementById('vault-preview');
   if (!preview) return;
 
   try {
@@ -5179,14 +5633,16 @@ async function _selectNote(id) {
       const cached = _notes.find(n => n.id === id || n.rel_path === id);
       if (cached) {
         note = { ...cached };
+        note.content = _stripFrontmatterFromContent(note.content);
         _noteContentCache.set(id, note);
       }
     }
     // If nothing in cache, must fetch before rendering
     if (!note) {
-      const r = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(id)}`);
+      const r = await fetch(`${API_BASE}/api/vault/notes/${encodeURIComponent(id)}`);
       if (!r.ok) { preview.style.display = 'none'; return; }
       note = await r.json();
+      note.content = _stripFrontmatterFromContent(note.content);
       _noteContentCache.set(id, note);
     }
     if (!note) { preview.style.display = 'none'; return; }
@@ -5200,11 +5656,11 @@ async function _selectNote(id) {
     }
     preview.style.display = 'block';
     const isAutoRename = _autoRenameNoteId === note.id;
-    const showTitle = _shardSettings.appearance.showInlineTitle;
-    const scTitle = _shardSettings.editor.spellcheck ? 'true' : 'false';
+    const showTitle = _vaultSettings.appearance.showInlineTitle;
+    const scTitle = _vaultSettings.editor.spellcheck ? 'true' : 'false';
     const headerHtml = showTitle
-      ? `<div class="shard-preview-header">${isAutoRename
-          ? `<span class="shard-title-edit" contenteditable="plaintext-only" spellcheck="${scTitle}">${_esc(note.title)}</span>`
+      ? `<div class="vault-preview-header">${isAutoRename
+          ? `<span class="vault-title-edit" contenteditable="plaintext-only" spellcheck="${scTitle}">${_esc(note.title)}</span>`
           : `<h1>${_esc(note.title)}</h1>`}</div>`
       : '';
     // In source mode, show raw YAML instead of property chips
@@ -5212,7 +5668,7 @@ async function _selectNote(id) {
     preview.innerHTML = `
       ${headerHtml}
       ${showProps ? _buildPropertiesHtml(note.frontmatter, note) : ''}
-      <div class="shard-preview-body"></div>
+      <div class="vault-preview-body"></div>
     `;
 
     // Wire inline title editing for all notes (click h1 to edit)
@@ -5242,7 +5698,7 @@ async function _selectNote(id) {
       });
     };
     if (isAutoRename) {
-      const titleEdit = preview.querySelector('.shard-title-edit');
+      const titleEdit = preview.querySelector('.vault-title-edit');
       if (titleEdit) {
         titleEdit.focus();
         const range = document.createRange();
@@ -5253,15 +5709,15 @@ async function _selectNote(id) {
         _wireTitleEdit(titleEdit);
       }
     } else {
-      const h1 = preview.querySelector('.shard-preview-header h1');
+      const h1 = preview.querySelector('.vault-preview-header h1');
       if (h1) {
         h1.style.cursor = 'pointer';
         h1.title = 'Click to rename';
         h1.addEventListener('click', () => {
           const span = document.createElement('span');
-          span.className = 'shard-title-edit';
+          span.className = 'vault-title-edit';
           span.contentEditable = 'plaintext-only';
-          span.spellcheck = _shardSettings.editor.spellcheck;
+          span.spellcheck = _vaultSettings.editor.spellcheck;
           span.textContent = note.title;
           h1.replaceWith(span);
           span.focus();
@@ -5276,22 +5732,22 @@ async function _selectNote(id) {
     }
 
     // Wire properties section collapse toggle
-    preview.querySelectorAll('.shard-prop-header').forEach(header => {
+    preview.querySelectorAll('.vault-prop-header').forEach(header => {
       header.addEventListener('click', () => {
         _propsCollapsed = !_propsCollapsed;
-        preview.querySelectorAll('.shard-properties-inline').forEach(el => {
+        preview.querySelectorAll('.vault-properties-inline').forEach(el => {
           el.classList.toggle('collapsed', _propsCollapsed);
         });
       });
     });
 
-    const bodyEl = preview.querySelector('.shard-preview-body');
+    const bodyEl = preview.querySelector('.vault-preview-body');
 
     const _saveLivePreview = async () => {
-      const blocks = bodyEl.querySelectorAll('.shard-live-block');
+      const blocks = bodyEl.querySelectorAll('.vault-live-block');
       const texts = [];
       blocks.forEach(b => {
-        const ta = b.querySelector('.shard-live-block-edit');
+        const ta = b.querySelector('.vault-live-block-edit');
         texts.push(ta ? ta.value : (b.dataset.blockRaw || ''));
       });
       note.content = texts.join('\n\n');
@@ -5334,7 +5790,7 @@ async function _selectNote(id) {
       if (!wrap) return;
       const lines = wrap.querySelectorAll('.lp-line');
       // foldHeading
-      if (_shardSettings.editor.foldHeading) {
+      if (_vaultSettings.editor.foldHeading) {
         lines.forEach(line => {
           const heading = line.querySelector('.md-h1, .md-h2, .md-h3, .md-h4, .md-h5, .md-h6');
           if (!heading) return;
@@ -5343,14 +5799,14 @@ async function _selectNote(id) {
           const level = parseInt(hClass.replace('md-h', ''), 10);
           // Add fold toggle
           const toggle = document.createElement('span');
-          toggle.className = 'shard-fold-toggle';
-          toggle.textContent = '▼';
+          toggle.className = 'vault-fold-toggle';
+          toggle.textContent = '>';
           toggle.style.cssText = 'cursor:pointer;margin-right:6px;opacity:0.6;font-size:0.8em;user-select:none;';
           heading.insertBefore(toggle, heading.firstChild);
           toggle.addEventListener('click', (e) => {
             e.stopPropagation();
             const isCollapsed = toggle.classList.toggle('collapsed');
-            toggle.textContent = isCollapsed ? '▶' : '▼';
+            toggle.textContent = isCollapsed ? '>' : '>';
             // Hide/show subsequent lines until next heading of same or higher level (smaller h#)
             let next = line.nextElementSibling;
             while (next) {
@@ -5367,7 +5823,7 @@ async function _selectNote(id) {
         });
       }
       // foldIndent
-      if (_shardSettings.editor.foldIndent) {
+      if (_vaultSettings.editor.foldIndent) {
         lines.forEach(line => {
           const liMarker = line.querySelector('.md-li-marker');
           if (!liMarker) return;
@@ -5377,15 +5833,15 @@ async function _selectNote(id) {
           const indent = indentMatch ? indentMatch[1].length : 0;
           // Add fold toggle
           const toggle = document.createElement('span');
-          toggle.className = 'shard-fold-toggle';
-          toggle.textContent = '▼';
+          toggle.className = 'vault-fold-toggle';
+          toggle.textContent = '>';
           toggle.style.cssText = 'cursor:pointer;margin-right:4px;opacity:0.6;font-size:0.8em;user-select:none;';
           const source = line.querySelector('.lp-source');
           if (source) source.insertBefore(toggle, source.firstChild);
           toggle.addEventListener('click', (e) => {
             e.stopPropagation();
             const isCollapsed = toggle.classList.toggle('collapsed');
-            toggle.textContent = isCollapsed ? '▶' : '▼';
+            toggle.textContent = isCollapsed ? '>' : '>';
             let next = line.nextElementSibling;
             while (next) {
               const nextRaw = next.getAttribute('data-raw') || '';
@@ -5405,27 +5861,10 @@ async function _selectNote(id) {
       }
     };
 
-    const _renderSourceLine = (line) => {
-      let h = _esc(line);
+    const _renderInline = (text) => {
+      let h = text;
       // Escaped chars \char
       h = h.replace(/\\([*_{}[\]()#+-.!|`~^=$])/g, '<span class="md-escaped"><span class="md-syntax">\\</span>$1</span>');
-      // Heading: ### Text
-      const hm = h.match(/^(#{1,6})\s+(.*)$/);
-      if (hm) { const lvl = hm[1].length; return `<span class="md-h${lvl}"><span class="md-hash">${hm[1]} </span>${hm[2]}</span>`; }
-      // Horizontal rule ---
-      if (/^---+$/.test(line.trim())) return `<span class="md-hr">${h}</span>`;
-      // Blockquote > Text
-      if (/^&gt;\s/.test(h)) { h = h.replace(/^&gt;\s/, '<span class="md-bq-mark">&gt; </span>'); return `<span class="md-bq">${h}</span>`; }
-      // List item
-      const lm = h.match(/^(\s*)([-*+])\s+(.*)$/) || h.match(/^(\s*)(\d+\.)\s+(.*)$/);
-      if (lm) {
-        const content = lm[3];
-        const taskMatch = content.match(/^\[([ xX])\]\s+(.*)$/);
-        if (taskMatch) {
-          return `${lm[1]}<span class="md-li-marker">${lm[2]} </span><span class="md-task"><span class="md-task-check">[${taskMatch[1]}] </span>${taskMatch[2]}</span>`;
-        }
-        return `${lm[1]}<span class="md-li-marker">${lm[2]} </span>${content}`;
-      }
       // Bold + italic ***text***
       h = h.replace(/\*\*\*([^*]+)\*\*\*/g, '<span class="md-bold md-italic"><span class="md-syntax">***</span>$1<span class="md-syntax">***</span></span>');
       // Bold **text**
@@ -5472,13 +5911,75 @@ async function _selectNote(id) {
       h = h.replace(/\$([^$\s][^$]*[^$\s])\$/g, '<span class="md-math"><span class="md-syntax">$</span>$1<span class="md-syntax">$</span></span>');
       // External links [text](url)
       h = h.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<span class="md-link"><span class="md-syntax">[</span><span class="md-link-text">$1</span><span class="md-syntax">](</span><span class="md-link-url">$2</span><span class="md-syntax">)</span></span>');
+      // Unclosed-syntax propagation: if an opener has no closer, it affects the rest of the line
+      // (Obsidian-style behaviour)
+      h = h.replace(/\*\*\*([^*]*)$/g, '<span class="md-bold md-italic"><span class="md-syntax">***</span>$1</span>');
+      h = h.replace(/\*\*([^*]*)$/g, '<span class="md-bold"><span class="md-syntax">**</span>$1</span>');
+      h = h.replace(/(?<!\*)\*([^*]*)$/g, '<span class="md-italic"><span class="md-syntax">*</span>$1</span>');
+      h = h.replace(/(?<!_)_([^_]*)$/g, '<span class="md-italic"><span class="md-syntax">_</span>$1</span>');
+      h = h.replace(/`([^`]*)$/g, '<span class="md-code"><span class="md-syntax">`</span>$1</span>');
+      h = h.replace(/~~([^~]*)$/g, '<span class="md-strike"><span class="md-syntax">~~</span>$1</span>');
+      h = h.replace(/==([^=]*)$/g, '<span class="md-highlight"><span class="md-syntax">==</span>$1</span>');
       // Live preview Enter inserts \n; normalize to <br> so the break survives innerHTML
       h = h.replace(/\n/g, '<br>');
       return h;
     };
 
+    const _renderSourceLine = (line) => {
+      let h = _esc(line);
+      // Extract leading whitespace so indented blockquotes/lists work
+      const leadingMatch = h.match(/^([\s\t]*)/);
+      const leading = leadingMatch ? leadingMatch[1] : '';
+      const trimmed = h.slice(leading.length);
+      // Heading: ### Text (no leading ws)
+      const hm = trimmed.match(/^(#{1,6})\s+(.*)$/);
+      if (hm && !leading) {
+        const lvl = hm[1].length;
+        return `<span class="md-h${lvl}"><span class="md-hash">${hm[1]} </span>${_renderInline(hm[2])}</span>`;
+      }
+      // Horizontal rule ---
+      if (/^---+$/.test(line.trim()) && !leading) return `<span class="md-hr">${h}</span>`;
+      // Blockquote > Text (supports leading whitespace for indented blockquotes)
+      const bqMatch = trimmed.match(/^&gt;\s?(.*)$/);
+      if (bqMatch) {
+        const bqContent = bqMatch[1];
+        const calloutMatch = bqContent.match(/^\[!([A-Za-z]+)\]\s*(.*)$/);
+        if (calloutMatch) {
+          const type = calloutMatch[1].toLowerCase();
+          const title = calloutMatch[2] || type.charAt(0).toUpperCase() + type.slice(1);
+          const icons = { info: 'ℹ️', warning: '⚠️', danger: '⛔', tip: '💡', note: '📝', quote: '❝', example: '📋' };
+          const icon = icons[type] || icons.note;
+          return `${leading}<span class="md-callout md-callout-${type}"><span class="md-callout-icon">${icon}</span> <span class="md-callout-title">${_renderInline(title)}</span></span>`;
+        }
+        return `${leading}<span class="md-bq"><span class="md-bq-mark">&gt; </span>${_renderInline(bqContent)}</span>`;
+      }
+      // Indented code block (2+ tabs or 4+ spaces, but not a nested list item)
+      const codeIndentMatch = line.match(/^(\t{2,}| {4,})(?![-*+]\s|\d+\.\s)(.*)$/);
+      if (codeIndentMatch) {
+        return `<span class="md-code-block">${codeIndentMatch[1]}${_esc(codeIndentMatch[2])}</span>`;
+      }
+      // List item
+      const lm = h.match(/^(\s*)([-*+])\s+(.*)$/) || h.match(/^(\s*)(\d+\.)\s+(.*)$/);
+      if (lm) {
+        const content = lm[3];
+        // Heading inside list item: - ### Text
+        const headingMatch = content.match(/^(#{1,6})\s+(.*)$/);
+        if (headingMatch) {
+          const lvl = headingMatch[1].length;
+          return `${lm[1]}<span class="md-li-marker">${lm[2]} </span><span class="md-h${lvl}"><span class="md-hash">${headingMatch[1]} </span>${_renderInline(headingMatch[2])}</span>`;
+        }
+        const taskMatch = content.match(/^\[([ xX])\]\s+(.*)$/);
+        if (taskMatch) {
+          return `${lm[1]}<span class="md-li-marker">${lm[2]} </span><span class="md-task"><span class="md-task-check">[${taskMatch[1]}] </span>${_renderInline(taskMatch[2])}</span>`;
+        }
+        return `${lm[1]}<span class="md-li-marker">${lm[2]} </span>${_renderInline(content)}`;
+      }
+      // Default: inline formatting
+      return _renderInline(h);
+    };
+
     const _renderSourceView = (raw) => {
-      if (!raw) return '';
+      if (!raw) return '<div class="lp-line" data-raw=""><div class="lp-source"><br></div></div>';
       const lines = raw.split('\n');
       let inCodeBlock = false;
       const codeLines = [];
@@ -5487,7 +5988,7 @@ async function _selectNote(id) {
         if (/^\s*```/.test(line)) {
           if (inCodeBlock) {
             codeLines.push(_esc(line));
-            out.push(`<div class="lp-line"><div class="md-code-block">${codeLines.join('<br>')}</div></div>`);
+            out.push(`<div class="lp-line" data-raw=""><div class="md-code-block">${codeLines.join('<br>')}</div></div>`);
             codeLines.length = 0;
             inCodeBlock = false;
           } else {
@@ -5497,23 +5998,23 @@ async function _selectNote(id) {
         } else if (inCodeBlock) {
           codeLines.push(_esc(line));
         } else {
-          out.push(`<div class="lp-line">${_renderSourceLine(line)}</div>`);
+          out.push(`<div class="lp-line" data-raw="${_esc(line)}"><div class="lp-source">${_renderSourceLine(line)}</div></div>`);
         }
       }
       if (inCodeBlock) {
-        out.push(`<div class="lp-line"><div class="md-code-block">${codeLines.join('<br>')}</div></div>`);
+        out.push(`<div class="lp-line" data-raw=""><div class="md-code-block">${codeLines.join('<br>')}</div></div>`);
       }
       return out.join('');
     };
 
     const _renderLiveView = (raw) => {
-      if (!raw) return '';
+      if (!raw) return '<div class="lp-line lp-empty" data-raw=""><div class="lp-source"><br></div></div>';
       const lines = raw.split('\n');
       let inCodeBlock = false;
       const codeLines = [];
       const out = [];
       const isReading = _previewMode === 'preview';
-      const strictBreaks = _shardSettings.editor.strictLineBreaks;
+      const strictBreaks = _vaultSettings.editor.strictLineBreaks;
       const paragraphLines = [];
 
       const flushParagraph = () => {
@@ -5602,32 +6103,251 @@ const _getRawOffsetUpTo = (root, endNode, endOffset) => {
   return offset;
 };
 
+const _normalizeRange = (range) => {
+  let node = range.startContainer;
+  let offset = range.startOffset;
+  if (node.nodeType === Node.ELEMENT_NODE) {
+    if (offset < node.childNodes.length) {
+      const child = node.childNodes[offset];
+      if (child.nodeType === Node.TEXT_NODE) return { node: child, offset: 0 };
+      if (child.tagName === 'BR') return { node: child, offset: 0 };
+    }
+    if (offset > 0) {
+      const prev = node.childNodes[offset - 1];
+      if (prev && prev.nodeType === Node.TEXT_NODE) return { node: prev, offset: prev.textContent.length };
+      if (prev && prev.tagName === 'BR') return { node: prev, offset: 1 };
+    }
+  }
+  return { node, offset };
+};
+
     const updateBody = () => {
       if (_previewMode === 'edit') {
         // Source mode: styled text div, contentEditable, clickable wikilinks
         const raw = _getNoteFullRaw(note);
-        const lineNumClass = _shardSettings.editor.showLineNumbers ? 'shard-show-line-numbers' : '';
-        const sc = _shardSettings.editor.spellcheck ? 'true' : 'false';
-        const dir = _shardSettings.editor.rtl ? 'rtl' : 'ltr';
-        bodyEl.innerHTML = `<div class="shard-body-wrap" dir="${dir}"><div class="shard-source-view ${lineNumClass}" contenteditable="true" spellcheck="${sc}">${_renderSourceView(raw)}</div></div>`;
-        const sourceDiv = bodyEl.querySelector('.shard-source-view');
+        const lineNumClass = _vaultSettings.editor.showLineNumbers ? 'vault-show-line-numbers' : '';
+        const sc = _vaultSettings.editor.spellcheck ? 'true' : 'false';
+        const dir = _vaultSettings.editor.rtl ? 'rtl' : 'ltr';
+        bodyEl.innerHTML = `<div class="vault-body-wrap" dir="${dir}"><div class="vault-source-view ${lineNumClass}" contenteditable="true" spellcheck="${sc}">${_renderSourceView(raw)}</div></div>`;
+        const sourceDiv = bodyEl.querySelector('.vault-source-view');
         _wireSourceWikilinks(sourceDiv);
         sourceDiv.focus();
         sourceDiv.addEventListener('keydown', (e) => {
           if (e.key === 'Enter') {
             e.preventDefault();
             document.execCommand('insertText', false, '\n');
+            return;
+          }
+          // Tab: indent current paragraph (consecutive non-empty non-block lines)
+          if (e.key === 'Tab') {
+            e.preventDefault();
+            const indent = _vaultSettings.editor.indentWithTabs ? '\t' : '  ';
+            const sel = window.getSelection();
+            if (!sel.rangeCount) return;
+            const range = sel.getRangeAt(0);
+            let activeNode = range.startContainer;
+            while (activeNode && activeNode !== sourceDiv) {
+              if (activeNode.nodeType === Node.ELEMENT_NODE && activeNode.classList.contains('lp-line')) break;
+              activeNode = activeNode.parentNode;
+            }
+            console.log('[vault TAB source] activeNode found:', activeNode?.className, 'is lp-line:', activeNode?.classList.contains('lp-line'));
+            if (!activeNode || !activeNode.classList.contains('lp-line')) return;
+
+            // Determine paragraph boundaries: empty lines or block-level lines separate paragraphs
+            const _isBlockOrEmpty = (lineEl) => {
+              const raw = lineEl.getAttribute('data-raw') || '';
+              const t = raw.trim();
+              if (!t) return true;
+              return /^#{1,6}\s/.test(t) ||
+                     /^&gt;\s/.test(_esc(t)) ||
+                     /^(\s*)([-*+]|\d+\.)\s/.test(t) ||
+                     /^---+$/.test(t) ||
+                     /^\s*```/.test(t);
+            };
+
+            // Collect all lines in this paragraph
+            const paragraphLines = [activeNode];
+            let prev = activeNode.previousElementSibling;
+            while (prev && prev.classList.contains('lp-line') && !_isBlockOrEmpty(prev)) {
+              paragraphLines.unshift(prev);
+              prev = prev.previousElementSibling;
+            }
+            let next = activeNode.nextElementSibling;
+            while (next && next.classList.contains('lp-line') && !_isBlockOrEmpty(next)) {
+              paragraphLines.push(next);
+              next = next.nextElementSibling;
+            }
+            console.log('[vault TAB source] paragraph lines:', paragraphLines.length, paragraphLines.map(l => l.getAttribute('data-raw')));
+
+            // Save undo state once before re-rendering
+            if (!sourceDiv.__undoStack) sourceDiv.__undoStack = [];
+            if (sourceDiv.__undoStack.length === 0 || sourceDiv.__undoStack[sourceDiv.__undoStack.length - 1] !== sourceDiv.innerText) {
+              sourceDiv.__undoStack.push(sourceDiv.innerText);
+              sourceDiv.__redoStack = [];
+            }
+
+            // Indent every line in the paragraph
+            for (const lineEl of paragraphLines) {
+              const sourceEl = lineEl.querySelector('.lp-source');
+              if (!sourceEl) continue;
+              const raw = _getRawFromSource(sourceEl);
+              const newRaw = indent + raw;
+              sourceEl.innerHTML = _renderSourceLine(newRaw);
+              _wireSourceWikilinks(sourceEl);
+              lineEl.setAttribute('data-raw', newRaw);
+            }
+
+            // Restore cursor in the active line at previous offset + indent length
+            const activeSource = activeNode.querySelector('.lp-source');
+            if (activeSource) {
+              let prevOffset = 0;
+              const sel2 = window.getSelection();
+              if (sel2.rangeCount) {
+                const range2 = sel2.getRangeAt(0);
+                const norm2 = _normalizeRange(range2);
+                prevOffset = _getRawOffsetUpTo(activeSource, norm2.node, norm2.offset);
+              }
+              const targetOffset = prevOffset + indent.length;
+              const walker = document.createTreeWalker(activeSource, NodeFilter.SHOW_TEXT);
+              let curr = 0; let lastNode = null;
+              while (walker.nextNode()) {
+                const n = walker.currentNode;
+                lastNode = n;
+                if (curr + n.textContent.length >= targetOffset) {
+                  const r = document.createRange();
+                  r.setStart(n, Math.max(0, targetOffset - curr));
+                  r.collapse(true);
+                  sel.removeAllRanges(); sel.addRange(r);
+                  return;
+                }
+                curr += n.textContent.length;
+              }
+              if (lastNode) {
+                const r = document.createRange();
+                r.setStart(lastNode, lastNode.textContent.length);
+                r.collapse(true);
+                sel.removeAllRanges(); sel.addRange(r);
+              }
+            }
+            return;
+          }
+
+          // Backspace: if inside leading whitespace, remove whole indent unit
+          if (e.key === 'Backspace') {
+            const sel = window.getSelection();
+            if (!sel.rangeCount) return;
+            const range = sel.getRangeAt(0);
+            let activeNode = range.startContainer;
+            while (activeNode && activeNode !== sourceDiv) {
+              if (activeNode.nodeType === Node.ELEMENT_NODE && activeNode.classList.contains('lp-line')) break;
+              activeNode = activeNode.parentNode;
+            }
+            if (!activeNode || !activeNode.classList.contains('lp-line')) return;
+            const sourceEl = activeNode.querySelector('.lp-source');
+            if (!sourceEl) return;
+            const norm = _normalizeRange(range);
+            const offset = _getRawOffsetUpTo(sourceEl, norm.node, norm.offset);
+            const raw = _getRawFromSource(sourceEl);
+            const indent = _vaultSettings.editor.indentWithTabs ? '\t' : '  ';
+            const indentLen = indent.length;
+            const leadingMatch = raw.match(/^(\s*)/);
+            const leadingLen = leadingMatch ? leadingMatch[1].length : 0;
+            if (offset > 0 && offset <= leadingLen) {
+              e.preventDefault();
+              let stripped;
+              let removedLen = 0;
+              if (raw.startsWith('\t')) {
+                stripped = raw.substring(1);
+                removedLen = 1;
+              } else {
+                const spaceMatch = raw.match(new RegExp('^ {1,' + indentLen + '}'));
+                if (spaceMatch) {
+                  stripped = raw.substring(spaceMatch[0].length);
+                  removedLen = spaceMatch[0].length;
+                } else {
+                  stripped = raw.replace(/^ /, '');
+                  removedLen = 1;
+                }
+              }
+              sourceEl.innerHTML = _renderSourceLine(stripped);
+              _wireSourceWikilinks(sourceEl);
+              activeNode.setAttribute('data-raw', stripped);
+              // Restore cursor
+              let curr = 0; let lastNode = null;
+              const targetOffset = Math.max(0, offset - removedLen);
+              const walker = document.createTreeWalker(sourceEl, NodeFilter.SHOW_TEXT);
+              while (walker.nextNode()) {
+                const n = walker.currentNode;
+                lastNode = n;
+                if (curr + n.textContent.length >= targetOffset) {
+                  const r = document.createRange();
+                  r.setStart(n, Math.max(0, targetOffset - curr));
+                  r.collapse(true);
+                  sel.removeAllRanges(); sel.addRange(r);
+                  return;
+                }
+                curr += n.textContent.length;
+              }
+              if (lastNode) {
+                const r = document.createRange();
+                r.setStart(lastNode, lastNode.textContent.length);
+                r.collapse(true);
+                sel.removeAllRanges(); sel.addRange(r);
+              }
+              return;
+            }
+          }
+
+          // Undo / Redo
+          if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+            e.preventDefault();
+            const stack = sourceDiv.__undoStack || [];
+            const redoStack = sourceDiv.__redoStack || [];
+            if (e.shiftKey) {
+              // Redo
+              if (redoStack.length > 0) {
+                const text = redoStack.pop();
+                stack.push(sourceDiv.innerText);
+                sourceDiv.innerText = text;
+                sourceDiv.innerHTML = _renderSourceView(text);
+                _wireSourceWikilinks(sourceDiv);
+                sourceDiv.__undoStack = stack;
+                sourceDiv.__redoStack = redoStack;
+              }
+            } else {
+              // Undo
+              if (stack.length > 1) {
+                const current = stack.pop();
+                redoStack.push(current);
+                const previous = stack[stack.length - 1];
+                sourceDiv.innerText = previous;
+                sourceDiv.innerHTML = _renderSourceView(previous);
+                _wireSourceWikilinks(sourceDiv);
+                sourceDiv.__undoStack = stack;
+                sourceDiv.__redoStack = redoStack;
+              }
+            }
+            return;
           }
         });
         let _sourceRenderTimer = null;
         sourceDiv.addEventListener('input', () => {
           clearTimeout(_sourceRenderTimer);
           _sourceRenderTimer = setTimeout(() => {
+            // Save undo state before re-render
+            const currentText = sourceDiv.innerText;
+            if (!sourceDiv.__undoStack) sourceDiv.__undoStack = [];
+            if (sourceDiv.__undoStack.length === 0 || sourceDiv.__undoStack[sourceDiv.__undoStack.length - 1] !== currentText) {
+              sourceDiv.__undoStack.push(currentText);
+              if (sourceDiv.__undoStack.length > 50) sourceDiv.__undoStack.shift();
+              sourceDiv.__redoStack = [];
+            }
             const sel = window.getSelection();
             let offset = 0;
             if (sel.rangeCount) {
               const range = sel.getRangeAt(0);
-              offset = _getRawOffsetUpTo(sourceDiv, range.startContainer, range.startOffset);
+              const norm = _normalizeRange(range);
+              offset = _getRawOffsetUpTo(sourceDiv, norm.node, norm.offset);
             }
             const raw = sourceDiv.innerText;
             sourceDiv.innerHTML = _renderSourceView(raw);
@@ -5680,9 +6400,9 @@ const _getRawOffsetUpTo = (root, endNode, endOffset) => {
         // Live Preview: token-level inline editing — syntax hidden by default,
         // revealed only for the token(s) containing the cursor.
         const content = note.content || '';
-        const dir = _shardSettings.editor.rtl ? 'rtl' : 'ltr';
-        bodyEl.innerHTML = `<div class="shard-body-wrap" dir="${dir}"><div class="shard-live-view">${_renderLiveView(content)}</div></div>`;
-        const liveDiv = bodyEl.querySelector('.shard-live-view');
+        const dir = _vaultSettings.editor.rtl ? 'rtl' : 'ltr';
+        bodyEl.innerHTML = `<div class="vault-body-wrap" dir="${dir}"><div class="vault-live-view">${_renderLiveView(content)}</div></div>`;
+        const liveDiv = bodyEl.querySelector('.vault-live-view');
         _wireSourceWikilinks(liveDiv);
 
         let activeLine = null;
@@ -5798,7 +6518,7 @@ const _getRawOffsetUpTo = (root, endNode, endOffset) => {
           const source = line.querySelector('.lp-source');
           if (!source) return;
           source.setAttribute('contenteditable', 'true');
-          source.setAttribute('spellcheck', _shardSettings.editor.spellcheck ? 'true' : 'false');
+          source.setAttribute('spellcheck', _vaultSettings.editor.spellcheck ? 'true' : 'false');
           _wireSourceWikilinks(source);
           line.classList.add('active');
           source.focus();
@@ -5839,21 +6559,21 @@ const _getRawOffsetUpTo = (root, endNode, endOffset) => {
         liveDiv.addEventListener('click', (e) => {
           // Don't activate line when clicking a link
           if (e.target.closest('a')) return;
-          const line = e.target.closest('.lp-line');
+          let line = e.target.closest('.lp-line');
+          if (!line && liveDiv.contains(e.target)) {
+            // Clicked empty space: create an empty line
+            const emptyLine = document.createElement('div');
+            emptyLine.className = 'lp-line lp-empty';
+            emptyLine.setAttribute('data-raw', '');
+            emptyLine.innerHTML = '<div class="lp-source"><br></div>';
+            liveDiv.appendChild(emptyLine);
+            line = emptyLine;
+          }
           if (!line) return;
           const source = line.querySelector('.lp-source');
           if (!source) return; // code blocks have no source layer
           _activateLine(line, e.clientX, e.clientY);
         });
-
-        // Blur on the source div deactivates the line
-        liveDiv.addEventListener('blur', (e) => {
-          if (e.target.classList.contains('lp-source')) {
-            const line = e.target.closest('.lp-line');
-            _deactivateLine(line);
-            activeLine = null;
-          }
-        }, true);
 
         // Track caret position on keyup, input, and mouseup (within liveDiv only)
         const _onCaretChange = () => {
@@ -5915,14 +6635,23 @@ const _getRawOffsetUpTo = (root, endNode, endOffset) => {
             if (!activeLine) return;
             const source = activeLine.querySelector('.lp-source');
             if (!source) return;
+            // Save undo state before re-render
+            const currentRaw = _getRawFromSource(source);
+            if (!activeLine.__undoStack) activeLine.__undoStack = [];
+            if (activeLine.__undoStack.length === 0 || activeLine.__undoStack[activeLine.__undoStack.length - 1] !== currentRaw) {
+              activeLine.__undoStack.push(currentRaw);
+              if (activeLine.__undoStack.length > 50) activeLine.__undoStack.shift();
+              activeLine.__redoStack = [];
+            }
             // Save cursor offset (counts <br> as \n so Enter stays on new line)
             let offset = 0;
             const sel = window.getSelection();
             if (sel.rangeCount) {
               const range = sel.getRangeAt(0);
-              offset = _getRawOffsetUpTo(source, range.startContainer, range.startOffset);
+              const norm = _normalizeRange(range);
+              offset = _getRawOffsetUpTo(source, norm.node, norm.offset);
             }
-            const raw = _getRawFromSource(source);
+            const raw = currentRaw;
             activeLine.setAttribute('data-raw', raw);
             source.innerHTML = _renderSourceLine(raw);
             _wireSourceWikilinks(source);
@@ -5934,7 +6663,9 @@ const _getRawOffsetUpTo = (root, endNode, endOffset) => {
         liveDiv.addEventListener('input', _debouncedRenderLine);
 
         const finishEdit = async () => {
+          console.log('[vault finishEdit] starting for note:', note.id);
           _hideWikiSuggest();
+          document.removeEventListener('click', _hideSuggestOnClick);
           liveDiv.removeEventListener('keyup', _onCaretChange);
           liveDiv.removeEventListener('input', _onCaretChange);
           liveDiv.removeEventListener('mouseup', _onCaretChange);
@@ -5945,10 +6676,15 @@ const _getRawOffsetUpTo = (root, endNode, endOffset) => {
           }
           // Collect raw text from all lines
           const rawLines = [];
-          liveDiv.querySelectorAll('.lp-line').forEach(line => {
-            rawLines.push(line.getAttribute('data-raw') || '');
+          const allLines = liveDiv.querySelectorAll('.lp-line');
+          console.log('[vault finishEdit] found', allLines.length, 'lp-line elements');
+          allLines.forEach(line => {
+            const raw = line.getAttribute('data-raw') || '';
+            console.log('[vault finishEdit] line data-raw:', JSON.stringify(raw));
+            rawLines.push(raw);
           });
           const newContent = rawLines.join('\n');
+          console.log('[vault finishEdit] newContent:', JSON.stringify(newContent));
           note.content = newContent;
           await _saveNoteContent(note);
           _selectNote(note.id);
@@ -6084,9 +6820,9 @@ const _getRawOffsetUpTo = (root, endNode, endOffset) => {
           const matches = [...startsWith, ...wordBoundary, ...substring].slice(0, 12);
           if (!matches.length) return;
           const el = document.createElement('div');
-          el.className = 'shard-wiki-suggest';
+          el.className = 'vault-wiki-suggest';
           el.innerHTML = matches.map((t, i) =>
-            `<div class="shard-wiki-suggest-item${i === 0 ? ' selected' : ''}" data-title="${_esc(t)}">${_highlightSuggest(t, query)}</div>`
+            `<div class="vault-wiki-suggest-item${i === 0 ? ' selected' : ''}" data-title="${_esc(t)}">${_highlightSuggest(t, query)}</div>`
           ).join('');
           el.style.position = 'fixed';
           el.style.zIndex = '99999';
@@ -6106,7 +6842,7 @@ const _getRawOffsetUpTo = (root, endNode, endOffset) => {
           document.body.appendChild(el);
           _wikiSuggestEl = el;
           _wikiSuggestIndex = 0;
-          el.querySelectorAll('.shard-wiki-suggest-item').forEach(item => {
+          el.querySelectorAll('.vault-wiki-suggest-item').forEach(item => {
             item.addEventListener('click', () => {
               _insertWikiLink(source, item.dataset.title);
               _hideWikiSuggest();
@@ -6121,8 +6857,8 @@ const _getRawOffsetUpTo = (root, endNode, endOffset) => {
           if (openIdx === -1) { openIdx = textBefore.lastIndexOf('[['); isAlt = false; }
           if (openIdx === -1) return;
 
-          const useWiki = _shardSettings.filesAndLinks.useWikilinks;
-          const format = _shardSettings.filesAndLinks.linkFormat;
+          const useWiki = _vaultSettings.filesAndLinks.useWikilinks;
+          const format = _vaultSettings.filesAndLinks.linkFormat;
           const closeBrackets = isAlt ? ']/]' : ']]';
 
           const fullText = _getRawFromSource(source);
@@ -6203,7 +6939,7 @@ const _getRawOffsetUpTo = (root, endNode, endOffset) => {
             e.preventDefault();
             const lineText = activeLine.dataset.raw || '';
             let insert = '\n';
-            if (_shardSettings.editor.smartLists) {
+            if (_vaultSettings.editor.smartLists) {
               const listMatch = lineText.match(/^(\s*)([-*+]|\d+\.)\s+(.*)$/);
               if (listMatch) {
                 const [, indent, marker, content] = listMatch;
@@ -6235,23 +6971,162 @@ const _getRawOffsetUpTo = (root, endNode, endOffset) => {
             return;
           }
 
-          // Tab: indent with tabs or spaces
+          // Tab: indent entire paragraph (all consecutive non-empty non-block lp-line siblings)
           if (e.key === 'Tab' && activeLine) {
             e.preventDefault();
-            const indent = _shardSettings.editor.indentWithTabs ? '\t' : '  ';
-            document.execCommand('insertText', false, indent);
+            const indent = _vaultSettings.editor.indentWithTabs ? '\t' : '  ';
+            const liveDiv = activeLine.closest('.vault-live-view');
+            console.log('[vault TAB live] activeLine:', activeLine.getAttribute('data-raw'), 'liveDiv found:', !!liveDiv);
+
+            const _isBlockOrEmpty = (lineEl) => {
+              const raw = lineEl.getAttribute('data-raw') || '';
+              const t = raw.trim();
+              if (!t) return true;
+              return /^#{1,6}\s/.test(t) ||
+                     /^&gt;\s/.test(_esc(t)) ||
+                     /^(\s*)([-*+]|\d+\.)\s/.test(t) ||
+                     /^---+$/.test(t) ||
+                     /^\s*```/.test(t);
+            };
+
+            // Collect all lines in this paragraph
+            const paragraphLines = [activeLine];
+            let prev = activeLine.previousElementSibling;
+            while (prev && prev.classList.contains('lp-line') && !_isBlockOrEmpty(prev)) {
+              paragraphLines.unshift(prev);
+              prev = prev.previousElementSibling;
+            }
+            let next = activeLine.nextElementSibling;
+            while (next && next.classList.contains('lp-line') && !_isBlockOrEmpty(next)) {
+              paragraphLines.push(next);
+              next = next.nextElementSibling;
+            }
+            console.log('[vault TAB live] paragraph lines:', paragraphLines.length, paragraphLines.map(l => l.getAttribute('data-raw')));
+
+            // Save cursor offset before indent so we can restore it after
+            const sel = window.getSelection();
+            let prevOffset = 0;
+            const activeSource = activeLine.querySelector('.lp-source');
+            if (activeSource && sel.rangeCount) {
+              const range = sel.getRangeAt(0);
+              const norm = _normalizeRange(range);
+              prevOffset = _getRawOffsetUpTo(activeSource, norm.node, norm.offset);
+            }
+
+            // Indent every line in the paragraph
+            for (const lineEl of paragraphLines) {
+              const source = lineEl.querySelector('.lp-source');
+              if (!source) continue;
+              const raw = _getRawFromSource(source);
+              const newRaw = indent + raw;
+              // Save undo state before re-render
+              if (!lineEl.__undoStack) lineEl.__undoStack = [];
+              if (lineEl.__undoStack.length === 0 || lineEl.__undoStack[lineEl.__undoStack.length - 1] !== raw) {
+                lineEl.__undoStack.push(raw);
+                lineEl.__redoStack = [];
+              }
+              source.innerHTML = _renderSourceLine(newRaw);
+              lineEl.setAttribute('data-raw', newRaw);
+              _wireSourceWikilinks(source);
+            }
+
+            // Restore cursor in the active line
+            if (activeSource) {
+              _setCursorOffset(activeSource, prevOffset + indent.length);
+              _trackCaret();
+            }
+            return;
+          }
+
+          // Backspace: if inside leading whitespace, remove whole indent unit
+          if (e.key === 'Backspace' && activeLine) {
+            const source = activeLine.querySelector('.lp-source');
+            if (!source) return;
+            const sel = window.getSelection();
+            if (!sel.rangeCount) return;
+            const range = sel.getRangeAt(0);
+            const norm = _normalizeRange(range);
+            const offset = _getRawOffsetUpTo(source, norm.node, norm.offset);
+            const raw = _getRawFromSource(source);
+            const indent = _vaultSettings.editor.indentWithTabs ? '\t' : '  ';
+            const indentLen = indent.length;
+            // Leading whitespace length
+            const leadingMatch = raw.match(/^(\s*)/);
+            const leadingLen = leadingMatch ? leadingMatch[1].length : 0;
+            if (offset > 0 && offset <= leadingLen) {
+              e.preventDefault();
+              let stripped;
+              let removedLen = 0;
+              if (raw.startsWith('\t')) {
+                stripped = raw.substring(1);
+                removedLen = 1;
+              } else {
+                const spaceMatch = raw.match(new RegExp('^ {1,' + indentLen + '}'));
+                if (spaceMatch) {
+                  stripped = raw.substring(spaceMatch[0].length);
+                  removedLen = spaceMatch[0].length;
+                } else {
+                  stripped = raw.replace(/^ /, '');
+                  removedLen = 1;
+                }
+              }
+              source.innerHTML = _renderSourceLine(stripped);
+              activeLine.setAttribute('data-raw', stripped);
+              _wireSourceWikilinks(source);
+              _setCursorOffset(source, Math.max(0, offset - removedLen));
+              _trackCaret();
+              return;
+            }
+          }
+
+          // Undo / Redo
+          if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+            e.preventDefault();
+            const source = activeLine?.querySelector('.lp-source');
+            if (!source) return;
+            const stack = activeLine.__undoStack || [];
+            const redoStack = activeLine.__redoStack || [];
+            if (e.shiftKey) {
+              // Redo
+              if (redoStack.length > 0) {
+                const raw = redoStack.pop();
+                const currentRaw = _getRawFromSource(source);
+                if (currentRaw !== raw) {
+                  stack.push(currentRaw);
+                  source.innerHTML = _renderSourceLine(raw);
+                  activeLine.setAttribute('data-raw', raw);
+                  _wireSourceWikilinks(source);
+                  _setCursorOffset(source, raw.length);
+                }
+              }
+            } else {
+              // Undo
+              if (stack.length > 1) {
+                const current = stack.pop();
+                const previous = stack[stack.length - 1];
+                if (current !== previous) {
+                  redoStack.push(current);
+                  source.innerHTML = _renderSourceLine(previous);
+                  activeLine.setAttribute('data-raw', previous);
+                  _wireSourceWikilinks(source);
+                  _setCursorOffset(source, previous.length);
+                }
+              }
+            }
+            activeLine.__undoStack = stack;
+            activeLine.__redoStack = redoStack;
             return;
           }
 
           // Bracket auto-close
-          if (e.key === '[' && _shardSettings.editor.autoPairBrackets) {
+          if (e.key === '[' && _vaultSettings.editor.autoPairBrackets) {
             e.preventDefault();
             const sel = window.getSelection();
             if (!sel.rangeCount) return;
             const range = sel.getRangeAt(0);
             const prev = _getCharBeforeCursor();
             const next = _getCharAfterCursor();
-            if (_shardSettings.editor.autoPairMarkdown && _shardSettings.filesAndLinks.useWikilinks && prev === '[') {
+            if (_vaultSettings.editor.autoPairMarkdown && _vaultSettings.filesAndLinks.useWikilinks && prev === '[') {
               // Turn existing [] or [/ into [[...]]
               const r = range.cloneRange();
               if (next === ']' && r.endContainer.nodeType === Node.TEXT_NODE && r.endOffset < r.endContainer.textContent.length) {
@@ -6265,7 +7140,7 @@ const _getRawOffsetUpTo = (root, endNode, endOffset) => {
               nr.collapse(true);
               sel.removeAllRanges();
               sel.addRange(nr);
-            } else if (_shardSettings.editor.autoPairMarkdown && _shardSettings.filesAndLinks.useWikilinks && _getTextBeforeCursor(source).endsWith('[/')) {
+            } else if (_vaultSettings.editor.autoPairMarkdown && _vaultSettings.filesAndLinks.useWikilinks && _getTextBeforeCursor(source).endsWith('[/')) {
               const insert = document.createTextNode('[]/]');
               range.insertNode(insert);
               const nr = document.createRange();
@@ -6282,7 +7157,7 @@ const _getRawOffsetUpTo = (root, endNode, endOffset) => {
               sel.removeAllRanges();
               sel.addRange(nr);
             }
-            if (_shardSettings.editor.autoPairMarkdown) _updateWikiSuggest(source);
+            if (_vaultSettings.editor.autoPairMarkdown) _updateWikiSuggest(source);
             return;
           }
 
@@ -6305,7 +7180,7 @@ const _getRawOffsetUpTo = (root, endNode, endOffset) => {
 
           // Wikilink suggestion navigation
           if (_wikiSuggestEl) {
-            const items = _wikiSuggestEl.querySelectorAll('.shard-wiki-suggest-item');
+            const items = _wikiSuggestEl.querySelectorAll('.vault-wiki-suggest-item');
             if (e.key === 'ArrowDown') {
               e.preventDefault();
               items[_wikiSuggestIndex]?.classList.remove('selected');
@@ -6349,25 +7224,33 @@ const _getRawOffsetUpTo = (root, endNode, endOffset) => {
 
         // Hide suggest on outside click
         const _hideSuggestOnClick = (e) => {
-          if (_wikiSuggestEl && !e.target.closest('.shard-wiki-suggest')) {
+          if (_wikiSuggestEl && !e.target.closest('.vault-wiki-suggest')) {
             _hideWikiSuggest();
           }
         };
         document.addEventListener('click', _hideSuggestOnClick);
 
-        // Blur on liveDiv itself saves
-        liveDiv.addEventListener('blur', () => {
-          _hideWikiSuggest();
-          document.removeEventListener('click', _hideSuggestOnClick);
-        }, { once: true });
-
-        liveDiv.addEventListener('blur', finishEdit, { once: true });
+        liveDiv.addEventListener('blur', (e) => {
+          console.log('[vault blur] target:', e.target.className, 'relatedTarget:', e.relatedTarget?.className, 'inside liveDiv:', liveDiv.contains(e.relatedTarget));
+          if (e.target.classList.contains('lp-source')) {
+            const line = e.target.closest('.lp-line');
+            _deactivateLine(line);
+            activeLine = null;
+            // Save only when focus truly leaves the editor (not switching lines)
+            if (!liveDiv.contains(e.relatedTarget)) {
+              console.log('[vault blur] calling finishEdit');
+              finishEdit();
+            } else {
+              console.log('[vault blur] focus still inside liveDiv, skipping save');
+            }
+          }
+        }, true);
       } else {
         // Reading mode: use live preview HTML without editing interactions
         const content = note.content || '';
-        const dir = _shardSettings.editor.rtl ? 'rtl' : 'ltr';
-        bodyEl.innerHTML = `<div class="shard-body-wrap" dir="${dir}"><div class="shard-reading-view">${_renderLiveView(content)}</div></div>`;
-        const wrap = bodyEl.querySelector('.shard-reading-view');
+        const dir = _vaultSettings.editor.rtl ? 'rtl' : 'ltr';
+        bodyEl.innerHTML = `<div class="vault-body-wrap" dir="${dir}"><div class="vault-reading-view">${_renderLiveView(content)}</div></div>`;
+        const wrap = bodyEl.querySelector('.vault-reading-view');
         _wireSourceWikilinks(wrap);
         _wireReadingViewFolds(wrap);
         wrap.addEventListener('dblclick', () => {
@@ -6376,27 +7259,32 @@ const _getRawOffsetUpTo = (root, endNode, endOffset) => {
           _selectNote(note.id);
         });
       }
+      // Right-click context menu in the note editor body
+      bodyEl.addEventListener('contextmenu', (e) => {
+        if (e.target.closest('.vault-context-menu') || e.target.closest('.vault-context-menu-submenu')) return;
+        _showNoteEditorContextMenu(e);
+      });
     };
     updateBody();
-    let wcEl = document.getElementById('shard-word-count');
-    if (!wcEl) { wcEl = document.createElement('div'); wcEl.id = 'shard-word-count'; wcEl.className = 'shard-word-count'; }
+    let wcEl = document.getElementById('vault-word-count');
+    if (!wcEl) { wcEl = document.createElement('div'); wcEl.id = 'vault-word-count'; wcEl.className = 'vault-word-count'; }
     const panelWrap = preview?.parentElement;
     if (panelWrap && wcEl.parentElement !== panelWrap) panelWrap.appendChild(wcEl);
     const wordCount = (note.content || '').split(/\s+/).filter(Boolean).length;
     wcEl.textContent = `${wordCount} words`;
     _updateModeButtons();
-    const backBtn = document.getElementById('shard-back-btn');
-    const forwardBtn = document.getElementById('shard-forward-btn');
+    const backBtn = document.getElementById('vault-back-btn');
+    const forwardBtn = document.getElementById('vault-forward-btn');
     if (backBtn) backBtn.style.display = '';
     if (forwardBtn) forwardBtn.style.display = '';
-    const viewModes = document.getElementById('shard-view-modes');
+    const viewModes = document.getElementById('vault-view-modes');
     if (viewModes) {
       viewModes.style.display = 'flex';
-      viewModes.querySelectorAll('.shard-mode-btn').forEach(btn => {
+      viewModes.querySelectorAll('.vault-mode-btn').forEach(btn => {
         btn.onclick = async () => {
           const mode = btn.dataset.viewMode;
           if (_previewMode === 'edit' && mode !== 'edit') {
-            const sourceDiv = bodyEl.querySelector('.shard-source-view');
+            const sourceDiv = bodyEl.querySelector('.vault-source-view');
             if (sourceDiv) await _flushSourceEdit(sourceDiv, note);
           }
           if (mode === 'live' || mode === 'edit') {
@@ -6410,21 +7298,21 @@ const _getRawOffsetUpTo = (root, endNode, endOffset) => {
     }
 
     // Wire note menu dropdown
-    const menuBtn = document.getElementById('shard-note-menu-btn');
-    const menuDropdown = document.getElementById('shard-note-menu-dropdown');
+    const menuBtn = document.getElementById('vault-note-menu-btn');
+    const menuDropdown = document.getElementById('vault-note-menu-dropdown');
     if (menuBtn && menuDropdown) {
       menuBtn.style.display = 'flex';
       menuBtn.onclick = (e) => {
         e.stopPropagation();
         const isHidden = menuDropdown.classList.contains('hidden');
-        document.querySelectorAll('.shard-note-menu-dropdown').forEach(d => d.classList.add('hidden'));
+        document.querySelectorAll('.vault-note-menu-dropdown').forEach(d => d.classList.add('hidden'));
         if (isHidden) {
           menuDropdown.classList.remove('hidden');
           const sourceItem = menuDropdown.querySelector('[data-action="source"]');
           if (sourceItem) sourceItem.classList.toggle('is-checked', _sourceModeEnabled);
         }
       };
-      menuDropdown.querySelectorAll('.shard-note-menu-item:not(.shard-note-menu-disabled)').forEach(item => {
+      menuDropdown.querySelectorAll('.vault-note-menu-item:not(.vault-note-menu-disabled)').forEach(item => {
         item.onclick = (e) => {
           e.stopPropagation();
           const action = item.dataset.action;
@@ -6454,7 +7342,7 @@ const _getRawOffsetUpTo = (root, endNode, endOffset) => {
       // Close menu on outside click
       document.addEventListener('click', () => menuDropdown.classList.add('hidden'));
     }
-    const noteMenuBtn = document.getElementById('shard-note-menu-btn');
+    const noteMenuBtn = document.getElementById('vault-note-menu-btn');
     if (noteMenuBtn) {
       noteMenuBtn.style.display = 'flex';
       noteMenuBtn.onclick = (e) => _showNoteMenu(e, note);
@@ -6470,7 +7358,7 @@ const _getRawOffsetUpTo = (root, endNode, endOffset) => {
     // Skip if this note ID was renamed and no longer exists client-side
     const stillExists = _notes.some(n => n.id === id || n.rel_path === id);
     if (!stillExists) return;
-    fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(id)}`)
+    fetch(`${API_BASE}/api/vault/notes/${encodeURIComponent(id)}`)
       .then(r => r.ok ? r.json() : null)
       .catch(() => null)
       .then(full => {
@@ -6483,7 +7371,7 @@ const _getRawOffsetUpTo = (root, endNode, endOffset) => {
         const hasActiveLiveEditor = preview.querySelector('.lp-source[contenteditable="true"]');
         const userEditedSinceFetch = note.content !== _originalContent;
         if (!hasActiveLiveEditor && !userEditedSinceFetch && _previewMode !== 'edit' && full.content !== note.content) {
-          note.content = full.content;
+          note.content = _stripFrontmatterFromContent(full.content);
           note.title = full.title;
           if (typeof full.frontmatter === 'string' || full.frontmatter instanceof String) {
             note.frontmatter = _parseFrontmatter(String(full.frontmatter));
@@ -6495,12 +7383,12 @@ const _getRawOffsetUpTo = (root, endNode, endOffset) => {
           updateBody();
           _applyMonospaceFont();
           // Refresh header title if it changed
-          const h1 = preview.querySelector('.shard-preview-header h1');
+          const h1 = preview.querySelector('.vault-preview-header h1');
           if (h1 && h1.textContent !== note.title) h1.textContent = note.title;
-          const titleEdit = preview.querySelector('.shard-title-edit');
+          const titleEdit = preview.querySelector('.vault-title-edit');
           if (titleEdit && titleEdit.textContent !== note.title) titleEdit.textContent = note.title;
           // Refresh word count
-          const wcEl = document.getElementById('shard-word-count');
+          const wcEl = document.getElementById('vault-word-count');
           if (wcEl) wcEl.textContent = `${(note.content || '').split(/\s+/).filter(Boolean).length} words`;
         }
       })
@@ -6514,38 +7402,38 @@ const _getRawOffsetUpTo = (root, endNode, endOffset) => {
 }
 
 function _closeAllPropMenus() {
-  document.querySelectorAll('.shard-prop-menu').forEach(m => m.remove());
-  document.querySelectorAll('.shard-prop-submenu').forEach(m => m.remove());
-  document.querySelectorAll('.shard-prop-add-dropdown').forEach(m => m.remove());
+  document.querySelectorAll('.vault-prop-menu').forEach(m => m.remove());
+  document.querySelectorAll('.vault-prop-submenu').forEach(m => m.remove());
+  document.querySelectorAll('.vault-prop-add-dropdown').forEach(m => m.remove());
 }
 
 function _openPropIconMenu(icon, key, preview, note) {
   _closeAllPropMenus();
   const menu = document.createElement('div');
-  menu.className = 'shard-prop-menu';
+  menu.className = 'vault-prop-menu';
   menu.style.position = 'fixed';
   menu.style.zIndex = '99999';
   menu.innerHTML = `
-    <div class="shard-prop-menu-item" data-action="type">
+    <div class="vault-prop-menu-item" data-action="type">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
       Property type
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-left:auto;opacity:0.5"><polyline points="9 18 15 12 9 6"/></svg>
     </div>
-    <div class="shard-prop-menu-divider"></div>
-    <div class="shard-prop-menu-item" data-action="cut">
+    <div class="vault-prop-menu-divider"></div>
+    <div class="vault-prop-menu-item" data-action="cut">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>
       Cut
     </div>
-    <div class="shard-prop-menu-item" data-action="copy">
+    <div class="vault-prop-menu-item" data-action="copy">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
       Copy
     </div>
-    <div class="shard-prop-menu-item" data-action="paste">
+    <div class="vault-prop-menu-item" data-action="paste">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
       Paste
     </div>
-    <div class="shard-prop-menu-divider"></div>
-    <div class="shard-prop-menu-item danger" data-action="remove">
+    <div class="vault-prop-menu-divider"></div>
+    <div class="vault-prop-menu-item danger" data-action="remove">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
       Remove
     </div>
@@ -6554,16 +7442,16 @@ function _openPropIconMenu(icon, key, preview, note) {
   menu.style.left = rect.left + 'px';
   menu.style.top = (rect.bottom + 4) + 'px';
   document.body.appendChild(menu);
-  console.log('[shard] prop menu created at', rect.left, rect.bottom, 'menu:', menu);
+  console.log('[vault] prop menu created at', rect.left, rect.bottom, 'menu:', menu);
 
   // Type submenu
   const typeItem = menu.querySelector('[data-action="type"]');
   if (typeItem) {
     typeItem.addEventListener('click', (e) => {
       e.stopPropagation();
-      document.querySelectorAll('.shard-prop-submenu').forEach(m => m.remove());
+      document.querySelectorAll('.vault-prop-submenu').forEach(m => m.remove());
       const sub = document.createElement('div');
-      sub.className = 'shard-prop-submenu';
+      sub.className = 'vault-prop-submenu';
       sub.style.position = 'fixed';
       sub.style.zIndex = '99999';
       const currentType = _inferPropType(key, note.frontmatter?.[key]);
@@ -6572,7 +7460,7 @@ function _openPropIconMenu(icon, key, preview, note) {
         const typeKey = t.toLowerCase().replace(/ & /g, '');
         const icon = _propTypeIconSvg(typeKey);
         const isActive = typeKey === currentType;
-        return `<div class="shard-prop-submenu-item${isActive ? ' active' : ''}" data-type="${_esc(typeKey)}">${icon}<span>${_esc(t)}</span></div>`;
+        return `<div class="vault-prop-submenu-item${isActive ? ' active' : ''}" data-type="${_esc(typeKey)}">${icon}<span>${_esc(t)}</span></div>`;
       }).join('');
       const tRect = typeItem.getBoundingClientRect();
       let subLeft = tRect.right + 4;
@@ -6583,7 +7471,7 @@ function _openPropIconMenu(icon, key, preview, note) {
       sub.style.left = subLeft + 'px';
       sub.style.top = tRect.top + 'px';
       document.body.appendChild(sub);
-      sub.querySelectorAll('.shard-prop-submenu-item').forEach(it => {
+      sub.querySelectorAll('.vault-prop-submenu-item').forEach(it => {
         it.addEventListener('click', async () => {
           const newType = it.dataset.type;
           const current = note.frontmatter?.[key];
@@ -6596,7 +7484,7 @@ function _openPropIconMenu(icon, key, preview, note) {
           note.frontmatter[key] = converted;
           await _saveNoteContent(note);
           _closeAllPropMenus();
-          const propsEl = preview.querySelector('.shard-properties-inline');
+          const propsEl = preview.querySelector('.vault-properties-inline');
           if (propsEl) { propsEl.outerHTML = _buildPropertiesHtml(note.frontmatter, note); _wirePropertyEditors(preview, note); }
         });
       });
@@ -6610,7 +7498,7 @@ function _openPropIconMenu(icon, key, preview, note) {
     if (note.frontmatter) delete note.frontmatter[key];
     await _saveNoteContent(note);
     _closeAllPropMenus();
-    const propsEl = preview.querySelector('.shard-properties-inline');
+    const propsEl = preview.querySelector('.vault-properties-inline');
     if (propsEl) { propsEl.outerHTML = _buildPropertiesHtml(note.frontmatter, note); _wirePropertyEditors(preview, note); }
   });
 
@@ -6628,7 +7516,7 @@ function _openPropIconMenu(icon, key, preview, note) {
     if (note.frontmatter) delete note.frontmatter[key];
     await _saveNoteContent(note);
     _closeAllPropMenus();
-    const propsEl = preview.querySelector('.shard-properties-inline');
+    const propsEl = preview.querySelector('.vault-properties-inline');
     if (propsEl) { propsEl.outerHTML = _buildPropertiesHtml(note.frontmatter, note); _wirePropertyEditors(preview, note); }
   });
   menu.querySelector('[data-action="paste"]')?.addEventListener('click', async () => {
@@ -6638,7 +7526,7 @@ function _openPropIconMenu(icon, key, preview, note) {
       note.frontmatter[key] = txt;
       await _saveNoteContent(note);
       _closeAllPropMenus();
-      const propsEl = preview.querySelector('.shard-properties-inline');
+      const propsEl = preview.querySelector('.vault-properties-inline');
       if (propsEl) { propsEl.outerHTML = _buildPropertiesHtml(note.frontmatter, note); _wirePropertyEditors(preview, note); }
     } catch {}
   });
@@ -6648,7 +7536,7 @@ function _openPropIconMenu(icon, key, preview, note) {
 }
 
 function _rerenderProps(preview, note) {
-  const propsEl = preview.querySelector('.shard-properties-inline');
+  const propsEl = preview.querySelector('.vault-properties-inline');
   if (propsEl) { propsEl.outerHTML = _buildPropertiesHtml(note.frontmatter, note); _wirePropertyEditors(preview, note); }
 }
 
@@ -6681,7 +7569,7 @@ function _wireTagAutocomplete(input, key, note, preview) {
     if (!matches.length) return;
 
     dropdown = document.createElement('div');
-    dropdown.className = 'shard-tag-dropdown';
+    dropdown.className = 'vault-tag-dropdown';
     dropdown.style.zIndex = '99999';
     const rect = input.getBoundingClientRect();
     dropdown.style.left = rect.left + 'px';
@@ -6690,11 +7578,11 @@ function _wireTagAutocomplete(input, key, note, preview) {
     const filterLower = (filter || '').toLowerCase();
     dropdown.innerHTML = matches.map((t, i) => {
       const label = _highlightMatch(t, filterLower);
-      return `<div class="shard-tag-dropdown-item" data-index="${i}" data-tag="${_esc(t)}"><span>${label}</span></div>`;
+      return `<div class="vault-tag-dropdown-item" data-index="${i}" data-tag="${_esc(t)}"><span>${label}</span></div>`;
     }).join('');
     document.body.appendChild(dropdown);
 
-    dropdown.querySelectorAll('.shard-tag-dropdown-item').forEach(item => {
+    dropdown.querySelectorAll('.vault-tag-dropdown-item').forEach(item => {
       item.addEventListener('click', async () => {
         const tag = item.dataset.tag;
         if (!tag) return;
@@ -6720,7 +7608,7 @@ function _wireTagAutocomplete(input, key, note, preview) {
   input.addEventListener('focus', () => { _renderDropdown(''); });
   input.addEventListener('input', () => { _renderDropdown(input.textContent.trim()); });
   input.addEventListener('keydown', (e) => {
-    const items = dropdown?.querySelectorAll('.shard-tag-dropdown-item');
+    const items = dropdown?.querySelectorAll('.vault-tag-dropdown-item');
     if (e.key === 'Enter') {
       e.preventDefault();
       if (items && items.length && selectedIndex >= 0 && items[selectedIndex]) {
@@ -6773,7 +7661,7 @@ function _wireTagAutocomplete(input, key, note, preview) {
 
 function _wirePropertyEditors(preview, note) {
   // --- Scalar property value edits (blur saves) ---
-  preview.querySelectorAll('.shard-prop-val[contenteditable]:not([data-type="array"])').forEach(el => {
+  preview.querySelectorAll('.vault-prop-val[contenteditable]:not([data-type="array"])').forEach(el => {
     el.addEventListener('blur', async () => {
       const key = el.dataset.propKey;
       const propType = el.dataset.propType || 'text';
@@ -6813,15 +7701,15 @@ function _wirePropertyEditors(preview, note) {
   });
 
   // --- Array (tag) property handling ---
-  preview.querySelectorAll('.shard-prop-val[data-type="array"]').forEach(container => {
+  preview.querySelectorAll('.vault-prop-val[data-type="array"]').forEach(container => {
     const key = container.dataset.propKey;
     const arr = note.frontmatter?.[key] || [];
 
     // Chip X removal
-    container.querySelectorAll('.shard-prop-chip-x').forEach(x => {
+    container.querySelectorAll('.vault-prop-chip-x').forEach(x => {
       x.addEventListener('click', async (e) => {
         e.stopPropagation();
-        const chipText = x.closest('.shard-prop-chip')?.dataset?.chip;
+        const chipText = x.closest('.vault-prop-chip')?.dataset?.chip;
         if (!chipText) return;
         note.frontmatter = note.frontmatter || {};
         note.frontmatter[key] = arr.filter(item => String(item) !== chipText);
@@ -6831,14 +7719,14 @@ function _wirePropertyEditors(preview, note) {
     });
 
     // Double-click chip text to edit
-    container.querySelectorAll('.shard-prop-chip-text').forEach(txt => {
+    container.querySelectorAll('.vault-prop-chip-text').forEach(txt => {
       txt.addEventListener('dblclick', (e) => {
         e.stopPropagation();
-        const chip = txt.closest('.shard-prop-chip');
+        const chip = txt.closest('.vault-prop-chip');
         if (!chip) return;
         const oldText = chip.dataset.chip;
         const input = document.createElement('span');
-        input.className = 'shard-prop-chip-input';
+        input.className = 'vault-prop-chip-input';
         input.contentEditable = 'plaintext-only';
         input.spellcheck = false;
         input.textContent = oldText;
@@ -6860,23 +7748,23 @@ function _wirePropertyEditors(preview, note) {
 
     // Click anywhere in the value box to focus the inline input
     container.addEventListener('click', (e) => {
-      if (e.target.closest('.shard-prop-chip')) return; // ignore chip clicks
-      const inlineInput = container.querySelector('.shard-prop-chip-input');
+      if (e.target.closest('.vault-prop-chip')) return; // ignore chip clicks
+      const inlineInput = container.querySelector('.vault-prop-chip-input');
       if (inlineInput) { inlineInput.focus(); }
     });
 
     // Inline input for adding new chips — only show tag autocomplete for the tags property
-    const inlineInput = container.querySelector('.shard-prop-chip-input');
+    const inlineInput = container.querySelector('.vault-prop-chip-input');
     if (inlineInput && key.toLowerCase() === 'tags') {
       _wireTagAutocomplete(inlineInput, key, note, preview);
     }
   });
 
   // --- Property icon menus ---
-  preview.querySelectorAll('.shard-prop-icon').forEach(icon => {
+  preview.querySelectorAll('.vault-prop-icon').forEach(icon => {
     icon.addEventListener('click', (e) => {
       e.stopPropagation();
-      console.log('[shard] prop icon clicked:', icon.dataset.propKey);
+      console.log('[vault] prop icon clicked:', icon.dataset.propKey);
       _openPropIconMenu(icon, icon.dataset.propKey, preview, note);
     });
   });
@@ -6886,10 +7774,10 @@ function _wirePropertyEditors(preview, note) {
   if (addBtn) {
     addBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      console.log('[shard] Add property clicked');
+      console.log('[vault] Add property clicked');
       _closeAllPropMenus();
       const dropdown = document.createElement('div');
-      dropdown.className = 'shard-prop-add-dropdown';
+      dropdown.className = 'vault-prop-add-dropdown';
       dropdown.style.position = 'fixed';
       const existingKeys = new Set(Object.keys(note.frontmatter || {}));
       const knownProps = _gatherPropertyTypes();
@@ -6913,14 +7801,14 @@ function _wirePropertyEditors(preview, note) {
       const options = allOptions.map(p => {
         const icon = _propIconSvg(p.name, '', p.type);
         const label = p.type.charAt(0).toUpperCase() + p.type.slice(1);
-        return `<div class="shard-prop-add-option" data-prop="${_esc(p.name)}" data-type="${_esc(p.type)}">${icon}<span class="shard-prop-add-name">${_esc(p.name)}</span><span class="shard-prop-add-type">${label}</span></div>`;
+        return `<div class="vault-prop-add-option" data-prop="${_esc(p.name)}" data-type="${_esc(p.type)}">${icon}<span class="vault-prop-add-name">${_esc(p.name)}</span><span class="vault-prop-add-type">${label}</span></div>`;
       }).join('');
-      dropdown.innerHTML = `${options}<div class="shard-prop-add-option" data-prop="__custom"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span class="shard-prop-add-name">New property</span></div>`;
+      dropdown.innerHTML = `${options}<div class="vault-prop-add-option" data-prop="__custom"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span class="vault-prop-add-name">New property</span></div>`;
       const rect = addBtn.getBoundingClientRect();
       dropdown.style.left = rect.left + 'px';
       dropdown.style.top = (rect.bottom + 4) + 'px';
       document.body.appendChild(dropdown);
-      dropdown.querySelectorAll('.shard-prop-add-option').forEach(opt => {
+      dropdown.querySelectorAll('.vault-prop-add-option').forEach(opt => {
         opt.addEventListener('click', async () => {
           const propName = opt.dataset.prop;
           if (propName === '__custom') {
@@ -6964,7 +7852,7 @@ function _renderRightSidebar(note) {
 }
 
 function _renderBacklinksPane(note) {
-  const bl = document.getElementById('shard-backlinks-panel');
+  const bl = document.getElementById('vault-backlinks-panel');
   if (!bl || !note) return;
   // Primary: client-side compute backlinks from all notes' outbound_links
   // (more robust than backend backlinks which can get stale/corrupted)
@@ -7005,7 +7893,7 @@ function _renderBacklinksPane(note) {
   const headerHtml = `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
       <h4 style="font-size:11px;opacity:0.6;text-transform:uppercase;letter-spacing:0.05em;margin:0;">Backlinks (${links.length})</h4>
-      ${links.length ? `<button class="shard-backlinks-toggle" title="Toggle all" style="background:transparent;border:none;color:var(--fg);opacity:0.5;cursor:pointer;padding:2px 4px;font-size:11px;display:flex;align-items:center;">
+      ${links.length ? `<button class="vault-backlinks-toggle" title="Toggle all" style="background:transparent;border:none;color:var(--fg);opacity:0.5;cursor:pointer;padding:2px 4px;font-size:11px;display:flex;align-items:center;">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
       </button>` : ''}
     </div>
@@ -7013,43 +7901,43 @@ function _renderBacklinksPane(note) {
   const listHtml = links.length ? links.map((b, idx) => {
     const snippetCount = (b.snippets || []).length;
     const isExpanded = allExpanded || bl.dataset['item' + idx] === 'open';
-    return `<div class="shard-backlink-item" data-idx="${idx}">
-      <div class="shard-backlink-header" data-id="${_esc(b.rel_path || b.id)}" style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:3px 0;font-size:12px;">
-        <span class="shard-backlink-chevron" style="display:inline-flex;transition:transform 0.15s;transform:rotate(${isExpanded ? '90deg' : '0deg'});">
+    return `<div class="vault-backlink-item" data-idx="${idx}">
+      <div class="vault-backlink-header" data-id="${_esc(b.rel_path || b.id)}" style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:3px 0;font-size:12px;">
+        <span class="vault-backlink-chevron" style="display:inline-flex;transition:transform 0.15s;transform:rotate(${isExpanded ? '90deg' : '0deg'});">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
         </span>
         <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(b.title)}</span>
         <span style="opacity:0.5;font-size:11px;flex-shrink:0;">${snippetCount}</span>
       </div>
-      <div class="shard-backlink-body" style="display:${isExpanded ? 'block' : 'none'};padding:4px 0 8px 18px;font-size:12px;opacity:0.8;line-height:1.5;">
-        ${(b.snippets || []).map(s => `<div class="shard-backlink-snippet" style="margin-bottom:6px;padding:6px 8px;background:color-mix(in srgb, var(--fg) 4%, transparent);border-radius:6px;cursor:pointer;">${_highlightBacklinkSnippet(s, targetNames)}</div>`).join('')}
+      <div class="vault-backlink-body" style="display:${isExpanded ? 'block' : 'none'};padding:4px 0 8px 18px;font-size:12px;opacity:0.8;line-height:1.5;">
+        ${(b.snippets || []).map(s => `<div class="vault-backlink-snippet" style="margin-bottom:6px;padding:6px 8px;background:color-mix(in srgb, var(--fg) 4%, transparent);border-radius:6px;cursor:pointer;">${_highlightBacklinkSnippet(s, targetNames)}</div>`).join('')}
       </div>
     </div>`;
-  }).join('') : `<div class="shard-backlink-item">
-    <div class="shard-backlink-header" style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:12px;opacity:0.5;">
+  }).join('') : `<div class="vault-backlink-item">
+    <div class="vault-backlink-header" style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:12px;opacity:0.5;">
       <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">No backlinks</span>
     </div>
   </div>`;
   bl.innerHTML = headerHtml + listHtml;
-  bl.querySelector('.shard-backlinks-toggle')?.addEventListener('click', function () {
+  bl.querySelector('.vault-backlinks-toggle')?.addEventListener('click', function () {
     const willExpand = bl.dataset.expanded !== 'all';
     bl.dataset.expanded = willExpand ? 'all' : '';
     this.classList.toggle('active', willExpand);
-    bl.querySelectorAll('.shard-backlink-item').forEach(item => {
+    bl.querySelectorAll('.vault-backlink-item').forEach(item => {
       const idx = item.dataset.idx;
-      const body = item.querySelector('.shard-backlink-body');
-      const chevron = item.querySelector('.shard-backlink-chevron');
+      const body = item.querySelector('.vault-backlink-body');
+      const chevron = item.querySelector('.vault-backlink-chevron');
       if (body) body.style.display = willExpand ? 'block' : 'none';
       if (chevron) chevron.style.transform = willExpand ? 'rotate(90deg)' : 'rotate(0deg)';
       if (idx !== undefined) bl.dataset['item' + idx] = willExpand ? 'open' : '';
     });
   });
-  bl.querySelectorAll('.shard-backlink-header').forEach(hdr => {
+  bl.querySelectorAll('.vault-backlink-header').forEach(hdr => {
     hdr.addEventListener('click', (e) => {
-      if (e.target.closest('.shard-backlink-snippet')) return;
-      const item = hdr.closest('.shard-backlink-item');
-      const body = item?.querySelector('.shard-backlink-body');
-      const chevron = hdr.querySelector('.shard-backlink-chevron');
+      if (e.target.closest('.vault-backlink-snippet')) return;
+      const item = hdr.closest('.vault-backlink-item');
+      const body = item?.querySelector('.vault-backlink-body');
+      const chevron = hdr.querySelector('.vault-backlink-chevron');
       const idx = item?.dataset.idx;
       if (!body) return;
       const isOpen = body.style.display === 'block';
@@ -7058,24 +7946,24 @@ function _renderBacklinksPane(note) {
       if (idx !== undefined) bl.dataset['item' + idx] = isOpen ? '' : 'open';
     });
   });
-  bl.querySelectorAll('.shard-backlink-snippet').forEach(snip => {
+  bl.querySelectorAll('.vault-backlink-snippet').forEach(snip => {
     snip.addEventListener('click', (e) => {
-      const hdr = snip.closest('.shard-backlink-item')?.querySelector('.shard-backlink-header');
+      const hdr = snip.closest('.vault-backlink-item')?.querySelector('.vault-backlink-header');
       if (hdr) _navigateToNote(hdr.dataset.id, true, e.ctrlKey || e.metaKey);
     });
   });
 }
 
 function _renderOutgoingPane(note) {
-  const out = document.getElementById('shard-outgoing-panel');
+  const out = document.getElementById('vault-outgoing-panel');
   if (!out || !note) return;
   const links = note.outbound_links || [];
   out.innerHTML = `<h4 style="font-size:11px;opacity:0.6;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em;">Outgoing (${links.length})</h4>` +
     (links.length ? links.map(t => {
       const target = _notes.find(n => n.title === t);
-      return `<div class="shard-sidebar-link ${target ? '' : 'ghost'}" data-title="${_esc(t)}">${_esc(t)}</div>`;
+      return `<div class="vault-sidebar-link ${target ? '' : 'ghost'}" data-title="${_esc(t)}">${_esc(t)}</div>`;
     }).join('') : '<div style="opacity:0.5;font-size:11px;">No outgoing links</div>');
-  out.querySelectorAll('.shard-sidebar-link').forEach(el => {
+  out.querySelectorAll('.vault-sidebar-link').forEach(el => {
     el.addEventListener('click', async (e) => {
       const target = _notes.find(n => n.title === el.dataset.title);
       if (target) {
@@ -7089,15 +7977,15 @@ function _renderOutgoingPane(note) {
 }
 
 function _renderNoteTagsPane(note) {
-  const tags = document.getElementById('shard-tags-panel');
+  const tags = document.getElementById('vault-tags-panel');
   if (!tags) return;
   const t = note.tags || [];
   tags.innerHTML = `<h4 style="font-size:11px;opacity:0.6;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em;">Tags</h4>` +
-    (t.length ? t.map(tag => `<span class="shard-tag" style="cursor:pointer;">${_esc(tag)}</span>`).join(' ') : '<div style="opacity:0.5;font-size:11px;">No tags</div>');
+    (t.length ? t.map(tag => `<span class="vault-tag" style="cursor:pointer;">${_esc(tag)}</span>`).join(' ') : '<div style="opacity:0.5;font-size:11px;">No tags</div>');
 }
 
 function _renderUnlinkedPane(note) {
-  const el = document.getElementById('shard-unlinked-panel');
+  const el = document.getElementById('vault-unlinked-panel');
   if (!el || !note) return;
   // Find note titles mentioned in content but not wrapped in [[...]]
   const content = note.content || '';
@@ -7132,7 +8020,7 @@ function _renderUnlinkedPane(note) {
 
   el.innerHTML = `<h4 style="font-size:11px;opacity:0.6;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em;">Unlinked mentions (${unique.length})</h4>` +
     (unique.length ? unique.map(m =>
-      `<div class="shard-sidebar-link" data-note-id="${_esc(m.note.id)}" style="font-size:12px;padding:3px 0;cursor:pointer;">
+      `<div class="vault-sidebar-link" data-note-id="${_esc(m.note.id)}" style="font-size:12px;padding:3px 0;cursor:pointer;">
         <div style="font-weight:500;">${_esc(m.note.title)}</div>
         <div style="opacity:0.6;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(m.snippet)}</div>
       </div>`
@@ -7143,7 +8031,7 @@ function _renderUnlinkedPane(note) {
 }
 
 function _renderOutlinePane(note) {
-  const el = document.getElementById('shard-outline-panel');
+  const el = document.getElementById('vault-outline-panel');
   if (!el || !note) return;
   const content = note.content || '';
   const headings = [];
@@ -7154,14 +8042,14 @@ function _renderOutlinePane(note) {
   }
   el.innerHTML = `<h4 style="font-size:11px;opacity:0.6;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em;">Outline</h4>` +
     (headings.length ? headings.map((h, i) =>
-      `<div class="shard-outline-item" data-idx="${i}" style="font-size:12px;padding:3px 0 3px ${(h.level - 1) * 12}px;cursor:pointer;border-radius:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+      `<div class="vault-outline-item" data-idx="${i}" style="font-size:12px;padding:3px 0 3px ${(h.level - 1) * 12}px;cursor:pointer;border-radius:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
         ${_esc(h.text)}
       </div>`
     ).join('') : '<div style="opacity:0.5;font-size:11px;">No headings</div>');
-  el.querySelectorAll('.shard-outline-item').forEach(item => {
+  el.querySelectorAll('.vault-outline-item').forEach(item => {
     item.addEventListener('click', () => {
       // Scroll to heading in preview
-      const preview = document.getElementById('shard-preview');
+      const preview = document.getElementById('vault-preview');
       if (!preview) return;
       const hTags = ['H1','H2','H3','H4','H5','H6'];
       const headingEls = preview.querySelectorAll(hTags.join(','));
@@ -7172,7 +8060,7 @@ function _renderOutlinePane(note) {
 }
 
 function _renderOrphansPane(note) {
-  const el = document.getElementById('shard-orphans-panel');
+  const el = document.getElementById('vault-orphans-panel');
   if (!el || !note) return;
   // File-specific orphans: wikilinks in this note that point to non-existent notes
   const orphanedLinks = new Set();
@@ -7200,12 +8088,12 @@ function _renderOrphansPane(note) {
   const orphans = Array.from(orphanedLinks).map(s => JSON.parse(s));
   el.innerHTML = `<h4 style="font-size:11px;opacity:0.6;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em;">Orphans (${orphans.length})</h4>` +
     (orphans.length ? orphans.map(o =>
-      `<div class="shard-sidebar-link" data-orphan-target="${_esc(o.target)}" style="font-size:12px;padding:3px 0;cursor:pointer;">${_esc(o.display)}</div>`
+      `<div class="vault-sidebar-link" data-orphan-target="${_esc(o.target)}" style="font-size:12px;padding:3px 0;cursor:pointer;">${_esc(o.display)}</div>`
     ).join('') : '<div style="opacity:0.5;font-size:11px;">No orphan links in this file</div>');
   el.querySelectorAll('[data-orphan-target]').forEach(item => {
     item.addEventListener('click', () => {
       // Search for this link in the note body and scroll to it
-      const preview = document.getElementById('shard-preview');
+      const preview = document.getElementById('vault-preview');
       if (preview) {
         const target = item.dataset.orphanTarget;
         const linkEl = preview.querySelector(`a.wikilink[data-note="${CSS.escape(target)}"]`) ||
@@ -7217,8 +8105,8 @@ function _renderOrphansPane(note) {
 }
 
 function _injectAsContext(note) {
-  window.dispatchEvent(new CustomEvent('odysseus-shard-context', {
-    detail: { label: `Shard: ${note.title}`, content: note.content }
+  window.dispatchEvent(new CustomEvent('odysseus-vault-context', {
+    detail: { label: `Vault: ${note.title}`, content: note.content }
   }));
   if (navigator.clipboard?.writeText) {
     navigator.clipboard.writeText(`[[${note.title}]]\n\n${note.content.slice(0, 2000)}`);
@@ -7228,36 +8116,36 @@ function _injectAsContext(note) {
 // ── Graph / Timeline ───────────────────────────────────────
 
 function _renderGraph() {
-  const container = document.getElementById('shard-graph-canvas');
+  const container = document.getElementById('vault-graph-canvas');
   if (!container || !window.vis) return;
-  import('./shardGraphCanvas.js').then(mod => {
-    mod.renderShardGraph(container, _selectedVaultId);
+  import('./vaultGraphCanvas.js').then(mod => {
+    mod.renderVaultGraph(container, _selectedVaultId);
   }).catch(err => {
-    container.innerHTML = `<div class="shard-error">Graph error: ${err.message}</div>`;
+    container.innerHTML = `<div class="vault-error">Graph error: ${err.message}</div>`;
   });
 }
 
 function _renderLocalGraph(note) {
-  const container = document.getElementById('shard-local-graph-canvas');
+  const container = document.getElementById('vault-local-graph-canvas');
   if (!container || !window.vis) return;
   if (!note) {
-    container.innerHTML = '<div class="shard-graph-loading">Select a note to see its local graph.</div>';
+    container.innerHTML = '<div class="vault-graph-loading">Select a note to see its local graph.</div>';
     return;
   }
-  import('./shardGraphCanvas.js').then(mod => {
+  import('./vaultGraphCanvas.js').then(mod => {
     mod.renderLocalGraph(container, _selectedVaultId, note.rel_path || note.id);
   }).catch(err => {
-    container.innerHTML = `<div class="shard-error">Local graph error: ${err.message}</div>`;
+    container.innerHTML = `<div class="vault-error">Local graph error: ${err.message}</div>`;
   });
 }
 
 function _renderTimeline() {
-  const wrap = document.getElementById('shard-timeline-wrap');
+  const wrap = document.getElementById('vault-timeline-wrap');
   if (!wrap) return;
-  import('./shardTimeline.js').then(mod => {
-    mod.renderShardTimeline(wrap, _selectedVaultId);
+  import('./vaultTimeline.js').then(mod => {
+    mod.renderVaultTimeline(wrap, _selectedVaultId);
   }).catch(err => {
-    wrap.innerHTML = `<div class="shard-error">Timeline error: ${err.message}</div>`;
+    wrap.innerHTML = `<div class="vault-error">Timeline error: ${err.message}</div>`;
   });
 }
 
@@ -7266,50 +8154,50 @@ function _renderTimeline() {
 async function _loadPermissions() {
   if (!_selectedVaultId) return;
   try {
-    const r = await fetch(`${API_BASE}/api/shard/vaults/${_selectedVaultId}/permissions`, { credentials: 'same-origin' });
+    const r = await fetch(`${API_BASE}/api/vault/vaults/${_selectedVaultId}/permissions`, { credentials: 'same-origin' });
     if (!r.ok) return;
     const data = await r.json();
     _permissions = data.permissions || [];
     _renderPermissions();
   } catch (e) {
-    console.error('[shard] load permissions failed', e);
+    console.error('[vault] load permissions failed', e);
   }
 }
 
 function _renderPermissions() {
-  const table = document.getElementById('shard-permissions-table');
+  const table = document.getElementById('vault-permissions-table');
   if (!table) return;
   if (!_permissions.length) {
     table.innerHTML = '<div style="padding:12px;text-align:center;opacity:0.5;font-size:12px;">No permission rules yet</div>';
     return;
   }
   table.innerHTML = `
-    <div class="shard-perm-header">
+    <div class="vault-perm-header">
       <span>Type</span><span>Pattern</span><span>Perm</span><span>Prio</span><span></span>
     </div>
     ${_permissions.map(p => `
-      <div class="shard-perm-row" data-id="${p.id}">
-        <span class="shard-perm-type">${_esc(p.pattern_type)}</span>
-        <span class="shard-perm-pattern" title="${_esc(p.path_pattern)}">${_esc(p.path_pattern)}</span>
-        <span class="shard-perm-level ${_esc(p.permission)}">${_esc(p.permission)}</span>
-        <span class="shard-perm-priority">${p.priority}</span>
-        <button class="shard-perm-del" data-id="${p.id}">&times;</button>
+      <div class="vault-perm-row" data-id="${p.id}">
+        <span class="vault-perm-type">${_esc(p.pattern_type)}</span>
+        <span class="vault-perm-pattern" title="${_esc(p.path_pattern)}">${_esc(p.path_pattern)}</span>
+        <span class="vault-perm-level ${_esc(p.permission)}">${_esc(p.permission)}</span>
+        <span class="vault-perm-priority">${p.priority}</span>
+        <button class="vault-perm-del" data-id="${p.id}">&times;</button>
       </div>
     `).join('')}
   `;
-  table.querySelectorAll('.shard-perm-del').forEach(btn => {
+  table.querySelectorAll('.vault-perm-del').forEach(btn => {
     btn.addEventListener('click', () => _removePermission(btn.dataset.id));
   });
 }
 
 async function _updateVaultToggles() {
   if (!_selectedVaultId) return;
-  const readCb = document.getElementById('shard-vault-read-all');
-  const writeCb = document.getElementById('shard-vault-write-all');
+  const readCb = document.getElementById('vault-vault-read-all');
+  const writeCb = document.getElementById('vault-vault-write-all');
   const read_enabled = readCb?.checked ?? true;
   const write_enabled = writeCb?.checked ?? false;
   try {
-    await fetch(`${API_BASE}/api/shard/vaults/${_selectedVaultId}`, {
+    await fetch(`${API_BASE}/api/vault/vaults/${_selectedVaultId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
@@ -7324,20 +8212,20 @@ async function _updateVaultToggles() {
     _populateVaultDropdown();
     _selectVault(_selectedVaultId);
   } catch (e) {
-    console.error('[shard] update vault toggles failed', e);
+    console.error('[vault] update vault toggles failed', e);
   }
 }
 
 async function _refreshVault() {
   if (!_selectedVaultId) return;
-  const btn = document.getElementById('shard-refresh-btn');
+  const btn = document.getElementById('vault-refresh-btn');
   if (btn) btn.style.opacity = '0.5';
   try {
     // Direct filesystem read — no backend sync needed
     await _loadNotes();
     await _loadFolders();
   } catch (e) {
-    console.error('[shard] refresh failed', e);
+    console.error('[vault] refresh failed', e);
   } finally {
     if (btn) btn.style.opacity = '';
   }
@@ -7345,16 +8233,16 @@ async function _refreshVault() {
 
 async function _addPermission() {
   if (!_selectedVaultId) return;
-  const typeSel = document.getElementById('shard-new-perm-type');
-  const patternInput = document.getElementById('shard-new-perm-pattern');
-  const levelSel = document.getElementById('shard-new-perm-level');
-  const priorityInput = document.getElementById('shard-new-perm-priority');
+  const typeSel = document.getElementById('vault-new-perm-type');
+  const patternInput = document.getElementById('vault-new-perm-pattern');
+  const levelSel = document.getElementById('vault-new-perm-level');
+  const priorityInput = document.getElementById('vault-new-perm-priority');
 
   const pattern = patternInput?.value.trim();
   if (!pattern) return;
 
   try {
-    const r = await fetch(`${API_BASE}/api/shard/vaults/${_selectedVaultId}/permissions`, {
+    const r = await fetch(`${API_BASE}/api/vault/vaults/${_selectedVaultId}/permissions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
@@ -7370,20 +8258,20 @@ async function _addPermission() {
       await _loadPermissions();
     }
   } catch (e) {
-    console.error('[shard] add permission failed', e);
+    console.error('[vault] add permission failed', e);
   }
 }
 
 async function _removePermission(permId) {
   if (!_selectedVaultId || !permId) return;
   try {
-    await fetch(`${API_BASE}/api/shard/vaults/${_selectedVaultId}/permissions/${permId}`, {
+    await fetch(`${API_BASE}/api/vault/vaults/${_selectedVaultId}/permissions/${permId}`, {
       method: 'DELETE',
       credentials: 'same-origin',
     });
     await _loadPermissions();
   } catch (e) {
-    console.error('[shard] remove permission failed', e);
+    console.error('[vault] remove permission failed', e);
   }
 }
 
@@ -7394,14 +8282,14 @@ function _wireResizeHandles() {
 
   // Restore saved widths
   try {
-    const saved = JSON.parse(localStorage.getItem('shard-pane-widths') || '{}');
-    if (saved.left) document.documentElement.style.setProperty('--shard-left-w', saved.left + 'px');
-    if (saved.right) document.documentElement.style.setProperty('--shard-right-w', saved.right + 'px');
+    const saved = JSON.parse(localStorage.getItem('vault-pane-widths') || '{}');
+    if (saved.left) document.documentElement.style.setProperty('--vault-left-w', saved.left + 'px');
+    if (saved.right) document.documentElement.style.setProperty('--vault-right-w', saved.right + 'px');
   } catch {}
 
-  const leftHandle = document.getElementById('shard-resize-left');
-  const rightHandle = document.getElementById('shard-resize-right');
-  const pane3 = document.querySelector('.shard-3pane');
+  const leftHandle = document.getElementById('vault-resize-left');
+  const rightHandle = document.getElementById('vault-resize-right');
+  const pane3 = document.querySelector('.vault-3pane');
   if (!pane3) return;
 
   function setup(handle, side) {
@@ -7414,7 +8302,7 @@ function _wireResizeHandles() {
       isDragging = true;
       startX = e.clientX;
       const computed = getComputedStyle(document.documentElement);
-      const prop = side === 'left' ? '--shard-left-w' : '--shard-right-w';
+      const prop = side === 'left' ? '--vault-left-w' : '--vault-right-w';
       startSize = parseInt(computed.getPropertyValue(prop)) || 200;
       handle.classList.add('dragging');
       e.preventDefault();
@@ -7424,7 +8312,7 @@ function _wireResizeHandles() {
       if (!isDragging) return;
       const delta = side === 'left' ? e.clientX - startX : startX - e.clientX;
       const newSize = Math.max(120, Math.min(400, startSize + delta));
-      const prop = side === 'left' ? '--shard-left-w' : '--shard-right-w';
+      const prop = side === 'left' ? '--vault-left-w' : '--vault-right-w';
       document.documentElement.style.setProperty(prop, newSize + 'px');
     });
 
@@ -7432,9 +8320,9 @@ function _wireResizeHandles() {
       if (!isDragging) return;
       isDragging = false;
       handle.classList.remove('dragging');
-      const left = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--shard-left-w')) || 200;
-      const right = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--shard-right-w')) || 200;
-      try { localStorage.setItem('shard-pane-widths', JSON.stringify({ left, right })); } catch {}
+      const left = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--vault-left-w')) || 200;
+      const right = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--vault-right-w')) || 200;
+      try { localStorage.setItem('vault-pane-widths', JSON.stringify({ left, right })); } catch {}
     });
   }
 
@@ -7442,8 +8330,8 @@ function _wireResizeHandles() {
   setup(rightHandle, 'right');
 
   // Plugin settings sidebar resize
-  const pluginResize = document.getElementById('shard-plugin-resize');
-  const pluginSidebar = document.getElementById('shard-plugin-settings-sidebar');
+  const pluginResize = document.getElementById('vault-plugin-resize');
+  const pluginSidebar = document.getElementById('vault-plugin-settings-sidebar');
   if (pluginResize && pluginSidebar) {
     let pStartX = 0;
     let pStartSize = 0;
@@ -7459,7 +8347,7 @@ function _wireResizeHandles() {
       if (!pDragging) return;
       const delta = e.clientX - pStartX;
       const newSize = Math.max(180, Math.min(400, pStartSize + delta));
-      document.documentElement.style.setProperty('--shard-plugin-sidebar-w', newSize + 'px');
+      document.documentElement.style.setProperty('--vault-plugin-sidebar-w', newSize + 'px');
     });
     document.addEventListener('mouseup', () => {
       if (!pDragging) return;
@@ -7561,23 +8449,25 @@ function _contextMenuKeyHandler(e) {
 
 function _showContextMenu(x, y, items) {
   _hideContextMenu();
-  console.log('[shard] _showContextMenu', x, y, items.length);
+  console.log('[vault] _showContextMenu', x, y, items.length);
   const menu = document.createElement('div');
-  menu.className = 'shard-context-menu';
+  menu.className = 'vault-context-menu';
   menu.style.left = x + 'px';
   menu.style.top = y + 'px';
 
   items.forEach(item => {
     if (item.separator) {
       const sep = document.createElement('div');
-      sep.className = 'shard-context-menu-separator';
+      sep.className = 'vault-context-menu-separator';
       menu.appendChild(sep);
       return;
     }
     const row = document.createElement('div');
-    row.className = 'shard-context-menu-item' + (item.disabled ? ' disabled' : '') + (item.danger ? ' danger' : '');
+    row.className = 'vault-context-menu-item' + (item.disabled ? ' disabled' : '') + (item.danger ? ' danger' : '');
     const check = item.checked ? '<span style="margin-right:4px;opacity:0.8;">&#10003;</span>' : '<span style="margin-right:4px;opacity:0;">&#10003;</span>';
-    row.innerHTML = `<span>${check}${_esc(item.label)}</span>${item.shortcut ? `<span style="opacity:0.5;font-size:11px;">${_esc(item.shortcut)}</span>` : ''}`;
+    const iconHtml = item.icon ? `<span style="margin-right:8px;opacity:0.8;display:inline-flex;align-items:center;vertical-align:middle;">${item.icon}</span>` : '';
+    const arrowHtml = item.submenu ? '<span style="opacity:0.5;font-size:11px;">></span>' : '';
+    row.innerHTML = `<span>${check}${iconHtml}${_esc(item.label)}</span>${item.shortcut ? `<span style="opacity:0.5;font-size:11px;">${_esc(item.shortcut)}</span>` : ''}${arrowHtml}`;
     if (!item.disabled) {
       row.addEventListener('click', () => {
         _hideContextMenu();
@@ -7590,19 +8480,20 @@ function _showContextMenu(x, y, items) {
           if (_activeContextSubmenu) _activeContextSubmenu.remove();
           const rect = row.getBoundingClientRect();
           const sub = document.createElement('div');
-          sub.className = 'shard-context-menu-submenu';
+          sub.className = 'vault-context-menu-submenu';
           sub.style.left = (rect.right + 2) + 'px';
           sub.style.top = rect.top + 'px';
           item.submenu.forEach(si => {
             if (si.separator) {
               const ssep = document.createElement('div');
-              ssep.className = 'shard-context-menu-separator';
+              ssep.className = 'vault-context-menu-separator';
               sub.appendChild(ssep);
               return;
             }
             const srow = document.createElement('div');
-            srow.className = 'shard-context-menu-item' + (si.disabled ? ' disabled' : '');
-            srow.innerHTML = `<span>${_esc(si.label)}</span>`;
+            srow.className = 'vault-context-menu-item' + (si.disabled ? ' disabled' : '');
+            const sicon = si.icon ? `<span style="margin-right:8px;opacity:0.8;display:inline-flex;align-items:center;vertical-align:middle;">${si.icon}</span>` : '';
+            srow.innerHTML = `<span>${sicon}${_esc(si.label)}</span>`;
             if (!si.disabled) {
               srow.addEventListener('click', () => { _hideContextMenu(); si.action(); });
             }
@@ -7639,39 +8530,163 @@ function _showContextMenu(x, y, items) {
   }, 0);
 }
 
-function _buildFolderSubmenu(noteId, currentFolder) {
+function _showFolderPickerDialog(noteId, currentFolder) {
+  const modal = document.getElementById('vault-modal');
+  if (!modal) return;
+
+  // Build folder list
   const folders = [''];
-  _notes.forEach(n => {
-    const f = (n.folder || '').replace(/\\/g, '/');
-    if (f && !folders.includes(f)) folders.push(f);
+  _folders.forEach(f => {
+    const clean = (f || '').replace(/\\/g, '/');
+    if (clean && !folders.includes(clean)) folders.push(clean);
   });
   folders.sort();
-  return folders.map(f => ({
-    label: f || '(root)',
-    action: async () => {
-      const note = _notes.find(n => n.id === noteId);
-      const oldFolder = note ? note.folder : '';
-      if (note) note.folder = f;
-      _renderFolderTree();
-      try {
-        const r = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(noteId)}/move`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
-          body: JSON.stringify({ folder: f }),
-        });
-        if (!r.ok) throw new Error();
-        const data = await r.json().catch(() => ({}));
-        if (data.new_path && note) {
-          const newId = data.new_path;
-          _syncNoteIdAfterMove(noteId, newId);
-          note.id = newId;
-          note.rel_path = newId;
-        }
-      } catch {
-        if (note) note.folder = oldFolder;
-        _renderFolderTree();
+
+  // Remove any existing picker
+  const existing = modal.querySelector('.vault-folder-picker');
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.className = 'vault-folder-picker';
+  overlay.innerHTML = `
+    <div class="vault-folder-picker-backdrop" style="position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:10000;display:flex;align-items:flex-start;justify-content:center;padding-top:15vh;">
+      <div class="vault-folder-picker-box" style="width:520px;max-width:90vw;background:var(--bg-raised,var(--bg,#1a1a1a));border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.5);display:flex;flex-direction:column;overflow:hidden;">
+        <input type="text" class="vault-folder-picker-input" placeholder="Type a folder..." style="width:100%;background:transparent;color:var(--fg);border:none;border-bottom:1px solid var(--border);padding:12px 14px;font-size:15px;outline:none;box-sizing:border-box;" autocomplete="off" spellcheck="false">
+        <div class="vault-folder-picker-results" style="max-height:320px;overflow-y:auto;padding:4px 0;"></div>
+        <div class="vault-folder-picker-hint" style="padding:6px 14px;font-size:11px;opacity:0.5;border-top:1px solid var(--border);">↑↓ to navigate · Enter to select · shift + Enter to create · esc to dismiss</div>
+      </div>
+    </div>
+  `;
+  modal.appendChild(overlay);
+
+  const input = overlay.querySelector('.vault-folder-picker-input');
+  const results = overlay.querySelector('.vault-folder-picker-results');
+  let selectedIndex = 0;
+
+  const _moveNoteToFolder = async (targetFolder) => {
+    const note = _notes.find(n => n.id === noteId);
+    const oldFolder = note ? note.folder : '';
+    if (note) note.folder = targetFolder;
+    _renderFolderTree();
+    try {
+      const r = await fetch(`${API_BASE}/api/vault/notes/${encodeURIComponent(noteId)}/move`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+        body: JSON.stringify({ folder: targetFolder }),
+      });
+      if (!r.ok) throw new Error();
+      const data = await r.json().catch(() => ({}));
+      if (data.new_path && note) {
+        const newId = data.new_path;
+        _syncNoteIdAfterMove(noteId, newId);
+        note.id = newId;
+        note.rel_path = newId;
       }
-    },
-  }));
+      showToast('File moved');
+    } catch {
+      if (note) note.folder = oldFolder;
+      _renderFolderTree();
+      showToast('Move failed');
+    }
+  };
+
+  const _createFolder = async (folderName) => {
+    if (!folderName) return;
+    try {
+      const r = await fetch(`${API_BASE}/api/vault/vaults/${encodeURIComponent(_selectedVaultId)}/folders`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+        body: JSON.stringify({ path: folderName }),
+      });
+      if (!r.ok) throw new Error();
+      await _loadFolders();
+      await _moveNoteToFolder(folderName);
+    } catch (err) {
+      console.error('[vault] create folder failed:', err);
+      showToast('Failed to create folder');
+    }
+  };
+
+  const renderResults = (query) => {
+    const q = query.trim().toLowerCase();
+    let items = folders;
+    if (q) {
+      items = folders.filter(f => (f || '(root)').toLowerCase().includes(q));
+    }
+    if (!items.length) {
+      results.innerHTML = `<div style="padding:20px;text-align:center;opacity:0.5;font-size:13px;">No matching folders. Press Shift+Enter to create "${_esc(query)}"</div>`;
+      return;
+    }
+    results.innerHTML = items.map((f, i) => `
+      <div class="vault-folder-picker-item" data-folder="${_esc(f)}" data-index="${i}" style="padding:7px 14px;font-size:13px;cursor:pointer;pointer-events:auto;display:flex;align-items:center;gap:8px;border-radius:4px;margin:0 4px;">
+        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(f || '/')}</span>
+        ${f === currentFolder ? '<span style="opacity:0.4;font-size:11px;">current</span>' : ''}
+      </div>
+    `).join('');
+    selectedIndex = 0;
+    _updateSelection();
+  };
+
+  const _updateSelection = () => {
+    const allItems = results.querySelectorAll('.vault-folder-picker-item');
+    if (selectedIndex < 0) selectedIndex = 0;
+    if (selectedIndex >= allItems.length) selectedIndex = allItems.length - 1;
+    allItems.forEach((el, i) => {
+      el.style.background = i === selectedIndex ? 'color-mix(in srgb, var(--accent, var(--red)) 15%, transparent)' : 'transparent';
+    });
+    const selected = results.querySelector(`.vault-folder-picker-item[data-index="${selectedIndex}"]`);
+    if (selected) selected.scrollIntoView({ block: 'nearest' });
+  };
+
+  input.addEventListener('input', () => renderResults(input.value));
+  input.addEventListener('keydown', (e) => {
+    const items = results.querySelectorAll('.vault-folder-picker-item');
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      selectedIndex = Math.min(selectedIndex + 1, items.length - 1);
+      _updateSelection();
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      selectedIndex = Math.max(selectedIndex - 1, 0);
+      _updateSelection();
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (e.shiftKey) {
+        // Create new folder with the typed name
+        _createFolder(input.value.trim());
+      } else {
+        const selected = results.querySelector(`.vault-folder-picker-item[data-index="${selectedIndex}"]`);
+        if (selected) {
+          _moveNoteToFolder(selected.dataset.folder);
+        }
+      }
+      overlay.remove();
+      return;
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      overlay.remove();
+    }
+  });
+
+  results.addEventListener('click', (e) => {
+    const item = e.target.closest('.vault-folder-picker-item');
+    if (item) {
+      _moveNoteToFolder(item.dataset.folder);
+      overlay.remove();
+    }
+  });
+
+  overlay.querySelector('.vault-folder-picker-backdrop').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) overlay.remove();
+  });
+
+  renderResults('');
+  input.focus();
 }
 
 function _getNoteAbsolutePath(note) {
@@ -7691,7 +8706,7 @@ function _openNoteInDefaultApp(noteId) {
     window.electronAPI.openPath(absPath).then(r => {
       if (r?.error) showToast('Could not open: ' + r.error);
     }).catch(err => {
-      console.error('[shard] shell-open-path failed:', err);
+      console.error('[vault] shell-open-path failed:', err);
       showToast('Electron shell not available. If you recently updated main.js, restart Electron.');
     });
   } else {
@@ -7705,7 +8720,7 @@ function _showNoteInExplorer(noteId) {
   if (!absPath) { showToast('Vault path not available'); return; }
   if (window.electronAPI?.showItemInFolder) {
     window.electronAPI.showItemInFolder(absPath).catch(err => {
-      console.error('[shard] shell-show-item failed:', err);
+      console.error('[vault] shell-show-item failed:', err);
       showToast('Electron shell not available. If you recently updated main.js, restart Electron.');
     });
   } else {
@@ -7720,7 +8735,7 @@ function _showFolderInExplorer(folder) {
   const folderPath = vaultPath.replace(/\\/g, '/') + '/' + (folder || '').replace(/\\/g, '/');
   if (window.electronAPI?.showItemInFolder) {
     window.electronAPI.showItemInFolder(folderPath).catch(err => {
-      console.error('[shard] shell-show-item failed:', err);
+      console.error('[vault] shell-show-item failed:', err);
       showToast('Electron shell not available. If you recently updated main.js, restart Electron.');
     });
   } else {
@@ -7729,10 +8744,10 @@ function _showFolderInExplorer(folder) {
 }
 
 function _showIconPicker(targetId, x, y, type = 'note') {
-  const existing = document.querySelector('.shard-icon-picker');
+  const existing = document.querySelector('.vault-icon-picker');
   if (existing) existing.remove();
   const picker = document.createElement('div');
-  picker.className = 'shard-icon-picker';
+  picker.className = 'vault-icon-picker';
   picker.style.cssText = `position:fixed;left:${x}px;top:${y}px;z-index:6000;background:var(--panel,var(--bg,#1a1a1a));border:1px solid var(--border);border-radius:6px;padding:8px;box-shadow:0 4px 12px rgba(0,0,0,0.3);display:flex;flex-wrap:wrap;gap:6px;max-width:220px;`;
   const keys = Object.keys(_NOTE_ICON_PACK).filter(k => k !== 'folder');
   const currentKey = type === 'folder' ? _folderIcons[targetId] : _noteIcons[targetId];
@@ -7784,7 +8799,7 @@ function _showNoteMenu(e, note) {
     }},
     { separator: true },
     { label: 'Rename...', action: () => _promptRenameNote(note.id) },
-    { label: 'Move file to…', submenu: _buildFolderSubmenu(note.id, note.folder) },
+    { label: 'Move file to…', action: () => _showFolderPickerDialog(note.id, note.folder) },
     { label: 'Make a copy', action: () => _duplicateNote(note.id) },
     { separator: true },
     { label: isBookmarked ? 'Unbookmark' : 'Bookmark', action: () => {
@@ -7794,16 +8809,16 @@ function _showNoteMenu(e, note) {
       _renderFolderTree();
     }},
     { label: 'Add file property', action: () => {
-      const btn = document.querySelector('.shard-prop-add-main');
+      const btn = document.querySelector('.vault-prop-add-main');
       if (btn) btn.click();
     }},
     { separator: true },
-    { label: 'Copy Shard URL', action: () => _copyShardUrl(note.id) },
+    { label: 'Copy Vault URL', action: () => _copyVaultUrl(note.id) },
     { label: 'Copy path', action: () => navigator.clipboard?.writeText(note.rel_path || note.id) },
     { separator: true },
     { label: 'Reveal file in navigation', action: () => {
-      const tree = document.getElementById('shard-folder-tree');
-      const row = tree?.querySelector(`.shard-tree-row[data-note-id="${CSS.escape(note.id)}"]`);
+      const tree = document.getElementById('vault-folder-tree');
+      const row = tree?.querySelector(`.vault-tree-row[data-note-id="${CSS.escape(note.id)}"]`);
       if (row) {
         row.scrollIntoView({ behavior: 'smooth', block: 'center' });
         row.style.background = 'color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 20%, transparent)';
@@ -7833,7 +8848,7 @@ function _showFileContextMenu(e, noteId) {
     { label: 'Open to the right', action: () => _navigateToNote(noteId, true, true) },
     { separator: true },
     { label: 'Make a copy', action: () => _duplicateNote(noteId) },
-    { label: 'Move file to…', submenu: _buildFolderSubmenu(noteId, note?.folder) },
+    { label: 'Move file to…', action: () => _showFolderPickerDialog(noteId, note?.folder) },
     { label: isBookmarked ? 'Unbookmark' : 'Bookmark', action: () => {
       if (isBookmarked) _bookmarks.delete(noteId); else _bookmarks.add(noteId);
       _persistBookmarks();
@@ -7842,7 +8857,7 @@ function _showFileContextMenu(e, noteId) {
     }},
     { label: 'Merge entire file with...', disabled: true, action: () => {} },
     { separator: true },
-    { label: 'Copy Shard URL', action: () => _copyShardUrl(noteId) },
+    { label: 'Copy Vault URL', action: () => _copyVaultUrl(noteId) },
     { label: 'Copy formatted Advanced URI', action: () => {
       const n = _notes.find(n => n.id === noteId);
       if (!n) return;
@@ -7864,13 +8879,13 @@ function _showFileContextMenu(e, noteId) {
     { label: 'Delete', danger: true, action: () => _deleteNote(noteId) },
     { separator: true },
     { label: 'Manage all fields', action: () => {
-      const btn = document.querySelector('.shard-prop-add-main');
+      const btn = document.querySelector('.vault-prop-add-main');
       if (btn) btn.click();
       _navigateToNote(noteId, true);
     }},
     { label: 'Add field at section...', disabled: true, action: () => {} },
     { label: 'Add field in frontmatter', action: () => {
-      const btn = document.querySelector('.shard-prop-add-main');
+      const btn = document.querySelector('.vault-prop-add-main');
       if (btn) btn.click();
       _navigateToNote(noteId, true);
     }},
@@ -7904,18 +8919,18 @@ async function _deleteFolder(folder) {
   if (_selectedNoteId) {
     _selectNote(_selectedNoteId);
   } else {
-    const preview = document.getElementById('shard-preview');
+    const preview = document.getElementById('vault-preview');
     if (preview) preview.innerHTML = '<div style="padding:20px;text-align:center;opacity:0.5;">Select a note to view</div>';
   }
 
   try {
-    const r = await fetch(`${API_BASE}/api/shard/folders/delete`, {
+    const r = await fetch(`${API_BASE}/api/vault/folders/delete`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
       body: JSON.stringify({ folder_path: folder }),
     });
     if (!r.ok) throw new Error();
   } catch (e) {
-    console.error('[shard] delete folder failed, rolling back', e);
+    console.error('[vault] delete folder failed, rolling back', e);
     // Restore
     _notes.push(...removedNotes);
     _notes.sort((a, b) => a.title.toLowerCase().localeCompare(b.title.toLowerCase()));
@@ -7956,7 +8971,7 @@ function _countFolderWords(folder) {
 }
 
 function _searchInFolder(folder) {
-  const searchInput = document.getElementById('shard-search-input');
+  const searchInput = document.getElementById('vault-search-input');
   if (searchInput) {
     searchInput.value = `path:${folder || ''} `;
     searchInput.focus();
@@ -8001,7 +9016,7 @@ function _showFolderContextMenu(e, folder) {
     { separator: true },
     { label: 'Change icon', action: () => _showIconPicker(folder, e.clientX, e.clientY, 'folder') },
     { separator: true },
-    { label: 'Create new note from template', disabled: true, action: () => {} },
+    { label: 'Create new note from template', action: () => _createNoteFromTemplate(folder) },
     { separator: true },
     { label: 'Rename folder', action: () => _promptRenameFolder(folder) },
     { label: 'Delete', danger: true, action: () => _deleteFolder(folder) },
@@ -8018,10 +9033,183 @@ function _showBlankContextMenu(e) {
   e.stopPropagation();
   _showContextMenu(e.clientX, e.clientY, [
     { label: 'New note', action: () => _createNoteInFolder('') },
+    { label: 'New note from template', action: () => _createNoteFromTemplate('') },
     { label: 'New folder', action: () => _promptNewFolder('') },
     { separator: true },
     { label: 'Collapse all', action: () => _collapseAllFolders() },
     { label: 'Expand all', action: () => _expandAllFolders() },
+  ]);
+}
+
+function _noteEditorWrap(prefix, suffix) {
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return;
+  const selected = sel.toString();
+  if (selected.startsWith(prefix) && selected.endsWith(suffix)) {
+    document.execCommand('insertText', false, selected.slice(prefix.length, -suffix.length));
+  } else if (selected) {
+    document.execCommand('insertText', false, prefix + selected + suffix);
+  } else {
+    document.execCommand('insertText', false, prefix + suffix);
+    const newSel = window.getSelection();
+    if (newSel.rangeCount) {
+      const range = newSel.getRangeAt(0);
+      const container = range.startContainer;
+      const offset = range.startOffset;
+      if (container.nodeType === Node.TEXT_NODE && offset >= suffix.length) {
+        const r = document.createRange();
+        r.setStart(container, offset - suffix.length);
+        r.collapse(true);
+        newSel.removeAllRanges();
+        newSel.addRange(r);
+      }
+    }
+  }
+}
+
+function _noteEditorInsert(text) {
+  document.execCommand('insertText', false, text);
+}
+
+function _noteEditorLineOp(modifyFn) {
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return;
+  let node = sel.getRangeAt(0).startContainer;
+  let lineEl = null;
+  while (node) {
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      if (node.classList.contains('lp-line')) { lineEl = node; break; }
+      if (node.classList.contains('vault-source-view')) { lineEl = null; break; }
+    }
+    node = node.parentNode;
+  }
+  if (!lineEl) return;
+  const sourceEl = lineEl.querySelector('.lp-source');
+  if (!sourceEl) return;
+  const raw = _getRawFromSource(sourceEl);
+  const newRaw = modifyFn(raw);
+  sourceEl.innerHTML = _renderSourceLine(newRaw);
+  lineEl.setAttribute('data-raw', newRaw);
+  _wireSourceWikilinks(sourceEl);
+}
+
+function _showNoteEditorContextMenu(e) {
+  e.preventDefault();
+  e.stopPropagation();
+
+  const _svg = (path) => `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`;
+  const linkSvg = _svg('<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>');
+  const externalSvg = _svg('<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>');
+  const boldSvg = _svg('<path d="M6 4h8a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"/><path d="M6 12h9a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"/>');
+  const italicSvg = _svg('<line x1="19" y1="4" x2="10" y2="4"/><line x1="14" y1="20" x2="5" y2="20"/><line x1="15" y1="4" x2="9" y2="20"/>');
+  const strikeSvg = _svg('<line x1="4" y1="12" x2="20" y2="12"/><path d="M6 12a6 6 0 0 1 12 0"/>');
+  const highlightSvg = _svg('<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>');
+  const codeSvg = _svg('<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>');
+  const mathsSvg = _svg('<path d="M4 4h16v16H4z"/><path d="M8 8l8 8"/><path d="M16 8l-8 8"/>');
+  const commentSvg = _svg('<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>');
+  const clearSvg = _svg('<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>');
+  const listSvg = _svg('<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>');
+  const numListSvg = _svg('<line x1="10" y1="6" x2="21" y2="6"/><line x1="10" y1="12" x2="21" y2="12"/><line x1="10" y1="18" x2="21" y2="18"/><path d="M4 6h1v4"/><path d="M4 10h2"/><path d="M6 17H4c0-1 1-2 2-2s1 .5 1 1-.5 1-1 1"/>');
+  const taskSvg = _svg('<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="9" x2="15" y2="15"/><line x1="15" y1="9" x2="9" y2="15"/>');
+  const hSvg = _svg('<path d="M4 12h16"/><path d="M12 4v16"/>');
+  const bodySvg = _svg('<line x1="21" y1="10" x2="3" y2="10"/><line x1="21" y1="14" x2="3" y2="14"/>');
+  const quoteSvg = _svg('<path d="M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 1 1 2v1z"/><path d="M15 21c3 0 7-1 7-8V5c0-1.25-.757-2.017-2-2h-4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 1 1 2v1z"/>');
+  const footnoteSvg = _svg('<path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/>');
+  const tableSvg = _svg('<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="12" y1="3" x2="12" y2="21"/>');
+  const calloutSvg = _svg('<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>');
+  const hrSvg = _svg('<line x1="4" y1="12" x2="20" y2="12"/>');
+  const blockSvg = _svg('<rect x="4" y="4" width="16" height="16" rx="2" ry="2"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="16" x2="12" y2="16"/>');
+  const cutSvg = _svg('<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/>');
+  const copySvg = _svg('<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>');
+  const pasteSvg = _svg('<path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/>');
+  const plainSvg = _svg('<line x1="14" y1="2" x2="14" y2="22"/><line x1="4" y1="12" x2="20" y2="12"/>');
+  const selectAllSvg = _svg('<path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>');
+
+  _showContextMenu(e.clientX, e.clientY, [
+    { label: 'Add link', icon: linkSvg, action: () => {
+      _noteEditorInsert('[[]]');
+      const sel = window.getSelection();
+      if (sel.rangeCount) {
+        const r = sel.getRangeAt(0);
+        if (r.startContainer.nodeType === Node.TEXT_NODE && r.startOffset >= 2) {
+          const nr = document.createRange();
+          nr.setStart(r.startContainer, r.startOffset - 2);
+          nr.collapse(true);
+          sel.removeAllRanges(); sel.addRange(nr);
+        }
+      }
+    }},
+    { label: 'Add external link', icon: externalSvg, action: () => {
+      _noteEditorInsert('[]()');
+      const sel = window.getSelection();
+      if (sel.rangeCount) {
+        const r = sel.getRangeAt(0);
+        if (r.startContainer.nodeType === Node.TEXT_NODE && r.startOffset >= 3) {
+          const nr = document.createRange();
+          nr.setStart(r.startContainer, r.startOffset - 3);
+          nr.collapse(true);
+          sel.removeAllRanges(); sel.addRange(nr);
+        }
+      }
+    }},
+    { separator: true },
+    { label: 'Format', icon: _svg('<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>'), submenu: [
+      { label: 'Bold', icon: boldSvg, action: () => _noteEditorWrap('**', '**') },
+      { label: 'Italic', icon: italicSvg, action: () => _noteEditorWrap('*', '*') },
+      { label: 'Strikethrough', icon: strikeSvg, action: () => _noteEditorWrap('~~', '~~') },
+      { label: 'Highlight', icon: highlightSvg, action: () => _noteEditorWrap('==', '==') },
+      { separator: true },
+      { label: 'Code', icon: codeSvg, action: () => _noteEditorWrap('`', '`') },
+      { label: 'Maths', icon: mathsSvg, action: () => _noteEditorWrap('$', '$') },
+      { label: 'Comment', icon: commentSvg, action: () => _noteEditorWrap('%%', '%%') },
+      { separator: true },
+      { label: 'Clear formatting', icon: clearSvg, action: () => {
+        const sel = window.getSelection();
+        if (!sel.rangeCount) return;
+        const selected = sel.toString();
+        if (!selected) return;
+        const cleaned = selected
+          .replace(/\*\*(.*?)\*\*/g, '$1')
+          .replace(/\*(.*?)\*/g, '$1')
+          .replace(/~~(.*?)~~/g, '$1')
+          .replace(/==(.*?)==/g, '$1')
+          .replace(/`(.*?)`/g, '$1')
+          .replace(/\$\$(.*?)\$\$/g, '$1')
+          .replace(/\$(.*?)\$/g, '$1')
+          .replace(/%%(.*?)%%/g, '$1');
+        document.execCommand('insertText', false, cleaned);
+      }},
+    ]},
+    { label: 'Paragraph', icon: _svg('<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>'), submenu: [
+      { label: 'Bullet list', icon: listSvg, action: () => _noteEditorLineOp(raw => '- ' + raw.replace(/^(#{1,6}\s+|\d+\.\s+|[-*+]\s+(\[.\]\s+)?|>\s*)/, '')) },
+      { label: 'Numbered list', icon: numListSvg, action: () => _noteEditorLineOp(raw => '1. ' + raw.replace(/^(#{1,6}\s+|\d+\.\s+|[-*+]\s+(\[.\]\s+)?|>\s*)/, '')) },
+      { label: 'Task list', icon: taskSvg, action: () => _noteEditorLineOp(raw => '- [ ] ' + raw.replace(/^(#{1,6}\s+|\d+\.\s+|[-*+]\s+(\[.\]\s+)?|>\s*)/, '')) },
+      { separator: true },
+      { label: 'H1 Heading 1', icon: hSvg, action: () => _noteEditorLineOp(raw => '# ' + raw.replace(/^(#{1,6}\s+|\d+\.\s+|[-*+]\s+(\[.\]\s+)?|>\s*)/, '')) },
+      { label: 'H2 Heading 2', icon: hSvg, action: () => _noteEditorLineOp(raw => '## ' + raw.replace(/^(#{1,6}\s+|\d+\.\s+|[-*+]\s+(\[.\]\s+)?|>\s*)/, '')) },
+      { label: 'H3 Heading 3', icon: hSvg, action: () => _noteEditorLineOp(raw => '### ' + raw.replace(/^(#{1,6}\s+|\d+\.\s+|[-*+]\s+(\[.\]\s+)?|>\s*)/, '')) },
+      { label: 'H4 Heading 4', icon: hSvg, action: () => _noteEditorLineOp(raw => '#### ' + raw.replace(/^(#{1,6}\s+|\d+\.\s+|[-*+]\s+(\[.\]\s+)?|>\s*)/, '')) },
+      { label: 'H5 Heading 5', icon: hSvg, action: () => _noteEditorLineOp(raw => '##### ' + raw.replace(/^(#{1,6}\s+|\d+\.\s+|[-*+]\s+(\[.\]\s+)?|>\s*)/, '')) },
+      { label: 'H6 Heading 6', icon: hSvg, action: () => _noteEditorLineOp(raw => '###### ' + raw.replace(/^(#{1,6}\s+|\d+\.\s+|[-*+]\s+(\[.\]\s+)?|>\s*)/, '')) },
+      { label: 'Body', icon: bodySvg, action: () => _noteEditorLineOp(raw => raw.replace(/^(#{1,6}\s+|\d+\.\s+|[-*+]\s+(\[.\]\s+)?|>\s*)/, '')) },
+      { label: 'Quote', icon: quoteSvg, action: () => _noteEditorLineOp(raw => '> ' + raw.replace(/^(#{1,6}\s+|\d+\.\s+|[-*+]\s+(\[.\]\s+)?|>\s*)/, '')) },
+    ]},
+    { label: 'Insert', icon: _svg('<path d="M12 5v14M5 12h14"/>'), submenu: [
+      { label: 'Footnote', icon: footnoteSvg, action: () => _noteEditorInsert('[^1]') },
+      { label: 'Table', icon: tableSvg, action: () => _noteEditorInsert('| Header | Header |\n| --- | --- |\n| Cell | Cell |') },
+      { label: 'Callout', icon: calloutSvg, action: () => _noteEditorInsert('> [!info]\n> ') },
+      { label: 'Horizontal rule', icon: hrSvg, action: () => _noteEditorInsert('---') },
+      { separator: true },
+      { label: 'Code block', icon: blockSvg, action: () => _noteEditorInsert('```\n\n```') },
+      { label: 'Maths block', icon: blockSvg, action: () => _noteEditorInsert('$$\n\n$$') },
+      { label: 'New base', icon: _svg('<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/>'), disabled: true, action: () => {} },
+    ]},
+    { separator: true },
+    { label: 'Cut', icon: cutSvg, action: () => document.execCommand('cut') },
+    { label: 'Copy', icon: copySvg, action: () => document.execCommand('copy') },
+    { label: 'Paste', icon: pasteSvg, action: () => document.execCommand('paste') },
+    { label: 'Paste as plain text', icon: plainSvg, action: () => document.execCommand('paste') },
+    { label: 'Select all', icon: selectAllSvg, action: () => document.execCommand('selectAll') },
   ]);
 }
 
@@ -8052,7 +9240,7 @@ async function _doRenameNote(noteId, newName) {
 
   // --- Phase 1: Compute link updates in-memory (no saves, no UI changes yet) ---
   const linkUpdates = [];
-  if (_shardSettings.filesAndLinks.autoUpdateLinks) {
+  if (_vaultSettings.filesAndLinks.autoUpdateLinks) {
     const escapeReg = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const oldEsc = escapeReg(oldTitle);
     const newEsc = newName;
@@ -8072,7 +9260,7 @@ async function _doRenameNote(noteId, newName) {
   }
 
   // --- Phase 1.5: Prompt user if confirmAutoUpdateLinks is enabled ---
-  if (linkUpdates.length && _shardSettings.filesAndLinks.confirmAutoUpdateLinks !== false) {
+  if (linkUpdates.length && _vaultSettings.filesAndLinks.confirmAutoUpdateLinks !== false) {
     const confirmed = await styledConfirm(
       `Update ${linkUpdates.length} linking note(s) to use "${newName}"?`,
       { confirmText: 'Update', cancelText: 'Skip' }
@@ -8104,7 +9292,7 @@ async function _doRenameNote(noteId, newName) {
 
   // --- Phase 3: Server rename request ---
   try {
-    const r = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(noteId)}/rename`, {
+    const r = await fetch(`${API_BASE}/api/vault/notes/${encodeURIComponent(noteId)}/rename`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
       body: JSON.stringify({ new_path: newPath }),
     });
@@ -8123,13 +9311,13 @@ async function _doRenameNote(noteId, newName) {
       Promise.all(saves).then(() => {
         showToast(`Updated ${linkUpdates.length} linking note(s)`);
       }).catch(err => {
-        console.error('[shard] auto-update background save failed:', err);
+        console.error('[vault] auto-update background save failed:', err);
         showToast('Some link updates failed to save');
       });
     }
-    console.log('[shard] auto-update links:', { oldTitle, newName, updatedCount: linkUpdates.length });
+    console.log('[vault] auto-update links:', { oldTitle, newName, updatedCount: linkUpdates.length });
   } catch (e) {
-    console.error('[shard] rename failed, rolling back', e);
+    console.error('[vault] rename failed, rolling back', e);
     // Rollback title change
     note.id = oldId;
     note.rel_path = oldRelPath;
@@ -8183,7 +9371,7 @@ async function _duplicateNote(noteId) {
   _navigateToNote(dupPath, true, true);
 
   try {
-    const r = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(noteId)}/duplicate`, {
+    const r = await fetch(`${API_BASE}/api/vault/notes/${encodeURIComponent(noteId)}/duplicate`, {
       method: 'POST', credentials: 'same-origin',
     });
     if (!r.ok) throw new Error();
@@ -8196,7 +9384,7 @@ async function _duplicateNote(noteId) {
       _navigateToNote(data.note_id, true, true);
     }
   } catch (e) {
-    console.error('[shard] duplicate failed', e);
+    console.error('[vault] duplicate failed', e);
     const idx = _notes.findIndex(n => n.id === dupPath);
     if (idx !== -1) _notes.splice(idx, 1);
     _renderFolderTree();
@@ -8206,7 +9394,7 @@ async function _duplicateNote(noteId) {
 async function _deleteNote(noteId) {
   const note = _notes.find(n => n.id === noteId);
   if (!note) return;
-  if (_shardSettings.filesAndLinks.confirmDelete) {
+  if (_vaultSettings.filesAndLinks.confirmDelete) {
     const confirmed = await styledConfirm(`Delete "${_esc(note.title)}"?`, { confirmText: 'Delete', cancelText: 'Cancel', danger: true });
     if (!confirmed) return;
   }
@@ -8219,7 +9407,7 @@ async function _deleteNote(noteId) {
   const prevSelected = _selectedNoteId;
   if (_selectedNoteId === noteId) {
     _selectedNoteId = _openTabs.length ? _openTabs[_openTabs.length - 1] : null;
-    const preview = document.getElementById('shard-preview');
+    const preview = document.getElementById('vault-preview');
     if (preview) {
       if (_selectedNoteId) {
         const nextNote = _notes.find(n => n.id === _selectedNoteId);
@@ -8235,13 +9423,13 @@ async function _deleteNote(noteId) {
   _renderNoteList();
 
   try {
-    const r = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(noteId)}`, {
+    const r = await fetch(`${API_BASE}/api/vault/notes/${encodeURIComponent(noteId)}`, {
       method: 'DELETE', credentials: 'same-origin',
     });
     if (!r.ok) throw new Error();
   } catch (e) {
     // Rollback
-    console.error('[shard] delete failed, rolling back', e);
+    console.error('[vault] delete failed, rolling back', e);
     _notes.splice(noteIdx, 0, note);
     if (hadTab && !_openTabs.includes(noteId)) _openTabs.push(noteId);
     _selectedNoteId = prevSelected;
@@ -8252,10 +9440,10 @@ async function _deleteNote(noteId) {
     showToast('Failed to delete note');
   }
 }
-function _copyShardUrl(noteId) {
+function _copyVaultUrl(noteId) {
   const note = _notes.find(n => n.id === noteId);
   if (!note) return;
-  const url = `shard://open?vault=${encodeURIComponent(_selectedVaultId || '')}&file=${encodeURIComponent(note.title)}`;
+  const url = `vault://open?vault=${encodeURIComponent(_selectedVaultId || '')}&file=${encodeURIComponent(note.title)}`;
   if (navigator.clipboard?.writeText) navigator.clipboard.writeText(url);
 }
 async function _getOrCreateNoteByTitle(title) {
@@ -8282,7 +9470,7 @@ async function _getOrCreateNoteByTitle(title) {
   _renderFolderTree();
 
   try {
-    const r = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(fileName)}/edit`, {
+    const r = await fetch(`${API_BASE}/api/vault/notes/${encodeURIComponent(fileName)}/edit`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
@@ -8299,7 +9487,7 @@ async function _getOrCreateNoteByTitle(title) {
       return optimisticNote;
     }
   } catch (e) {
-    console.error('[shard] create ghost note failed', e);
+    console.error('[vault] create ghost note failed', e);
   }
   // Rollback on failure
   const idx = _notes.findIndex(n => n.id === fileName || n.rel_path === fileName);
@@ -8342,7 +9530,7 @@ async function _createNoteInFolder(folder) {
   _navigateToNote(fileName, true, true);
 
   try {
-    const r = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(fileName)}/edit`, {
+    const r = await fetch(`${API_BASE}/api/vault/notes/${encodeURIComponent(fileName)}/edit`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
       body: JSON.stringify({ content: '' }),
     });
@@ -8350,7 +9538,7 @@ async function _createNoteInFolder(folder) {
 
     if (folder) {
       try {
-        const moveR = await fetch(`${API_BASE}/api/shard/notes/${encodeURIComponent(fileName)}/move`, {
+        const moveR = await fetch(`${API_BASE}/api/vault/notes/${encodeURIComponent(fileName)}/move`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
           body: JSON.stringify({ folder }),
         });
@@ -8368,7 +9556,7 @@ async function _createNoteInFolder(folder) {
     delete optimisticNote._optimistic;
     _autoRenameNoteId = optimisticNote.id;
   } catch (e) {
-    console.error('[shard] create note failed', e);
+    console.error('[vault] create note failed', e);
     const idx = _notes.findIndex(n => n.id === fileName || n.rel_path === fileName);
     if (idx !== -1) _notes.splice(idx, 1);
     _renderFolderTree();
@@ -8391,7 +9579,7 @@ async function _promptNewFolder(parent) {
   setTimeout(() => _startInlineFolderRename(path), 50);
 
   try {
-    const r = await fetch(`${API_BASE}/api/shard/folders`, {
+    const r = await fetch(`${API_BASE}/api/vault/folders`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
       body: JSON.stringify({ path }),
     });
@@ -8399,7 +9587,7 @@ async function _promptNewFolder(parent) {
     const idx2 = _folders.indexOf(_optimisticFolderPath);
     if (idx2 !== -1) delete _folders[idx2]._optimistic;
   } catch (e) {
-    console.error('[shard] create folder failed', e);
+    console.error('[vault] create folder failed', e);
     const idx = _folders.indexOf(path);
     if (idx !== -1) _folders.splice(idx, 1);
     _renderFolderTree();
@@ -8408,9 +9596,9 @@ async function _promptNewFolder(parent) {
 }
 function _startInlineFolderRename(folderPath) {
   // Find the folder row in the tree and make its label editable
-  const tree = document.getElementById('shard-folder-tree');
+  const tree = document.getElementById('vault-folder-tree');
   if (!tree) return;
-  const row = tree.querySelector(`.shard-tree-row[data-folder="${CSS.escape(folderPath)}"] .shard-tree-name`);
+  const row = tree.querySelector(`.vault-tree-row[data-folder="${CSS.escape(folderPath)}"] .vault-tree-name`);
   if (!row) return;
   const original = row.textContent;
   row.contentEditable = 'true';
@@ -8434,7 +9622,7 @@ function _startInlineFolderRename(folderPath) {
     parts[parts.length - 1] = newName;
     const newPath = parts.join('/');
     try {
-      const r = await fetch(`${API_BASE}/api/shard/folders/rename`, {
+      const r = await fetch(`${API_BASE}/api/vault/folders/rename`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
         body: JSON.stringify({ old_path: folderPath, new_path: newPath }),
       });
@@ -8443,7 +9631,7 @@ function _startInlineFolderRename(folderPath) {
       await _loadNotes();
       _renderFolderTree();
     } catch (e) {
-      console.error('[shard] rename folder failed', e);
+      console.error('[vault] rename folder failed', e);
       row.textContent = original;
     }
   };
@@ -8463,7 +9651,7 @@ function _expandAllFolders() {
   _renderFolderTree();
 }
 function _collectAllFolders() {
-  const tree = document.getElementById('shard-folder-tree');
+  const tree = document.getElementById('vault-folder-tree');
   if (!tree) return;
   tree.querySelectorAll('[data-folder]').forEach(row => {
     const folder = row.dataset.folder;
@@ -8476,7 +9664,7 @@ async function _promptRenameFolder(folder) {
   try {
     const parent = folder.includes('/') ? folder.split('/').slice(0, -1).join('/') : '';
     const newPath = parent ? `${parent}/${newName}` : newName;
-    const r = await fetch(`${API_BASE}/api/shard/folders/rename`, {
+    const r = await fetch(`${API_BASE}/api/vault/folders/rename`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
       body: JSON.stringify({ old_path: folder, new_path: newPath }),
     });
@@ -8485,7 +9673,7 @@ async function _promptRenameFolder(folder) {
     await _loadFolders();
     _renderFolderTree();
   } catch (e) {
-    console.error('[shard] rename folder failed', e);
+    console.error('[vault] rename folder failed', e);
   }
 }
 
@@ -8496,11 +9684,11 @@ function _showVaultSettings() {
 function _openVaultDialog(vaultId) {
   const vault = _vaults.find(v => v.id === vaultId);
   if (!vault) return;
-  const dialog = document.getElementById('shard-vault-dialog');
-  const nameInput = document.getElementById('shard-vault-dialog-name');
-  const pathInput = document.getElementById('shard-vault-dialog-path');
-  const countEl = document.getElementById('shard-vault-dialog-count');
-  const titleEl = document.getElementById('shard-vault-dialog-title');
+  const dialog = document.getElementById('vault-vault-dialog');
+  const nameInput = document.getElementById('vault-vault-dialog-name');
+  const pathInput = document.getElementById('vault-vault-dialog-path');
+  const countEl = document.getElementById('vault-vault-dialog-count');
+  const titleEl = document.getElementById('vault-vault-dialog-title');
   if (!dialog) return;
 
   titleEl.textContent = _esc(vault.name);
@@ -8522,9 +9710,9 @@ function _openVaultDialog(vaultId) {
     }
   };
 
-  const closeBtn = document.getElementById('shard-vault-dialog-close');
-  const cancelBtn = document.getElementById('shard-vault-dialog-cancel');
-  const removeBtn = document.getElementById('shard-vault-dialog-remove');
+  const closeBtn = document.getElementById('vault-vault-dialog-close');
+  const cancelBtn = document.getElementById('vault-vault-dialog-cancel');
+  const removeBtn = document.getElementById('vault-vault-dialog-remove');
 
   // Remove old listeners by cloning
   if (closeBtn) {
@@ -8551,8 +9739,8 @@ function _wireSidebarTabDnD(containerId, settingsKey) {
   if (!container) return;
   let draggedTab = null;
   let lastHoverTarget = null;
-  const isRight = containerId === 'shard-right-tabs';
-  const tabSelector = isRight ? '.shard-right-tab' : '.shard-sidebar-tab';
+  const isRight = containerId === 'vault-right-tabs';
+  const tabSelector = isRight ? '.vault-right-tab' : '.vault-sidebar-tab';
 
   function _clearDropIndicators() {
     container.querySelectorAll(tabSelector).forEach(t => {
@@ -8621,16 +9809,16 @@ function _wireSidebarTabDnD(containerId, settingsKey) {
     }
 
     const newOrder = Array.from(container.children).map(t => t.dataset.tab);
-    if (!_shardSettings.appearance) _shardSettings.appearance = {};
-    _shardSettings.appearance[settingsKey] = newOrder;
-    _saveShardSettings();
+    if (!_vaultSettings.appearance) _vaultSettings.appearance = {};
+    _vaultSettings.appearance[settingsKey] = newOrder;
+    _saveVaultSettings();
   });
 }
 
 function _applySidebarOrder(containerId, settingsKey) {
   const container = document.getElementById(containerId);
   if (!container) return;
-  const order = _shardSettings?.appearance?.[settingsKey];
+  const order = _vaultSettings?.appearance?.[settingsKey];
   if (!order || !order.length) return;
   const tabs = Array.from(container.children);
   const tabMap = new Map(tabs.map(t => [t.dataset.tab, t]));
@@ -8651,13 +9839,13 @@ function _wirePanelDnD() {
 
   function _clearTabIndicators(container) {
     if (!container) container = document;
-    container.querySelectorAll('.shard-right-tab, .shard-sidebar-tab').forEach(t => {
+    container.querySelectorAll('.vault-right-tab, .vault-sidebar-tab').forEach(t => {
       t.classList.remove('drop-target-left', 'drop-target-right');
     });
   }
 
   function _clearEdgeIndicators() {
-    document.querySelectorAll('.shard-panel-edge-zone').forEach(z => z.classList.remove('active'));
+    document.querySelectorAll('.vault-panel-edge-zone').forEach(z => z.classList.remove('active'));
     _activeEdge = null;
     _lastEdgeKey = null;
   }
@@ -8669,10 +9857,10 @@ function _wirePanelDnD() {
   }
 
   function _ensureEdgeZones(panelGroup) {
-    if (panelGroup.querySelector('.shard-panel-edge-zone')) return;
+    if (panelGroup.querySelector('.vault-panel-edge-zone')) return;
     for (const edge of ['top', 'bottom', 'left', 'right']) {
       const zone = document.createElement('div');
-      zone.className = 'shard-panel-edge-zone';
+      zone.className = 'vault-panel-edge-zone';
       zone.dataset.edge = edge;
       zone.dataset.panelId = panelGroup.dataset.panelId;
       panelGroup.appendChild(zone);
@@ -8698,25 +9886,25 @@ function _wirePanelDnD() {
   }
 
   document.addEventListener('dragstart', (e) => {
-    const tab = e.target.closest('.shard-right-tab, .shard-sidebar-tab');
+    const tab = e.target.closest('.vault-right-tab, .vault-sidebar-tab');
     if (!tab) return;
-    const panelGroup = tab.closest('.shard-panel-group');
+    const panelGroup = tab.closest('.vault-panel-group');
     if (!panelGroup) return;
     _panelDraggedTab = tab;
     _panelDragSource = panelGroup.dataset.panelId;
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', tab.dataset.tab);
-    e.dataTransfer.setData('application/x-shard-tab', tab.dataset.tab);
+    e.dataTransfer.setData('application/x-vault-tab', tab.dataset.tab);
     tab.classList.add('dragging');
     console.log('[DND] dragstart tab:', tab.dataset.tab, 'sourcePanel:', _panelDragSource);
-    document.querySelectorAll('.shard-panel-group').forEach(_ensureEdgeZones);
+    document.querySelectorAll('.vault-panel-group').forEach(_ensureEdgeZones);
   });
 
   document.addEventListener('dragend', (e) => {
     if (_panelDraggedTab) _panelDraggedTab.classList.remove('dragging');
     _panelDraggedTab = null;
     _panelDragSource = null;
-    document.querySelectorAll('.shard-panel-resize-v, .shard-panel-resize-h').forEach(h => {
+    document.querySelectorAll('.vault-panel-resize-v, .vault-panel-resize-h').forEach(h => {
       h.style.borderColor = '';
       h.style.opacity = '';
     });
@@ -8728,16 +9916,16 @@ function _wirePanelDnD() {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
 
-    const tabContainer = e.target.closest('.shard-right-tabs, .shard-sidebar-tabs');
-    const panelGroup = e.target.closest('.shard-panel-group');
-    const leftPane = e.target.closest('.shard-left-pane');
-    const resizeHandle = e.target.closest('.shard-panel-resize-v, .shard-panel-resize-h');
+    const tabContainer = e.target.closest('.vault-right-tabs, .vault-sidebar-tabs');
+    const panelGroup = e.target.closest('.vault-panel-group');
+    const leftPane = e.target.closest('.vault-left-pane');
+    const resizeHandle = e.target.closest('.vault-panel-resize-v, .vault-panel-resize-h');
 
     // ── 1. Hovering over a resize handle = create panel between ──
     if (resizeHandle) {
       _clearTabIndicators();
       _lastTabTarget = null;
-      const isV = resizeHandle.classList.contains('shard-panel-resize-v');
+      const isV = resizeHandle.classList.contains('vault-panel-resize-v');
       const siblings = Array.from(resizeHandle.parentNode.children);
       const idx = siblings.indexOf(resizeHandle);
       const before = siblings[idx - 1];
@@ -8746,7 +9934,7 @@ function _wirePanelDnD() {
       const edgeKey = `between:${before.dataset.panelId || 'row'}`;
       if (edgeKey !== _lastEdgeKey) {
         _clearEdgeIndicators();
-        _activeEdge = { panelId: before.dataset.panelId || before.closest('.shard-panel-group')?.dataset.panelId, edge: isV ? 'bottom' : 'right', between: true, before: before.dataset.panelId, after: after.dataset.panelId };
+        _activeEdge = { panelId: before.dataset.panelId || before.closest('.vault-panel-group')?.dataset.panelId, edge: isV ? 'bottom' : 'right', between: true, before: before.dataset.panelId, after: after.dataset.panelId };
         _lastEdgeKey = edgeKey;
         // Show a thin line on the resize handle itself
         resizeHandle.style.borderColor = 'var(--accent, var(--red, #4a9eff))';
@@ -8755,13 +9943,13 @@ function _wirePanelDnD() {
       return;
     }
     // Clear any resize handle highlight when not hovering on one
-    document.querySelectorAll('.shard-panel-resize-v, .shard-panel-resize-h').forEach(h => {
+    document.querySelectorAll('.vault-panel-resize-v, .vault-panel-resize-h').forEach(h => {
       h.style.borderColor = '';
       h.style.opacity = '';
     });
 
     if (tabContainer) {
-      const target = e.target.closest('.shard-right-tab, .shard-sidebar-tab');
+      const target = e.target.closest('.vault-right-tab, .vault-sidebar-tab');
       if (target && target !== _panelDraggedTab) {
         // ── Tab reorder zone ──
         _clearEdgeIndicators();
@@ -8775,12 +9963,12 @@ function _wirePanelDnD() {
       } else if (!target) {
         // ── Empty space in tab container = drop on panel bottom edge ──
         if (_lastTabTarget) { _clearTabIndicators(tabContainer); _lastTabTarget = null; }
-        const pg = tabContainer.closest('.shard-panel-group');
+        const pg = tabContainer.closest('.vault-panel-group');
         if (pg) {
           const edgeKey = `${pg.dataset.panelId}:bottom`;
           if (edgeKey !== _lastEdgeKey) {
             _clearEdgeIndicators();
-            const zone = pg.querySelector('.shard-panel-edge-zone[data-edge="bottom"]');
+            const zone = pg.querySelector('.vault-panel-edge-zone[data-edge="bottom"]');
             if (zone) {
               zone.classList.add('active');
               _activeEdge = { panelId: pg.dataset.panelId, edge: 'bottom' };
@@ -8793,8 +9981,8 @@ function _wirePanelDnD() {
       // ── Panel edge zone ──
       if (_lastTabTarget) { _clearTabIndicators(); _lastTabTarget = null; }
       // Suppress edge indicators on source panel if it only has 1 tab (the dragged one)
-      const sourcePanelEl = document.querySelector(`.shard-panel-group[data-panel-id="${_esc(_panelDragSource)}"]`);
-      const sourceTabCount = sourcePanelEl ? sourcePanelEl.querySelectorAll('.shard-right-tab, .shard-sidebar-tab').length : 0;
+      const sourcePanelEl = document.querySelector(`.vault-panel-group[data-panel-id="${_esc(_panelDragSource)}"]`);
+      const sourceTabCount = sourcePanelEl ? sourcePanelEl.querySelectorAll('.vault-right-tab, .vault-sidebar-tab').length : 0;
       const isSourcePanel = panelGroup.dataset.panelId === _panelDragSource;
       if (isSourcePanel && sourceTabCount <= 1) {
         _clearEdgeIndicators();
@@ -8806,7 +9994,7 @@ function _wirePanelDnD() {
       if (edgeKey !== _lastEdgeKey) {
         _clearEdgeIndicators();
         if (edge) {
-          const zone = panelGroup.querySelector(`.shard-panel-edge-zone[data-edge="${_esc(edge)}"]`);
+          const zone = panelGroup.querySelector(`.vault-panel-edge-zone[data-edge="${_esc(edge)}"]`);
           if (zone) {
             zone.classList.add('active');
             _activeEdge = { panelId: panelGroup.dataset.panelId, edge };
@@ -8822,10 +10010,10 @@ function _wirePanelDnD() {
       if (edgeKey !== _lastEdgeKey) {
         _clearEdgeIndicators();
         if (edge) {
-          let indicator = leftPane.querySelector('.shard-panel-edge-zone.active');
+          let indicator = leftPane.querySelector('.vault-panel-edge-zone.active');
           if (!indicator) {
             indicator = document.createElement('div');
-            indicator.className = 'shard-panel-edge-zone active';
+            indicator.className = 'vault-panel-edge-zone active';
             indicator.style.cssText = 'position:absolute;z-index:50;pointer-events:none;background:var(--accent, var(--red, #4a9eff));';
             indicator.dataset.edge = edge;
             leftPane.style.position = 'relative';
@@ -8858,18 +10046,18 @@ function _wirePanelDnD() {
     const sourcePanel = _panelDragSource;
     console.log('[DND] drop tab:', tabName, 'sourcePanel:', sourcePanel, 'target:', e.target.className);
 
-    const tabContainer = e.target.closest('.shard-right-tabs, .shard-sidebar-tabs');
-    const panelGroup = e.target.closest('.shard-panel-group');
-    const leftPane = e.target.closest('.shard-left-pane');
-    const resizeHandle = e.target.closest('.shard-panel-resize-v, .shard-panel-resize-h');
+    const tabContainer = e.target.closest('.vault-right-tabs, .vault-sidebar-tabs');
+    const panelGroup = e.target.closest('.vault-panel-group');
+    const leftPane = e.target.closest('.vault-left-pane');
+    const resizeHandle = e.target.closest('.vault-panel-resize-v, .vault-panel-resize-h');
 
     if (resizeHandle && _activeEdge?.between) {
       // Dropped on a resize handle = create panel between two panels
       console.log('[DND] dropping between panels:', _activeEdge.before, 'and', _activeEdge.after);
       _moveTabToNewPanel(tabName, sourcePanel, _activeEdge.edge, _activeEdge.before);
     } else if (tabContainer) {
-      const targetPanel = tabContainer.closest('.shard-panel-group')?.dataset.panelId;
-      const target = e.target.closest('.shard-right-tab, .shard-sidebar-tab');
+      const targetPanel = tabContainer.closest('.vault-panel-group')?.dataset.panelId;
+      const target = e.target.closest('.vault-right-tab, .vault-sidebar-tab');
       console.log('[DND] tabContainer found, targetPanel:', targetPanel, 'target:', target?.dataset?.tab);
 
       if (targetPanel && targetPanel !== sourcePanel) {
@@ -8889,9 +10077,9 @@ function _wirePanelDnD() {
           const side = panel.side;
           const settingsKey = side === 'right' ? 'rightSidebarOrder' : 'leftSidebarOrder';
           const newOrder = Array.from(tabContainer.children).map(t => t.dataset.tab);
-          if (!_shardSettings.appearance) _shardSettings.appearance = {};
-          _shardSettings.appearance[settingsKey] = newOrder;
-          _saveShardSettings();
+          if (!_vaultSettings.appearance) _vaultSettings.appearance = {};
+          _vaultSettings.appearance[settingsKey] = newOrder;
+          _saveVaultSettings();
         }
       }
     } else if ((panelGroup || leftPane) && _activeEdge) {
@@ -8903,11 +10091,11 @@ function _wirePanelDnD() {
     }
 
     // Cleanup
-    document.querySelectorAll('.shard-panel-resize-v, .shard-panel-resize-h').forEach(h => {
+    document.querySelectorAll('.vault-panel-resize-v, .vault-panel-resize-h').forEach(h => {
       h.style.borderColor = '';
       h.style.opacity = '';
     });
-    document.querySelectorAll('.shard-left-pane .shard-panel-edge-zone').forEach(el => el.remove());
+    document.querySelectorAll('.vault-left-pane .vault-panel-edge-zone').forEach(el => el.remove());
     _clearAllIndicators();
     _panelDraggedTab = null;
     _panelDragSource = null;
@@ -8921,11 +10109,11 @@ function _wirePanelResizers() {
   let _panelB = null;
   let _aStartSize = 0;
   let _bStartSize = 0;
-  let _isHorizontal = false; // true for .shard-panel-resize-h (col-resize)
+  let _isHorizontal = false; // true for .vault-panel-resize-h (col-resize)
 
   document.addEventListener('mousedown', (e) => {
-    const vHandle = e.target.closest('.shard-panel-resize-v');
-    const hHandle = e.target.closest('.shard-panel-resize-h');
+    const vHandle = e.target.closest('.vault-panel-resize-v');
+    const hHandle = e.target.closest('.vault-panel-resize-h');
     if (!vHandle && !hHandle) return;
     e.preventDefault();
     _resizingHandle = vHandle || hHandle;
@@ -8934,13 +10122,15 @@ function _wirePanelResizers() {
     if (vHandle) {
       // Vertical: find panels above and below in stack
       _resizingStart = e.clientY;
-      const stack = vHandle.closest('.shard-panel-stack');
+      const stack = vHandle.closest('.vault-panel-stack');
       if (!stack) return;
       const children = Array.from(stack.children);
       const idx = children.indexOf(vHandle);
       _panelA = children[idx - 1];
       _panelB = children[idx + 1];
       if (!_panelA || !_panelB) return;
+      if (!_panelA.classList.contains('vault-panel-group') || _panelA.classList.contains('hidden')) return;
+      if (!_panelB.classList.contains('vault-panel-group') || _panelB.classList.contains('hidden')) return;
       const aRect = _panelA.getBoundingClientRect();
       const bRect = _panelB.getBoundingClientRect();
       _aStartSize = aRect.height;
@@ -8949,13 +10139,15 @@ function _wirePanelResizers() {
     } else {
       // Horizontal: find panels left and right in row
       _resizingStart = e.clientX;
-      const row = hHandle.closest('.shard-panel-row');
+      const row = hHandle.closest('.vault-panel-row');
       if (!row) return;
       const children = Array.from(row.children);
       const idx = children.indexOf(hHandle);
       _panelA = children[idx - 1];
       _panelB = children[idx + 1];
       if (!_panelA || !_panelB) return;
+      if (!_panelA.classList.contains('vault-panel-group') || _panelA.classList.contains('hidden')) return;
+      if (!_panelB.classList.contains('vault-panel-group') || _panelB.classList.contains('hidden')) return;
       const aRect = _panelA.getBoundingClientRect();
       const bRect = _panelB.getBoundingClientRect();
       _aStartSize = aRect.width;
@@ -9000,11 +10192,11 @@ function _wirePanelResizers() {
 
 function _init() {
   // Left sidebar tabs - delegated to panel groups
-  document.querySelectorAll('.shard-sidebar-tabs').forEach(container => {
+  document.querySelectorAll('.vault-sidebar-tabs').forEach(container => {
     container.addEventListener('click', (e) => {
-      const tab = e.target.closest('.shard-sidebar-tab');
+      const tab = e.target.closest('.vault-sidebar-tab');
       if (!tab) return;
-      const panelGroup = tab.closest('.shard-panel-group');
+      const panelGroup = tab.closest('.vault-panel-group');
       const panelId = panelGroup?.dataset.panelId;
       if (panelId) _switchLeftTab(tab.dataset.tab);
       else _switchLeftTab(tab.dataset.tab);
@@ -9015,11 +10207,11 @@ function _init() {
   });
 
   // Right sidebar tabs - delegated to panel groups
-  document.querySelectorAll('.shard-right-tabs').forEach(container => {
+  document.querySelectorAll('.vault-right-tabs').forEach(container => {
     container.addEventListener('click', (e) => {
-      const tab = e.target.closest('.shard-right-tab');
+      const tab = e.target.closest('.vault-right-tab');
       if (!tab) return;
-      const panelGroup = tab.closest('.shard-panel-group');
+      const panelGroup = tab.closest('.vault-panel-group');
       const panelId = panelGroup?.dataset.panelId;
       _switchRightTab(tab.dataset.tab, panelId);
     });
@@ -9029,10 +10221,10 @@ function _init() {
   });
 
   // Sidebar tab drag-and-drop
-  _wireSidebarTabDnD('shard-left-tabs', 'leftSidebarOrder');
+  _wireSidebarTabDnD('vault-left-tabs', 'leftSidebarOrder');
   // Right tabs DND is handled by _wirePanelDnD (inter-panel + intra-panel)
-  _applySidebarOrder('shard-left-tabs', 'leftSidebarOrder');
-  _applySidebarOrder('shard-right-tabs', 'rightSidebarOrder');
+  _applySidebarOrder('vault-left-tabs', 'leftSidebarOrder');
+  _applySidebarOrder('vault-right-tabs', 'rightSidebarOrder');
 
   // Panel-aware inter-panel drag-and-drop
   _wirePanelDnD();
@@ -9040,14 +10232,15 @@ function _init() {
   // Panel resizers
   _wirePanelResizers();
 
-  // Search input + clear + case + sort + settings
-  const searchInput = document.getElementById('shard-search-input');
-  const clearBtn = document.getElementById('shard-search-clear');
-  const caseBtn = document.getElementById('shard-search-case');
-  const sortBtn = document.getElementById('shard-search-sort-btn');
-  const sortDropdown = document.getElementById('shard-search-sort-dropdown');
-  const settingsBtn = document.getElementById('shard-search-settings-btn');
-  const settingsPanel = document.getElementById('shard-search-settings');
+  // Search input + clear + case + semantic + sort + settings
+  const searchInput = document.getElementById('vault-search-input');
+  const clearBtn = document.getElementById('vault-search-clear');
+  const caseBtn = document.getElementById('vault-search-case');
+  const semanticBtn = document.getElementById('vault-search-semantic');
+  const sortBtn = document.getElementById('vault-search-sort-btn');
+  const sortDropdown = document.getElementById('vault-search-sort-dropdown');
+  const settingsBtn = document.getElementById('vault-search-settings-btn');
+  const settingsPanel = document.getElementById('vault-search-settings');
 
   if (searchInput) {
     let debounceTimer;
@@ -9090,6 +10283,15 @@ function _init() {
     });
   }
 
+  if (semanticBtn) {
+    semanticBtn.classList.toggle('active', _searchState.semantic);
+    semanticBtn.addEventListener('click', () => {
+      _searchState.semantic = !_searchState.semantic;
+      semanticBtn.classList.toggle('active', _searchState.semantic);
+      if (searchInput) _renderSearchPane(searchInput.value);
+    });
+  }
+
   // Sort dropdown
   if (sortBtn && sortDropdown) {
     sortBtn.addEventListener('click', (e) => {
@@ -9097,10 +10299,10 @@ function _init() {
       sortDropdown.classList.toggle('hidden');
       settingsPanel?.classList.add('hidden');
     });
-    sortDropdown.querySelectorAll('.shard-search-sort-item').forEach(item => {
+    sortDropdown.querySelectorAll('.vault-search-sort-item').forEach(item => {
       item.addEventListener('click', () => {
         _searchState.sortBy = item.dataset.sort;
-        sortDropdown.querySelectorAll('.shard-search-sort-item').forEach(i => i.classList.remove('active'));
+        sortDropdown.querySelectorAll('.vault-search-sort-item').forEach(i => i.classList.remove('active'));
         item.classList.add('active');
         sortDropdown.classList.add('hidden');
         if (searchInput) _renderSearchPane(searchInput.value);
@@ -9116,9 +10318,9 @@ function _init() {
       sortDropdown?.classList.add('hidden');
     });
     // Wire toggles inside settings
-    const collapseCb = document.getElementById('shard-search-collapse');
-    const contextCb = document.getElementById('shard-search-context');
-    const explainCb = document.getElementById('shard-search-explain');
+    const collapseCb = document.getElementById('vault-search-collapse');
+    const contextCb = document.getElementById('vault-search-context');
+    const explainCb = document.getElementById('vault-search-explain');
     if (collapseCb) {
       collapseCb.checked = _searchState.collapse;
       collapseCb.addEventListener('change', () => {
@@ -9149,12 +10351,12 @@ function _init() {
   });
 
   // Settings dialog wiring
-  _wireShardSettings();
+  _wireVaultSettings();
   _wireSnippetSettings();
   _injectCssSnippets();
-  _loadShardSettings();
+  _loadVaultSettings();
   _rebuildPanelsFromSettings();
-  const dv = _shardSettings.editor.defaultView;
+  const dv = _vaultSettings.editor.defaultView;
   _previewMode = dv === 'live' ? 'live' : dv === 'source' ? 'edit' : 'preview';
   _editModePref = dv === 'source' ? 'edit' : 'live';
   _sourceModeEnabled = dv === 'source';
@@ -9163,7 +10365,7 @@ function _init() {
   _renderRibbon();
 
   // ── Plugin System (Phase 4.1 / 4.2) ────────────────────────
-  _shardApp = createAppApi({
+  _vaultApp = createAppApi({
     get vaultNotes() { return _notes; },
     get vaultFolders() { return _folders; },
     getActiveFileId: () => _selectedNoteId,
@@ -9171,8 +10373,10 @@ function _init() {
       const target = _notes.find(n => n.title === text);
       if (target) _navigateToNote(target.id, true, false);
     },
+    _insertTemplate: () => _insertTemplate(),
+    _createNoteFromTemplate: (folder) => _createNoteFromTemplate(folder),
   });
-  _pluginManager = new PluginManager(_shardApp);
+  _pluginManager = new PluginManager(_vaultApp);
 
   // Register all core plugins (existing features become toggleable)
   const _manifest = (id) => CORE_PLUGINS.find(m => m.id === id);
@@ -9199,7 +10403,7 @@ function _init() {
 
   // Default: enable everything on first run, then respect persisted settings
   try {
-    let settings = JSON.parse(localStorage.getItem('shard-settings') || '{}');
+    let settings = JSON.parse(localStorage.getItem('vault-settings') || '{}');
     if (!settings.enabledPlugins) {
       settings.enabledPlugins = CORE_PLUGINS.map(m => m.id);
     }
@@ -9212,20 +10416,38 @@ function _init() {
     _syncPluginTabs();
   }
 
+  // ── Community Plugin System (Phase 5) ──────────────────────
+  // Make toast available globally so plugin loader can show notifications
+  window._showVaultToast = (msg, opts) => {
+    const type = opts?.type;
+    if (type === 'error') showError(msg);
+    else showToast(msg, opts?.duration || 4000);
+  };
+  window.showError = showError; // fallback
+
+  // Set up the community plugin manager
+  setPluginManager(_pluginManager);
+  loadAllEnabledPlugins(_pluginManager).catch(err => {
+    console.warn('[vault] Community plugin startup error:', err);
+  });
+
+  // Pre-fetch the registry in background so browsing is snappy
+  fetchObsidianRegistry().catch(() => {});
+
   // ── Eager cache restore so openPanel() never blocks on "Loading vaults..." ──
   _restoreVaultsAndWarmCache();
 }
 
 function _restoreVaultsAndWarmCache() {
   try {
-    const cached = localStorage.getItem('shard-vaults');
+    const cached = localStorage.getItem('vault-vaults');
     if (cached) {
       const { vaults } = JSON.parse(cached);
       if (vaults && vaults.length) {
         _vaults = vaults;
         _populateVaultDropdown();
         let lastVault = null;
-        try { lastVault = localStorage.getItem('shard-last-vault'); } catch {}
+        try { lastVault = localStorage.getItem('vault-last-vault'); } catch {}
         const target = _vaults.find(v => v.id === lastVault) ? lastVault : _vaults[0].id;
         if (target) {
           // Fire off vault selection in background so notes/folders are
@@ -9242,7 +10464,7 @@ function _restoreVaultsAndWarmCache() {
 function _syncPluginTabs() {
   if (!_pluginManager) return;
 
-  const hiddenRight = new Set(_shardSettings.appearance?.hiddenRightTabs || []);
+  const hiddenRight = new Set(_vaultSettings.appearance?.hiddenRightTabs || []);
   const rightOrder = ['backlinks', 'outgoing', 'unlinked', 'outline', 'orphans', 'local-graph'];
   const leftOrder = ['files', 'bookmarks', 'tags', 'graph', 'search'];
   const pluginMap = {
@@ -9258,7 +10480,8 @@ function _syncPluginTabs() {
   };
 
   // Sync each panel independently
-  for (const panel of (_shardSettings.panels || [])) {
+  for (const panel of (_vaultSettings.panels || [])) {
+    if (!Array.isArray(panel.tabs)) continue;
     const tabsContainer = _getPanelTabsContainer(panel.id);
     if (!tabsContainer) continue;
     const order = panel.side === 'right' ? rightOrder : leftOrder;
@@ -9317,23 +10540,23 @@ function _hideCommandPalette() {
 
 function _showQuickSwitcher() {
   _hideQuickSwitcher();
-  const modal = document.getElementById('shard-modal');
+  const modal = document.getElementById('vault-modal');
   if (!modal) return;
   const overlay = document.createElement('div');
-  overlay.className = 'shard-quick-switcher';
+  overlay.className = 'vault-quick-switcher';
   overlay.innerHTML = `
-    <div class="shard-qs-backdrop" style="position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:10000;display:flex;align-items:flex-start;justify-content:center;padding-top:15vh;">
-      <div class="shard-qs-box" style="width:520px;max-width:90vw;background:var(--bg-raised,var(--bg,#1a1a1a));border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.5);display:flex;flex-direction:column;overflow:hidden;">
-        <input type="text" class="shard-qs-input" placeholder="Quick switcher..." style="width:100%;background:transparent;color:var(--fg);border:none;border-bottom:1px solid var(--border);padding:12px 14px;font-size:15px;outline:none;box-sizing:border-box;" autocomplete="off" spellcheck="false">
-        <div class="shard-qs-results" style="max-height:320px;overflow-y:auto;padding:4px 0;"></div>
-        <div class="shard-qs-hint" style="padding:6px 14px;font-size:11px;opacity:0.5;border-top:1px solid var(--border);">↑↓ to navigate · Enter to open · Shift+Enter in new tab · Esc to close</div>
+    <div class="vault-qs-backdrop" style="position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:10000;display:flex;align-items:flex-start;justify-content:center;padding-top:15vh;">
+      <div class="vault-qs-box" style="width:520px;max-width:90vw;background:var(--bg-raised,var(--bg,#1a1a1a));border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.5);display:flex;flex-direction:column;overflow:hidden;">
+        <input type="text" class="vault-qs-input" placeholder="Quick switcher..." style="width:100%;background:transparent;color:var(--fg);border:none;border-bottom:1px solid var(--border);padding:12px 14px;font-size:15px;outline:none;box-sizing:border-box;" autocomplete="off" spellcheck="false">
+        <div class="vault-qs-results" style="max-height:320px;overflow-y:auto;padding:4px 0;"></div>
+        <div class="vault-qs-hint" style="padding:6px 14px;font-size:11px;opacity:0.5;border-top:1px solid var(--border);">↑↓ to navigate · Enter to open · Shift+Enter in new tab · Esc to close</div>
       </div>
     </div>
   `;
   modal.appendChild(overlay);
   _quickSwitcherEl = overlay;
-  const input = overlay.querySelector('.shard-qs-input');
-  const results = overlay.querySelector('.shard-qs-results');
+  const input = overlay.querySelector('.vault-qs-input');
+  const results = overlay.querySelector('.vault-qs-results');
 
   const renderResults = (query) => {
     const q = query.trim().toLowerCase();
@@ -9360,7 +10583,7 @@ function _showQuickSwitcher() {
       return;
     }
     results.innerHTML = items.slice(0, 20).map((n, i) => `
-      <div class="shard-qs-item" data-note-id="${_esc(n.id)}" data-index="${i}" style="padding:7px 14px;font-size:13px;cursor:pointer;pointer-events:auto;display:flex;align-items:center;gap:8px;border-radius:4px;margin:0 4px;">
+      <div class="vault-qs-item" data-note-id="${_esc(n.id)}" data-index="${i}" style="padding:7px 14px;font-size:13px;cursor:pointer;pointer-events:auto;display:flex;align-items:center;gap:8px;border-radius:4px;margin:0 4px;">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
         <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(n.title || n.id)}</span>
         <span style="opacity:0.4;font-size:11px;">${_esc(n.folder || '')}</span>
@@ -9371,19 +10594,19 @@ function _showQuickSwitcher() {
   };
 
   const _updateQsSelection = (container) => {
-    const allItems = container.querySelectorAll('.shard-qs-item');
+    const allItems = container.querySelectorAll('.vault-qs-item');
     if (_quickSwitcherIndex < 0) _quickSwitcherIndex = 0;
     if (_quickSwitcherIndex >= allItems.length) _quickSwitcherIndex = allItems.length - 1;
     allItems.forEach((el, i) => {
       el.style.background = i === _quickSwitcherIndex ? 'color-mix(in srgb, var(--accent, var(--red)) 15%, transparent)' : 'transparent';
     });
-    const selected = container.querySelector(`.shard-qs-item[data-index="${_quickSwitcherIndex}"]`);
+    const selected = container.querySelector(`.vault-qs-item[data-index="${_quickSwitcherIndex}"]`);
     if (selected) selected.scrollIntoView({ block: 'nearest' });
   };
 
   input.addEventListener('input', () => renderResults(input.value));
   input.addEventListener('keydown', (e) => {
-    const items = results.querySelectorAll('.shard-qs-item');
+    const items = results.querySelectorAll('.vault-qs-item');
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       _quickSwitcherIndex = Math.min(_quickSwitcherIndex + 1, items.length - 1);
@@ -9398,7 +10621,7 @@ function _showQuickSwitcher() {
     }
     if (e.key === 'Enter') {
       e.preventDefault();
-      const selected = results.querySelector(`.shard-qs-item[data-index="${_quickSwitcherIndex}"]`);
+      const selected = results.querySelector(`.vault-qs-item[data-index="${_quickSwitcherIndex}"]`);
       if (selected) {
         const newTab = e.shiftKey;
         _navigateToNote(selected.dataset.noteId, true, newTab);
@@ -9415,7 +10638,7 @@ function _showQuickSwitcher() {
   });
 
   results.addEventListener('click', (e) => {
-    const item = e.target.closest('.shard-qs-item');
+    const item = e.target.closest('.vault-qs-item');
     if (item) {
       _navigateToNote(item.dataset.noteId, true, e.shiftKey);
       _hideQuickSwitcher();
@@ -9423,7 +10646,7 @@ function _showQuickSwitcher() {
   });
 
   // Click backdrop to close
-  overlay.querySelector('.shard-qs-backdrop').addEventListener('click', (e) => {
+  overlay.querySelector('.vault-qs-backdrop').addEventListener('click', (e) => {
     if (e.target === e.currentTarget) _hideQuickSwitcher();
   });
 
@@ -9442,14 +10665,14 @@ function _showQuickSwitcher() {
   document.addEventListener('keydown', _qsEscHandler, true);
 }
 
-function _shardKeyHandler(e) {
-  const modal = document.getElementById('shard-modal');
+function _vaultKeyHandler(e) {
+  const modal = document.getElementById('vault-modal');
   if (!modal || modal.classList.contains('hidden')) return;
   if (e.key === 'Escape' && _commandPaletteEl) return;
   if (e.key === 'Escape' && _quickSwitcherEl) return;
-  const hotkeys = _shardSettings.hotkeys || {};
+  const hotkeys = _vaultSettings.hotkeys || {};
   for (const [cmdId, combo] of Object.entries(hotkeys)) {
-    if (!combo || !_matchesShardCombo(e, combo)) continue;
+    if (!combo || !_matchesVaultCombo(e, combo)) continue;
     e.preventDefault();
     _runCommandById(cmdId);
     return;
@@ -9458,25 +10681,25 @@ function _shardKeyHandler(e) {
 
 function _showCommandPalette() {
   _hideCommandPalette();
-  const modal = document.getElementById('shard-modal');
+  const modal = document.getElementById('vault-modal');
   if (!modal) return;
   const overlay = document.createElement('div');
-  overlay.className = 'shard-command-palette';
+  overlay.className = 'vault-command-palette';
   overlay.innerHTML = `
-    <div class="shard-cp-backdrop" style="position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:10000;display:flex;align-items:flex-start;justify-content:center;padding-top:15vh;">
-      <div class="shard-cp-box" style="width:520px;max-width:90vw;background:var(--bg-raised,var(--bg,#1a1a1a));border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.5);display:flex;flex-direction:column;overflow:hidden;">
-        <input type="text" class="shard-cp-input" placeholder="Type a command..." style="width:100%;background:transparent;color:var(--fg);border:none;border-bottom:1px solid var(--border);padding:12px 14px;font-size:15px;outline:none;box-sizing:border-box;" autocomplete="off" spellcheck="false">
-        <div class="shard-cp-results" style="max-height:320px;overflow-y:auto;padding:4px 0;"></div>
-        <div class="shard-cp-hint" style="padding:6px 14px;font-size:11px;opacity:0.5;border-top:1px solid var(--border);">↑↓ to navigate · Enter to run · Esc to close</div>
+    <div class="vault-cp-backdrop" style="position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:10000;display:flex;align-items:flex-start;justify-content:center;padding-top:15vh;">
+      <div class="vault-cp-box" style="width:520px;max-width:90vw;background:var(--bg-raised,var(--bg,#1a1a1a));border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.5);display:flex;flex-direction:column;overflow:hidden;">
+        <input type="text" class="vault-cp-input" placeholder="Type a command..." style="width:100%;background:transparent;color:var(--fg);border:none;border-bottom:1px solid var(--border);padding:12px 14px;font-size:15px;outline:none;box-sizing:border-box;" autocomplete="off" spellcheck="false">
+        <div class="vault-cp-results" style="max-height:320px;overflow-y:auto;padding:4px 0;"></div>
+        <div class="vault-cp-hint" style="padding:6px 14px;font-size:11px;opacity:0.5;border-top:1px solid var(--border);">↑↓ to navigate · Enter to run · Esc to close</div>
       </div>
     </div>
   `;
   modal.appendChild(overlay);
   _commandPaletteEl = overlay;
-  const input = overlay.querySelector('.shard-cp-input');
-  const results = overlay.querySelector('.shard-cp-results');
+  const input = overlay.querySelector('.vault-cp-input');
+  const results = overlay.querySelector('.vault-cp-results');
 
-  const BASE_COMMANDS = SHARD_COMMANDS.filter(c => c.impl !== false).map(c => ({
+  const BASE_COMMANDS = VAULT_COMMANDS.filter(c => c.impl !== false).map(c => ({
     id: c.id,
     label: c.label,
     action: () => _runCommandById(c.id),
@@ -9497,7 +10720,7 @@ function _showCommandPalette() {
       return;
     }
     results.innerHTML = items.map((c, i) => `
-      <div class="shard-cp-item" data-cmd-id="${_esc(c.id)}" data-index="${i}" style="padding:7px 14px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;border-radius:4px;margin:0 4px;">
+      <div class="vault-cp-item" data-cmd-id="${_esc(c.id)}" data-index="${i}" style="padding:7px 14px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;border-radius:4px;margin:0 4px;">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
         <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(c.label)}</span>
       </div>
@@ -9507,16 +10730,16 @@ function _showCommandPalette() {
   };
 
   const _updateCpSelection = (container) => {
-    container.querySelectorAll('.shard-cp-item').forEach((el, i) => {
+    container.querySelectorAll('.vault-cp-item').forEach((el, i) => {
       el.style.background = i === _commandPaletteIndex ? 'color-mix(in srgb, var(--accent, var(--red)) 15%, transparent)' : 'transparent';
     });
-    const selected = container.querySelector(`.shard-cp-item[data-index="${_commandPaletteIndex}"]`);
+    const selected = container.querySelector(`.vault-cp-item[data-index="${_commandPaletteIndex}"]`);
     if (selected) selected.scrollIntoView({ block: 'nearest' });
   };
 
   input.addEventListener('input', () => renderCommands(input.value));
   input.addEventListener('keydown', (e) => {
-    const items = results.querySelectorAll('.shard-cp-item');
+    const items = results.querySelectorAll('.vault-cp-item');
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       _commandPaletteIndex = Math.min(_commandPaletteIndex + 1, items.length - 1);
@@ -9531,7 +10754,7 @@ function _showCommandPalette() {
     }
     if (e.key === 'Enter') {
       e.preventDefault();
-      const selected = results.querySelector(`.shard-cp-item[data-index="${_commandPaletteIndex}"]`);
+      const selected = results.querySelector(`.vault-cp-item[data-index="${_commandPaletteIndex}"]`);
       if (selected) {
         const cmd = COMMANDS.find(c => c.id === selected.dataset.cmdId);
         if (cmd) cmd.action();
@@ -9548,7 +10771,7 @@ function _showCommandPalette() {
   });
 
   results.addEventListener('click', (e) => {
-    const item = e.target.closest('.shard-cp-item');
+    const item = e.target.closest('.vault-cp-item');
     if (item) {
       const cmd = COMMANDS.find(c => c.id === item.dataset.cmdId);
       if (cmd) cmd.action();
@@ -9556,7 +10779,7 @@ function _showCommandPalette() {
     }
   });
 
-  overlay.querySelector('.shard-cp-backdrop').addEventListener('click', (e) => {
+  overlay.querySelector('.vault-cp-backdrop').addEventListener('click', (e) => {
     if (e.target === e.currentTarget) _hideCommandPalette();
   });
 
@@ -9580,6 +10803,6 @@ if (document.readyState === 'loading') {
   _init();
 }
 
-const shardModule = { openPanel, closePanel, togglePanel, isOpen, toggleBookmark: _toggleBookmark };
-export default shardModule;
-window.shardModule = shardModule;
+const vaultModule = { openPanel, closePanel, togglePanel, isOpen, toggleBookmark: _toggleBookmark };
+export default vaultModule;
+window.vaultModule = vaultModule;

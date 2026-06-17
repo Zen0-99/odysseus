@@ -2347,7 +2347,7 @@ function initAll() {
   initEmailAccountsSettings();
   initReminderSettings();
   initUnifiedIntegrations();
-  initShardSettings();
+  initVaultSettings();
 }
 
 function notifyIntegrationsChanged() {
@@ -5690,22 +5690,22 @@ function syncAdminVisibility() {
   });
 }
 
-/* ── Shard settings ── */
-function initShardSettings() {
+/* ── Vault settings ── */
+function initVaultSettings() {
   const _esc = (s) => { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; };
-  const listEl = el('set-shard-vaults-list');
-  const addBtn = el('set-shard-add-vault-btn');
-  const formEl = el('set-shard-add-vault-form');
-  const saveBtn = el('set-shard-save-vault-btn');
-  const cancelBtn = el('set-shard-cancel-vault-btn');
-  const nameInput = el('set-shard-new-name');
-  const pathInput = el('set-shard-new-path');
-  const statusEl = el('set-shard-add-status');
+  const listEl = el('set-vault-vaults-list');
+  const addBtn = el('set-vault-add-vault-btn');
+  const formEl = el('set-vault-add-vault-form');
+  const saveBtn = el('set-vault-save-vault-btn');
+  const cancelBtn = el('set-vault-cancel-vault-btn');
+  const nameInput = el('set-vault-new-name');
+  const pathInput = el('set-vault-new-path');
+  const statusEl = el('set-vault-add-status');
   if (!listEl) return;
 
   async function _refreshVaults() {
     try {
-      const r = await fetch(`${API_BASE}/api/shard/vaults`, { credentials: 'same-origin' });
+      const r = await fetch(`${API_BASE}/api/vault/vaults`, { credentials: 'same-origin' });
       const d = await r.json();
       const vaults = d.vaults || [];
       _renderVaults(vaults);
@@ -5725,18 +5725,18 @@ function initShardSettings() {
           <div style="font-weight:500;font-size:13px;">${_esc(v.name)}</div>
           <div style="font-size:11px;opacity:0.6;">${_esc(v.path)}</div>
           <div style="display:flex;gap:4px;margin-top:4px;">
-            <span class="shard-badge ${v.read_enabled ? 'read' : 'none'}">${v.read_enabled ? 'Read' : 'No Read'}</span>
-            <span class="shard-badge ${v.write_enabled ? 'write' : 'none'}">${v.write_enabled ? 'Write' : 'No Write'}</span>
-            <span class="shard-badge ${v.is_active ? 'read' : 'none'}">${v.is_active ? 'Active' : 'Inactive'}</span>
+            <span class="vault-badge ${v.read_enabled ? 'read' : 'none'}">${v.read_enabled ? 'Read' : 'No Read'}</span>
+            <span class="vault-badge ${v.write_enabled ? 'write' : 'none'}">${v.write_enabled ? 'Write' : 'No Write'}</span>
+            <span class="vault-badge ${v.is_active ? 'read' : 'none'}">${v.is_active ? 'Active' : 'Inactive'}</span>
           </div>
         </div>
-        <button class="admin-btn-delete shard-remove-vault" data-id="${v.id}" style="padding:3px 8px;font-size:11px;">Remove</button>
+        <button class="admin-btn-delete vault-remove-vault" data-id="${v.id}" style="padding:3px 8px;font-size:11px;">Remove</button>
       </div>
     `).join('');
-    listEl.querySelectorAll('.shard-remove-vault').forEach(btn => {
+    listEl.querySelectorAll('.vault-remove-vault').forEach(btn => {
       btn.addEventListener('click', async () => {
         try {
-          await fetch(`${API_BASE}/api/shard/vaults/${btn.dataset.id}`, { method: 'DELETE', credentials: 'same-origin' });
+          await fetch(`${API_BASE}/api/vault/vaults/${btn.dataset.id}`, { method: 'DELETE', credentials: 'same-origin' });
           _refreshVaults();
         } catch (e) { /* ignore */ }
       });
@@ -5761,7 +5761,7 @@ function initShardSettings() {
     if (!path) { if (statusEl) statusEl.textContent = 'Enter a vault path'; return; }
     if (statusEl) statusEl.textContent = 'Connecting...';
     try {
-      const r = await fetch(`${API_BASE}/api/shard/vaults`, {
+      const r = await fetch(`${API_BASE}/api/vault/vaults`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',

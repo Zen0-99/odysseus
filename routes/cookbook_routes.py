@@ -2195,7 +2195,7 @@ def setup_cookbook_routes() -> APIRouter:
             # download task as status='done' from before the strict-finish
             # fix landed, undoing any server-side correction. For each
             # incoming "done" download, override to "running" if the last
-            # shard pattern says N<total AND no DOWNLOAD_OK/DOWNLOAD_FAILED/
+            # vault pattern says N<total AND no DOWNLOAD_OK/DOWNLOAD_FAILED/
             # /snapshots/ sentinel is in the output.
             import re as _re_dl
             for _it in incoming_tasks:
@@ -2204,12 +2204,12 @@ def setup_cookbook_routes() -> APIRouter:
                 _out = _it.get("output") or ""
                 if ("DOWNLOAD_OK" in _out) or ("DOWNLOAD_FAILED" in _out) or ("/snapshots/" in _out):
                     continue
-                _shards = _re_dl.findall(r"model-(\d+)-of-(\d+)\.safetensors", _out)
-                if _shards:
-                    _n, _tot = _shards[-1]
+                _vaults = _re_dl.findall(r"model-(\d+)-of-(\d+)\.safetensors", _out)
+                if _vaults:
+                    _n, _tot = _vaults[-1]
                     if int(_n) < int(_tot):
                         logger.info(f"cookbook state POST: rejecting stale done for {_it.get('sessionId')} "
-                                    f"(last shard {_n}/{_tot}, no DOWNLOAD_OK)")
+                                    f"(last vault {_n}/{_tot}, no DOWNLOAD_OK)")
                         _it["status"] = "running"
                 else:
                     _completed = _out.count("Download complete")

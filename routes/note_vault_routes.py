@@ -1,5 +1,5 @@
-# routes/shard_routes.py
-"""Shard vault sync API — read-only by default, write gated by permission."""
+# routes/note_vault_routes.py
+"""Vault vault sync API — read-only by default, write gated by permission."""
 
 from __future__ import annotations
 
@@ -14,12 +14,12 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from core.database import SessionLocal, Shard, ShardVault, ShardPermission
+from core.database import SessionLocal, VaultNote, Vault, VaultPermission
 from core.middleware import require_admin
 from src.auth_helpers import effective_user, get_current_user
-from src.shard_fs import invalidate_cache
-from src.shard_graph import build_graph, build_timeline
-from src.shard_watcher import get_watcher
+from src.vault_fs import invalidate_cache
+from src.vault_graph import build_graph, build_timeline
+from src.vault_watcher import get_watcher
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +91,7 @@ def _validate_vault_path(vault_path: str) -> Path:
     return p
 
 
-def _vault_to_dict(v: ShardVault) -> Dict[str, Any]:
+def _vault_to_dict(v: Vault) -> Dict[str, Any]:
     return {
         "id": v.id,
         "name": v.name,
@@ -106,7 +106,7 @@ def _vault_to_dict(v: ShardVault) -> Dict[str, Any]:
     }
 
 
-def _perm_to_dict(p: ShardPermission) -> Dict[str, Any]:
+def _perm_to_dict(p: VaultPermission) -> Dict[str, Any]:
     return {
         "id": p.id,
         "vault_id": p.vault_id,
@@ -129,16 +129,16 @@ def _effective_permission(
     3. Regex rules
     4. Vault default (write_enabled -> write, else read)
     """
-    vault = db.query(ShardVault).filter_by(id=vault_id, owner=owner).first()
+    vault = db.query(Vault).filter_by(id=vault_id, owner=owner).first()
     if not vault:
         return "write"
     if not vault.read_enabled:
         return "none"
 
     rules = (
-        db.query(ShardPermission)
+        db.query(VaultPermission)
         .filter_by(vault_id=vault_id, owner=owner)
-        .order_by(ShardPermission.priority.desc())
+        .order_by(VaultPermission.priority.desc())
         .all()
     )
 
@@ -186,11 +186,11 @@ def _ensure_watcher(owner: str, vault_path: str) -> None:
             logger.exception("_ensure_watcher error")
 
     import threading
-    threading.Thread(target=_connect, daemon=True, name=f"shard-watcher-{owner}").start()
+    threading.Thread(target=_connect, daemon=True, name=f"vault-watcher-{owner}").start()
 
 
-def _note_to_dict(note: Shard) -> Dict[str, Any]:
-    """Serialize Shard note to API-friendly dict (hides vault_path)."""
+def _note_to_dict(note: VaultNote) -> Dict[str, Any]:
+    """Serialize Vault note to API-friendly dict (hides vault_path)."""
     return {
         "id": note.id,
         "rel_path": note.rel_path,
@@ -221,15 +221,15 @@ def _safe_json(raw: Optional[str], default: Any) -> Any:
 # Router
 # ---------------------------------------------------------------------------
 
-def setup_shard_routes() -> APIRouter:
-    router = APIRouter(prefix="/api/shard", tags=["shard"])
+def setup_note_vault_routes() -> APIRouter:
+    router = APIRouter(prefix="/api/vault", tags=["vault"])
 
     # -----------------------------------------------------------------------
     # Connection management
     # -----------------------------------------------------------------------
 
     @router.post("/connect")
-    async def shard_connect(req: ConnectRequest, request: Request):
+    async def vault_connect(req: ConnectRequest, request: Request):
         """Connect a vault — creates a vault record if new."""
         require_admin(request)
         owner = _user(request)
@@ -243,7 +243,7 @@ def setup_shard_routes() -> APIRouter:
 
         db = SessionLocal()
         try:
-            existing = db.query(ShardVault).filter_by(id=vault_id).first()
+            existing = db.query(Vault).filter_by(id=vault_id).first()
             if existing:
                 existing.is_active = True
                 existing.read_enabled = req.read_enabled
@@ -251,7 +251,7 @@ def setup_shard_routes() -> APIRouter:
                 if req.name:
                     existing.name = req.name
             else:
-                db.add(ShardVault(
+                db.add(Vault(
                     id=vault_id,
                     owner=owner,
                     name=req.name or vault.name,
@@ -262,37 +262,37 @@ def setup_shard_routes() -> APIRouter:
                 ))
             db.commit()
 
-            count = db.query(Shard).filter_by(
+            count = db.query(VaultNote).filter_by(
                 owner=owner, vault_path=str(vault)
             ).count()
             # Update vault note_count
-            v = db.query(ShardVault).filter_by(id=vault_id).first()
+            v = db.query(Vault).filter_by(id=vault_id).first()
             if v:
                 v.note_count = count
                 db.commit()
         finally:
             db.close()
 
-        os.environ[f"_ODY_SHARD_VAULT_{owner}"] = str(vault)
+        os.environ[f"_ODY_VAULT_{owner}"] = str(vault)
         return {"ok": True, "vault_id": vault_id, "vault_path": vault.name, "synced_notes": count}
 
     @router.post("/disconnect")
-    async def shard_disconnect(request: Request):
+    async def vault_disconnect(request: Request):
         """Disconnect the legacy single vault."""
         require_admin(request)
         owner = _user(request)
-        vault_env = os.environ.get(f"_ODY_SHARD_VAULT_{owner}")
+        vault_env = os.environ.get(f"_ODY_VAULT_{owner}")
         if not vault_env:
             raise HTTPException(400, "No vault currently connected")
 
         watcher = get_watcher()
         watcher.disconnect(owner, vault_env)
-        os.environ.pop(f"_ODY_SHARD_VAULT_{owner}", None)
+        os.environ.pop(f"_ODY_VAULT_{owner}", None)
 
         db = SessionLocal()
         try:
             vault_id = f"{owner}:{vault_env}"
-            v = db.query(ShardVault).filter_by(id=vault_id).first()
+            v = db.query(Vault).filter_by(id=vault_id).first()
             if v:
                 v.is_active = False
                 db.commit()
@@ -302,14 +302,14 @@ def setup_shard_routes() -> APIRouter:
         return {"ok": True}
 
     @router.get("/status")
-    async def shard_status(request: Request):
+    async def vault_status(request: Request):
         """Return connection status for current user."""
         owner = _user(request)
         db = SessionLocal()
         try:
-            vaults = db.query(ShardVault).filter_by(owner=owner, is_active=True).all()
+            vaults = db.query(Vault).filter_by(owner=owner, is_active=True).all()
             # Update note_count from disk for each vault
-            from src.shard_fs import list_notes
+            from src.vault_fs import list_notes
             result = []
             for v in vaults:
                 d = _vault_to_dict(v)
@@ -319,7 +319,7 @@ def setup_shard_routes() -> APIRouter:
                 except Exception:
                     pass
                 result.append(d)
-            vault_env = os.environ.get(f"_ODY_SHARD_VAULT_{owner}")
+            vault_env = os.environ.get(f"_ODY_VAULT_{owner}")
             watcher = get_watcher()
             connected = watcher.is_connected(owner, vault_env) if vault_env else False
             return {
@@ -340,8 +340,8 @@ def setup_shard_routes() -> APIRouter:
         owner = _user(request)
         db = SessionLocal()
         try:
-            vaults = db.query(ShardVault).filter_by(owner=owner).order_by(
-                ShardVault.updated_at.desc()
+            vaults = db.query(Vault).filter_by(owner=owner).order_by(
+                Vault.updated_at.desc()
             ).all()
             return {"vaults": [_vault_to_dict(v) for v in vaults]}
         finally:
@@ -350,7 +350,7 @@ def setup_shard_routes() -> APIRouter:
     @router.post("/vaults")
     async def add_vault(req: ConnectRequest, request: Request):
         """Add and connect a new vault."""
-        return await shard_connect(req, request)
+        return await vault_connect(req, request)
 
     @router.delete("/vaults/{vault_id}")
     async def remove_vault(vault_id: str, request: Request):
@@ -359,7 +359,7 @@ def setup_shard_routes() -> APIRouter:
         owner = _user(request)
         db = SessionLocal()
         try:
-            vault = db.query(ShardVault).filter_by(id=vault_id, owner=owner).first()
+            vault = db.query(Vault).filter_by(id=vault_id, owner=owner).first()
             if not vault:
                 raise HTTPException(404, "Vault not found")
 
@@ -378,7 +378,7 @@ def setup_shard_routes() -> APIRouter:
         owner = _user(request)
         db = SessionLocal()
         try:
-            vault = db.query(ShardVault).filter_by(id=vault_id, owner=owner).first()
+            vault = db.query(Vault).filter_by(id=vault_id, owner=owner).first()
             if not vault:
                 raise HTTPException(404, "Vault not found")
             if req.name is not None:
@@ -404,13 +404,13 @@ def setup_shard_routes() -> APIRouter:
         owner = _user(request)
         db = SessionLocal()
         try:
-            vault = db.query(ShardVault).filter_by(id=vault_id, owner=owner).first()
+            vault = db.query(Vault).filter_by(id=vault_id, owner=owner).first()
             if not vault:
                 raise HTTPException(404, "Vault not found")
             rules = (
-                db.query(ShardPermission)
+                db.query(VaultPermission)
                 .filter_by(vault_id=vault_id, owner=owner)
-                .order_by(ShardPermission.priority.desc())
+                .order_by(VaultPermission.priority.desc())
                 .all()
             )
             return {"permissions": [_perm_to_dict(r) for r in rules]}
@@ -424,10 +424,10 @@ def setup_shard_routes() -> APIRouter:
         owner = _user(request)
         db = SessionLocal()
         try:
-            vault = db.query(ShardVault).filter_by(id=vault_id, owner=owner).first()
+            vault = db.query(Vault).filter_by(id=vault_id, owner=owner).first()
             if not vault:
                 raise HTTPException(404, "Vault not found")
-            rule = ShardPermission(
+            rule = VaultPermission(
                 id=uuid.uuid4().hex,
                 vault_id=vault_id,
                 owner=owner,
@@ -451,7 +451,7 @@ def setup_shard_routes() -> APIRouter:
         db = SessionLocal()
         try:
             rule = (
-                db.query(ShardPermission)
+                db.query(VaultPermission)
                 .filter_by(id=perm_id, vault_id=vault_id, owner=owner)
                 .first()
             )
@@ -468,7 +468,7 @@ def setup_shard_routes() -> APIRouter:
     # -----------------------------------------------------------------------
 
     @router.get("/notes")
-    async def shard_list_notes(
+    async def vault_list_notes(
         request: Request,
         vault_id: Optional[str] = None,
         q: Optional[str] = None,
@@ -478,19 +478,19 @@ def setup_shard_routes() -> APIRouter:
         limit: int = 100,
         offset: int = 0,
     ):
-        """List Shard notes directly from filesystem."""
+        """List Vault notes directly from filesystem."""
         owner = _user(request)
         db = SessionLocal()
         try:
-            vault = db.query(ShardVault).filter_by(id=vault_id, owner=owner).first() if vault_id else None
+            vault = db.query(Vault).filter_by(id=vault_id, owner=owner).first() if vault_id else None
             if vault_id and not vault:
                 raise HTTPException(404, "Vault not found")
-            vault_path = vault.path if vault else os.environ.get(f"_ODY_SHARD_VAULT_{owner}")
+            vault_path = vault.path if vault else os.environ.get(f"_ODY_VAULT_{owner}")
             if not vault_path:
                 return {"total": 0, "offset": offset, "limit": limit, "notes": []}
             _ensure_watcher(owner, vault_path)
 
-            from src.shard_fs import list_notes
+            from src.vault_fs import list_notes
             notes = list_notes(vault_path, folder=folder, q=q)
             if tag:
                 notes = [n for n in notes if tag in n.get("tags", [])]
@@ -501,23 +501,23 @@ def setup_shard_routes() -> APIRouter:
             db.close()
 
     @router.get("/notes/{note_id:path}")
-    async def shard_get_note(note_id: str, request: Request):
+    async def vault_get_note(note_id: str, request: Request):
         """Get a single note directly from filesystem."""
         owner = _user(request)
         db = SessionLocal()
         try:
-            vault = db.query(ShardVault).filter_by(owner=owner, is_active=True).first()
-            vault_path = vault.path if vault else os.environ.get(f"_ODY_SHARD_VAULT_{owner}")
+            vault = db.query(Vault).filter_by(owner=owner, is_active=True).first()
+            vault_path = vault.path if vault else os.environ.get(f"_ODY_VAULT_{owner}")
             if not vault_path:
                 raise HTTPException(400, "No vault connected")
             _ensure_watcher(owner, vault_path)
 
-            from src.shard_fs import get_note
+            from src.vault_fs import get_note
             note = get_note(vault_path, note_id)
             if not note:
                 raise HTTPException(404, "Note not found")
             # Resolve backlinks
-            from src.shard_fs import list_notes, compute_backlinks
+            from src.vault_fs import list_notes, compute_backlinks
             all_notes = list_notes(vault_path)
             compute_backlinks(all_notes)
             resolved = []
@@ -534,57 +534,57 @@ def setup_shard_routes() -> APIRouter:
     # -----------------------------------------------------------------------
 
     @router.get("/folders")
-    async def shard_folders(request: Request, vault_id: Optional[str] = None):
+    async def vault_folders(request: Request, vault_id: Optional[str] = None):
         """Return folder tree for a vault from filesystem."""
         owner = _user(request)
         db = SessionLocal()
         try:
-            vault = db.query(ShardVault).filter_by(id=vault_id, owner=owner).first() if vault_id else None
+            vault = db.query(Vault).filter_by(id=vault_id, owner=owner).first() if vault_id else None
             if vault_id and not vault:
                 raise HTTPException(404, "Vault not found")
-            vault_path = vault.path if vault else os.environ.get(f"_ODY_SHARD_VAULT_{owner}")
+            vault_path = vault.path if vault else os.environ.get(f"_ODY_VAULT_{owner}")
             if not vault_path:
                 return {"folders": []}
             _ensure_watcher(owner, vault_path)
 
-            from src.shard_fs import list_folders
+            from src.vault_fs import list_folders
             return {"folders": list_folders(vault_path)}
         finally:
             db.close()
 
     @router.get("/last-modified")
-    async def shard_last_modified(request: Request, vault_id: Optional[str] = None):
+    async def vault_last_modified(request: Request, vault_id: Optional[str] = None):
         """Return the latest filesystem mtime for a vault (cheap poll endpoint)."""
         owner = _user(request)
         db = SessionLocal()
         try:
-            vault = db.query(ShardVault).filter_by(id=vault_id, owner=owner).first() if vault_id else None
+            vault = db.query(Vault).filter_by(id=vault_id, owner=owner).first() if vault_id else None
             if vault_id and not vault:
                 raise HTTPException(404, "Vault not found")
-            vault_path = vault.path if vault else os.environ.get(f"_ODY_SHARD_VAULT_{owner}")
+            vault_path = vault.path if vault else os.environ.get(f"_ODY_VAULT_{owner}")
             if not vault_path:
                 return {"mtime": 0}
             _ensure_watcher(owner, vault_path)
-            from src.shard_fs import vault_modified_ts
+            from src.vault_fs import vault_modified_ts
             return {"mtime": vault_modified_ts(vault_path)}
         finally:
             db.close()
 
     @router.get("/tags")
-    async def shard_tags(request: Request, vault_id: Optional[str] = None):
+    async def vault_tags(request: Request, vault_id: Optional[str] = None):
         """Return unique tags with note counts from filesystem."""
         owner = _user(request)
         db = SessionLocal()
         try:
-            vault = db.query(ShardVault).filter_by(id=vault_id, owner=owner).first() if vault_id else None
+            vault = db.query(Vault).filter_by(id=vault_id, owner=owner).first() if vault_id else None
             if vault_id and not vault:
                 raise HTTPException(404, "Vault not found")
-            vault_path = vault.path if vault else os.environ.get(f"_ODY_SHARD_VAULT_{owner}")
+            vault_path = vault.path if vault else os.environ.get(f"_ODY_VAULT_{owner}")
             if not vault_path:
                 return {"tags": []}
             _ensure_watcher(owner, vault_path)
 
-            from src.shard_fs import list_tags
+            from src.vault_fs import list_tags
             return {"tags": list_tags(vault_path)}
         finally:
             db.close()
@@ -600,10 +600,10 @@ def setup_shard_routes() -> APIRouter:
         owner = _user(request)
         db = SessionLocal()
         try:
-            vault = db.query(ShardVault).filter_by(id=vault_id, owner=owner).first()
+            vault = db.query(Vault).filter_by(id=vault_id, owner=owner).first()
             if not vault:
                 raise HTTPException(404, "Vault not found")
-            from src.shard_watcher import get_watcher
+            from src.vault_watcher import get_watcher
             watcher = get_watcher()
             ok, msg = watcher.connect(owner, vault.path)
             if not ok:
@@ -614,44 +614,44 @@ def setup_shard_routes() -> APIRouter:
             db.close()
 
     @router.get("/graph")
-    async def shard_graph(request: Request, vault_id: Optional[str] = None):
+    async def vault_graph(request: Request, vault_id: Optional[str] = None):
         """Return graph nodes/edges/groups for vis-network canvas."""
         owner = _user(request)
         db = SessionLocal()
         try:
             if vault_id:
-                vault = db.query(ShardVault).filter_by(id=vault_id, owner=owner).first()
+                vault = db.query(Vault).filter_by(id=vault_id, owner=owner).first()
                 if not vault:
                     raise HTTPException(404, "Vault not found")
                 vault_env = vault.path
             else:
-                vault_env = os.environ.get(f"_ODY_SHARD_VAULT_{owner}")
+                vault_env = os.environ.get(f"_ODY_VAULT_{owner}")
             if not vault_env:
                 raise HTTPException(400, "No vault connected")
             _ensure_watcher(owner, vault_env)
-            from src.shard_fs import list_notes
+            from src.vault_fs import list_notes
             notes = list_notes(vault_env)
             return build_graph(notes)
         finally:
             db.close()
 
     @router.get("/timeline")
-    async def shard_timeline(request: Request, vault_id: Optional[str] = None):
+    async def vault_timeline(request: Request, vault_id: Optional[str] = None):
         """Return chronological frames for timeline animation player."""
         owner = _user(request)
         db = SessionLocal()
         try:
             if vault_id:
-                vault = db.query(ShardVault).filter_by(id=vault_id, owner=owner).first()
+                vault = db.query(Vault).filter_by(id=vault_id, owner=owner).first()
                 if not vault:
                     raise HTTPException(404, "Vault not found")
                 vault_env = vault.path
             else:
-                vault_env = os.environ.get(f"_ODY_SHARD_VAULT_{owner}")
+                vault_env = os.environ.get(f"_ODY_VAULT_{owner}")
             if not vault_env:
                 raise HTTPException(400, "No vault connected")
             _ensure_watcher(owner, vault_env)
-            from src.shard_fs import list_notes
+            from src.vault_fs import list_notes
             notes = list_notes(vault_env)
             return {"frames": build_timeline(notes)}
         finally:
@@ -662,14 +662,14 @@ def setup_shard_routes() -> APIRouter:
     # -----------------------------------------------------------------------
 
     @router.post("/notes/{note_id:path}/edit")
-    async def shard_edit_note(note_id: str, req: EditRequest, request: Request):
+    async def vault_edit_note(note_id: str, req: EditRequest, request: Request):
         """Edit a note — gated by vault + per-path permissions."""
         owner = _user(request)
         db = SessionLocal()
         try:
             # Find active vault
-            vault = db.query(ShardVault).filter_by(owner=owner, is_active=True).first()
-            vault_path = vault.path if vault else os.environ.get(f"_ODY_SHARD_VAULT_{owner}")
+            vault = db.query(Vault).filter_by(owner=owner, is_active=True).first()
+            vault_path = vault.path if vault else os.environ.get(f"_ODY_VAULT_{owner}")
             if not vault_path:
                 raise HTTPException(400, "No vault connected")
             _ensure_watcher(owner, vault_path)
@@ -681,7 +681,7 @@ def setup_shard_routes() -> APIRouter:
             if perm == "read":
                 raise HTTPException(403, "This note is read-only. Add a write permission rule to allow edits.")
 
-            strategy = SHARD_EDIT_STRATEGIES.get("override")
+            strategy = VAULT_EDIT_STRATEGIES.get("override")
             if not strategy:
                 raise HTTPException(400, "Edit strategy not available")
 
@@ -694,13 +694,13 @@ def setup_shard_routes() -> APIRouter:
             db.close()
 
     @router.post("/notes/{note_id:path}/move")
-    async def shard_move_note(note_id: str, req: MoveRequest, request: Request):
+    async def vault_move_note(note_id: str, req: MoveRequest, request: Request):
         """Move a note file to a different folder within the vault."""
         owner = _user(request)
         db = SessionLocal()
         try:
-            vault = db.query(ShardVault).filter_by(owner=owner, is_active=True).first()
-            vault_path = vault.path if vault else os.environ.get(f"_ODY_SHARD_VAULT_{owner}")
+            vault = db.query(Vault).filter_by(owner=owner, is_active=True).first()
+            vault_path = vault.path if vault else os.environ.get(f"_ODY_VAULT_{owner}")
             if not vault_path:
                 raise HTTPException(400, "No vault connected")
             _ensure_watcher(owner, vault_path)
@@ -732,13 +732,13 @@ def setup_shard_routes() -> APIRouter:
             db.close()
 
     @router.post("/notes/{note_id:path}/rename")
-    async def shard_rename_note(note_id: str, req: RenameRequest, request: Request):
+    async def vault_rename_note(note_id: str, req: RenameRequest, request: Request):
         """Rename a note file (change its filename / rel_path)."""
         owner = _user(request)
         db = SessionLocal()
         try:
-            vault = db.query(ShardVault).filter_by(owner=owner, is_active=True).first()
-            vault_path = vault.path if vault else os.environ.get(f"_ODY_SHARD_VAULT_{owner}")
+            vault = db.query(Vault).filter_by(owner=owner, is_active=True).first()
+            vault_path = vault.path if vault else os.environ.get(f"_ODY_VAULT_{owner}")
             if not vault_path:
                 raise HTTPException(400, "No vault connected")
             _ensure_watcher(owner, vault_path)
@@ -768,7 +768,7 @@ def setup_shard_routes() -> APIRouter:
             db.close()
 
     @router.post("/folders/rename")
-    async def shard_rename_folder(request: Request):
+    async def vault_rename_folder(request: Request):
         """Rename (move) a folder within the vault."""
         owner = _user(request)
         data = await request.json()
@@ -778,8 +778,8 @@ def setup_shard_routes() -> APIRouter:
             raise HTTPException(400, "old_path and new_path required")
         db = SessionLocal()
         try:
-            vault = db.query(ShardVault).filter_by(owner=owner, is_active=True).first()
-            vault_path = vault.path if vault else os.environ.get(f"_ODY_SHARD_VAULT_{owner}")
+            vault = db.query(Vault).filter_by(owner=owner, is_active=True).first()
+            vault_path = vault.path if vault else os.environ.get(f"_ODY_VAULT_{owner}")
             if not vault_path:
                 raise HTTPException(400, "No vault connected")
             _ensure_watcher(owner, vault_path)
@@ -799,14 +799,14 @@ def setup_shard_routes() -> APIRouter:
             db.close()
 
     @router.get("/notes/bulk")
-    async def shard_bulk_notes(request: Request, ids: str = ""):
+    async def vault_bulk_notes(request: Request, ids: str = ""):
         """Return full content for a comma-separated list of note IDs."""
-        from src.shard_fs import list_notes
+        from src.vault_fs import list_notes
         owner = _user(request)
         db = SessionLocal()
         try:
-            vault = db.query(ShardVault).filter_by(owner=owner, is_active=True).first()
-            vault_path = vault.path if vault else os.environ.get(f"_ODY_SHARD_VAULT_{owner}")
+            vault = db.query(Vault).filter_by(owner=owner, is_active=True).first()
+            vault_path = vault.path if vault else os.environ.get(f"_ODY_VAULT_{owner}")
             if not vault_path:
                 raise HTTPException(400, "No vault connected")
             _ensure_watcher(owner, vault_path)
@@ -818,8 +818,36 @@ def setup_shard_routes() -> APIRouter:
         finally:
             db.close()
 
+    @router.post("/semantic-search")
+    async def vault_semantic_search(request: Request):
+        """Semantic search across all notes in the active vault.
+
+        Body: {"query": "string", "top_k": 20}
+        """
+        from src.vault_semantic_search import semantic_search
+        from src.vault_fs import list_notes
+
+        owner = _user(request)
+        data = await request.json()
+        query = data.get("query", "").strip()
+        top_k = data.get("top_k", 20)
+
+        db = SessionLocal()
+        try:
+            vault = db.query(Vault).filter_by(owner=owner, is_active=True).first()
+            vault_path = vault.path if vault else os.environ.get(f"_ODY_VAULT_{owner}")
+            if not vault_path:
+                raise HTTPException(400, "No vault connected")
+            _ensure_watcher(owner, vault_path)
+
+            notes = list_notes(vault_path)
+            results = semantic_search(vault_path, notes, query, top_k=top_k)
+            return {"query": query, "total": len(notes), "results": results}
+        finally:
+            db.close()
+
     @router.post("/folders")
-    async def shard_create_folder(request: Request):
+    async def vault_create_folder(request: Request):
         """Create a new folder inside the vault."""
         owner = _user(request)
         data = await request.json()
@@ -828,8 +856,8 @@ def setup_shard_routes() -> APIRouter:
             raise HTTPException(400, "path required")
         db = SessionLocal()
         try:
-            vault = db.query(ShardVault).filter_by(owner=owner, is_active=True).first()
-            vault_path = vault.path if vault else os.environ.get(f"_ODY_SHARD_VAULT_{owner}")
+            vault = db.query(Vault).filter_by(owner=owner, is_active=True).first()
+            vault_path = vault.path if vault else os.environ.get(f"_ODY_VAULT_{owner}")
             if not vault_path:
                 raise HTTPException(400, "No vault connected")
             _ensure_watcher(owner, vault_path)
@@ -845,13 +873,13 @@ def setup_shard_routes() -> APIRouter:
             db.close()
 
     @router.delete("/notes/{note_id:path}")
-    async def shard_delete_note(note_id: str, request: Request):
+    async def vault_delete_note(note_id: str, request: Request):
         """Delete a note file from the vault."""
         owner = _user(request)
         db = SessionLocal()
         try:
-            vault = db.query(ShardVault).filter_by(owner=owner, is_active=True).first()
-            vault_path = vault.path if vault else os.environ.get(f"_ODY_SHARD_VAULT_{owner}")
+            vault = db.query(Vault).filter_by(owner=owner, is_active=True).first()
+            vault_path = vault.path if vault else os.environ.get(f"_ODY_VAULT_{owner}")
             if not vault_path:
                 raise HTTPException(400, "No vault connected")
             _ensure_watcher(owner, vault_path)
@@ -868,7 +896,7 @@ def setup_shard_routes() -> APIRouter:
             db.close()
 
     @router.post("/folders/delete")
-    async def shard_delete_folder(request: Request):
+    async def vault_delete_folder(request: Request):
         """Delete a folder and all its contents from the vault."""
         owner = _user(request)
         data = await request.json()
@@ -877,8 +905,8 @@ def setup_shard_routes() -> APIRouter:
             raise HTTPException(400, "folder_path required")
         db = SessionLocal()
         try:
-            vault = db.query(ShardVault).filter_by(owner=owner, is_active=True).first()
-            vault_path = vault.path if vault else os.environ.get(f"_ODY_SHARD_VAULT_{owner}")
+            vault = db.query(Vault).filter_by(owner=owner, is_active=True).first()
+            vault_path = vault.path if vault else os.environ.get(f"_ODY_VAULT_{owner}")
             if not vault_path:
                 raise HTTPException(400, "No vault connected")
             _ensure_watcher(owner, vault_path)
@@ -938,7 +966,7 @@ def _strategy_override(note, content):
     return {"action": "override"}
 
 
-SHARD_EDIT_STRATEGIES: Dict[str, Any] = {
+VAULT_EDIT_STRATEGIES: Dict[str, Any] = {
     "readonly": _strategy_readonly,
     "duplicate": _strategy_duplicate,
     "append": _strategy_append,

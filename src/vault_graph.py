@@ -1,4 +1,4 @@
-"""Graph and timeline pre-computation for Shard vault notes."""
+"""Graph and timeline pre-computation for Vault vault notes."""
 
 from __future__ import annotations
 
@@ -57,6 +57,8 @@ def build_graph(notes: List[Dict[str, Any]]) -> Dict[str, Any]:
         # Scale: 1 (no connections) to 3 (most connections), proportional
         base_value = 1 + (conn / max_conn) * 2
 
+        # Creation time for animation: prefer birth_time, fall back to last_modified_src
+        created = note.get("birth_time") or note.get("last_modified_src", 0)
         nodes.append({
             "id": rel_path,
             "label": title or rel_path,
@@ -72,6 +74,7 @@ def build_graph(notes: List[Dict[str, Any]]) -> Dict[str, Any]:
             "tags": tags,
             "backlinks_count": len(backlinks),
             "outbound_count": len(outbound),
+            "created": created,
         })
 
     # Second pass: build edges (deduplicated, undirected, resolve titles)
@@ -106,9 +109,12 @@ def build_graph(notes: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def build_timeline(notes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Return chronological frames for timeline animation from note dicts."""
-    # Sort by mtime (last_modified_src) as proxy for creation time
-    sorted_notes = sorted(notes, key=lambda n: n.get("last_modified_src", 0))
+    """Return chronological frames for timeline animation from note dicts.
+
+    Uses birth_time when available, falling back to last_modified_src.
+    """
+    # Sort by true creation time (birth_time > last_modified_src fallback)
+    sorted_notes = sorted(notes, key=lambda n: n.get("birth_time") or n.get("last_modified_src", 0))
 
     frames: List[Dict[str, Any]] = []
     current_nodes: set = set()
@@ -118,7 +124,7 @@ def build_timeline(notes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         rel_path = note["rel_path"]
         title = note.get("title", rel_path)
         targets = note.get("outbound_links", [])
-        mtime = note.get("last_modified_src", 0)
+        created = note.get("birth_time") or note.get("last_modified_src", 0)
 
         nodes_added = []
         edges_added = []
@@ -141,7 +147,7 @@ def build_timeline(notes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
         if nodes_added or edges_added:
             frames.append({
-                "timestamp": mtime,
+                "timestamp": created,
                 "note_count": len(current_nodes),
                 "link_count": len(current_edges),
                 "nodes_added": nodes_added,

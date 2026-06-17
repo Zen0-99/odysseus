@@ -1,5 +1,5 @@
 /**
- * Shard Timeline Player — chronological vault growth animation.
+ * Vault Timeline Player — chronological vault growth animation.
  */
 
 const API_BASE = window.location.origin;
@@ -14,13 +14,13 @@ let _timer = null;
 let _nodeSet = null;
 let _edgeSet = null;
 
-export async function renderShardTimeline(container) {
+export async function renderVaultTimeline(container) {
   _container = container;
-  container.innerHTML = '<div class="shard-timeline-loading">Loading timeline...</div>';
+  container.innerHTML = '<div class="vault-timeline-loading">Loading timeline...</div>';
 
   try {
-    const r = await fetch(`${API_BASE}/api/shard/timeline`);
-    if (!r.ok) { container.innerHTML = '<div class="shard-timeline-error">Failed to load timeline</div>'; return; }
+    const r = await fetch(`${API_BASE}/api/vault/timeline`);
+    if (!r.ok) { container.innerHTML = '<div class="vault-timeline-error">Failed to load timeline</div>'; return; }
     const data = await r.json();
     _frames = data.frames || [];
     _currentFrame = 0;
@@ -28,7 +28,7 @@ export async function renderShardTimeline(container) {
     _initCanvas();
     _renderFrame(0);
   } catch (e) {
-    container.innerHTML = `<div class="shard-timeline-error">${e.message}</div>`;
+    container.innerHTML = `<div class="vault-timeline-error">${e.message}</div>`;
   }
 }
 
@@ -38,31 +38,31 @@ function _buildUI() {
 
   // Controls bar
   const controls = document.createElement('div');
-  controls.className = 'shard-timeline-controls';
+  controls.className = 'vault-timeline-controls';
   controls.innerHTML = `
-    <button class="shard-timeline-btn" id="otl-play">▶</button>
-    <button class="shard-timeline-btn" id="otl-pause" style="display:none">⏸</button>
-    <input type="range" class="shard-timeline-seek" id="otl-seek" min="0" max="${_frames.length - 1}" value="0" />
-    <select class="shard-timeline-speed" id="otl-speed">
+    <button class="vault-timeline-btn" id="otl-play">▶</button>
+    <button class="vault-timeline-btn" id="otl-pause" style="display:none">⏸</button>
+    <input type="range" class="vault-timeline-seek" id="otl-seek" min="0" max="${_frames.length - 1}" value="0" />
+    <select class="vault-timeline-speed" id="otl-speed">
       <option value="0.5">0.5×</option>
       <option value="1" selected>1×</option>
       <option value="2">2×</option>
       <option value="5">5×</option>
     </select>
-    <span class="shard-timeline-info" id="otl-info">0 notes, 0 links</span>
+    <span class="vault-timeline-info" id="otl-info">0 notes, 0 links</span>
   `;
   _container.appendChild(controls);
 
   // Canvas container
   const canvasWrap = document.createElement('div');
-  canvasWrap.className = 'shard-timeline-canvas';
-  canvasWrap.id = 'shard-timeline-canvas';
+  canvasWrap.className = 'vault-timeline-canvas';
+  canvasWrap.id = 'vault-timeline-canvas';
   _container.appendChild(canvasWrap);
 
   // Info bar
   const infoBar = document.createElement('div');
-  infoBar.className = 'shard-timeline-infobar';
-  infoBar.id = 'shard-timeline-infobar';
+  infoBar.className = 'vault-timeline-infobar';
+  infoBar.id = 'vault-timeline-infobar';
   infoBar.textContent = 'Paused';
   _container.appendChild(infoBar);
 
@@ -82,7 +82,7 @@ function _buildUI() {
 }
 
 function _initCanvas() {
-  const canvasWrap = document.getElementById('shard-timeline-canvas');
+  const canvasWrap = document.getElementById('vault-timeline-canvas');
   if (!canvasWrap || !window.vis) return;
 
   const style = getComputedStyle(document.documentElement);
@@ -169,7 +169,7 @@ function _renderFrame(idx) {
     info.textContent = `${f.note_count} notes, ${f.link_count} links`;
   }
 
-  const infobar = document.getElementById('shard-timeline-infobar');
+  const infobar = document.getElementById('vault-timeline-infobar');
   if (infobar) {
     const ts = _frames[idx].timestamp;
     infobar.textContent = ts ? ts.slice(0, 10) : `Frame ${idx + 1}/${_frames.length}`;

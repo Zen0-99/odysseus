@@ -35,7 +35,7 @@ function _taskBadge(task) {
   return { text: _statusLabel(task.status, task.type), cls: 'cookbook-task-' + task.status };
 }
 
-// A download task whose tmux output still shows an active per-shard line
+// A download task whose tmux output still shows an active per-vault line
 // (e.g. "model-00012-of-00082.safetensors: 56%|") is NOT actually finished —
 // the cookbook just lost track. The clear pill becomes a "reconnect" affordance
 // in that case (click → revive the row + reattach the poll loop).
@@ -44,8 +44,8 @@ function _downloadOutputLooksActive(task) {
   const out = task.output || '';
   if (!out) return false;
   if (out.includes('DOWNLOAD_OK') || out.includes('DOWNLOAD_FAILED')) return false;
-  // An active shard line: filename + a colon + a percentage that isn't 100%.
-  // We catch any in-flight shard or "Downloading 'X' to ..." line (no %).
+  // An active vault line: filename + a colon + a percentage that isn't 100%.
+  // We catch any in-flight vault or "Downloading 'X' to ..." line (no %).
   return /model-\d+-of-\d+\.[a-z]+:\s+(?!100%)\d+%/i.test(out)
       || /Downloading\s+'[^']+'\s+to\s+'[^']*\.incomplete'/i.test(out);
 }
@@ -1666,7 +1666,7 @@ export function _renderRunningTab() {
   const tasks = _loadTasks();
   const hasContent = tasks.length > 0;
   // Count anything that's really active: explicit 'running'/'queued' status,
-  // OR a download whose tmux output is still showing live shard progress.
+  // OR a download whose tmux output is still showing live vault progress.
   // Without the output check, a task whose status got stuck at 'done' /
   // 'crashed' (before auto-reconnect catches it) would read as "Running 0"
   // even when the model is actively downloading on the host.
@@ -2064,7 +2064,7 @@ export function _renderRunningTab() {
     if (_clearChk) {
       _clearChk.addEventListener('click', (e) => {
         e.stopPropagation();
-        // If the output still shows an active shard line, the task isn't
+        // If the output still shows an active vault line, the task isn't
         // actually finished — clicking is "reconnect" (flip back to running
         // + let _reconnectTask reattach to the live tmux session), not
         // "clear". The pill label already reflects this via _clearPillLabel.
@@ -2957,31 +2957,31 @@ async function _reconnectTask(el, task) {
               break;
             }
 
-            // When the snapshot includes a shard-of-N marker (e.g.
+            // When the snapshot includes a vault-of-N marker (e.g.
             // "model-00006-of-00082.safetensors"), TRUE overall progress is
-            // ((shard-1) + currentShardFraction) / totalShards. Before, _dlAgg
-            // (hf_transfer's per-current-shard aggregate, e.g. 53% of shard 6)
+            // ((vault-1) + currentVaultFraction) / totalVaults. Before, _dlAgg
+            // (hf_transfer's per-current-vault aggregate, e.g. 53% of vault 6)
             // was treated as overall and the row read "53%" while only 5 of
-            // 82 shards were actually done.
-            const _shardPat = [...snapshot.matchAll(/model-(\d+)-of-(\d+)\.(?:safetensors|bin)/g)];
-            const _lastShard = _shardPat.length ? _shardPat[_shardPat.length - 1] : null;
-            const _curShardNum = _lastShard ? parseInt(_lastShard[1], 10) : null;
-            const _totalShards = _lastShard ? parseInt(_lastShard[2], 10) : null;
-            const _useShardAgg = _curShardNum && _totalShards && _totalShards > 1;
+            // 82 vaults were actually done.
+            const _vaultPat = [...snapshot.matchAll(/model-(\d+)-of-(\d+)\.(?:safetensors|bin)/g)];
+            const _lastVault = _vaultPat.length ? _vaultPat[_vaultPat.length - 1] : null;
+            const _curVaultNum = _lastVault ? parseInt(_lastVault[1], 10) : null;
+            const _totalVaults = _lastVault ? parseInt(_lastVault[2], 10) : null;
+            const _useVaultAgg = _curVaultNum && _totalVaults && _totalVaults > 1;
 
             // HF's own "Fetching N files: X%" aggregate counts ALL files,
             // including ones already finished in a previous session (resume) —
             // so on a resumed download it reflects the true overall progress,
             // whereas completed/totalFiles only see this session's files (→ 0%).
             // Take the higher of the two so resume doesn't read as 0%.
-            if (_useShardAgg) {
-              // Multi-shard download: compute TRUE overall as completed shards
-              // plus the current shard's fraction. _dlAgg / lastPct represent
-              // *this shard's* progress, not the whole download.
-              const curShardFrac = (_dlAgg != null)
+            if (_useVaultAgg) {
+              // Multi-vault download: compute TRUE overall as completed vaults
+              // plus the current vault's fraction. _dlAgg / lastPct represent
+              // *this vault's* progress, not the whole download.
+              const curVaultFrac = (_dlAgg != null)
                 ? _dlAgg / 100
                 : (lastPct ? parseInt(lastPct, 10) / 100 : 0);
-              let overallPct = Math.round((((_curShardNum - 1) + curShardFrac) / _totalShards) * 100);
+              let overallPct = Math.round((((_curVaultNum - 1) + curVaultFrac) / _totalVaults) * 100);
               if (_fetchPct != null) overallPct = Math.max(overallPct, _fetchPct);
               let text = `${overallPct}%`;
               if (lastSpeed) text += ` · ${lastSpeed}`;

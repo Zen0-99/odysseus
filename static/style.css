@@ -4960,7 +4960,7 @@ body.bg-pattern-sparkles {
       #theme-modal,
       #settings-modal,
       #email-lib-modal,
-      #shard-modal {
+      #vault-modal {
         left: calc(var(--icon-rail-w, 48px) + var(--sidebar-w, 0px));
         width: calc(100% - (var(--icon-rail-w, 48px) + var(--sidebar-w, 0px)));
         box-sizing: border-box;
@@ -36864,9 +36864,9 @@ body.theme-frosted .modal {
 }
 
 
-/* ===== SHARD MODAL ===== */
-#shard-modal { z-index: 260; }
-.shard-modal-content {
+/* ===== VAULT MODAL ===== */
+#vault-modal { z-index: 260; }
+.vault-modal-content {
   width: min(920px, 95vw);
   height: min(680px, 88vh);
   min-height: 480px;
@@ -36878,7 +36878,7 @@ body.theme-frosted .modal {
   flex-direction: column;
   overflow: hidden;
 }
-.shard-modal-body {
+.vault-modal-body {
   padding: 0;
   flex: 1 1 auto;
   min-height: 0;
@@ -36887,27 +36887,45 @@ body.theme-frosted .modal {
   flex-direction: column;
   position: relative;
 }
-.shard-3pane {
+.vault-3pane {
   display: grid;
-  grid-template-columns: 40px var(--shard-left-w, 200px) 4px 1fr 4px var(--shard-right-w, 200px);
+  grid-template-columns: 40px var(--vault-left-w, 200px) 4px 1fr 4px var(--vault-right-w, 200px);
   grid-template-rows: 1fr;
   grid-template-areas: "ribbon left resize-l center resize-r right";
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
 }
-.shard-3pane.shard-ribbon-hidden {
-  grid-template-columns: 0px var(--shard-left-w, 200px) 4px 1fr 4px var(--shard-right-w, 200px);
+.vault-3pane.vault-ribbon-hidden {
+  grid-template-columns: 0px var(--vault-left-w, 200px) 4px 1fr 4px var(--vault-right-w, 200px);
 }
-.shard-3pane > .shard-ribbon { grid-area: ribbon; }
-.shard-3pane > .shard-left-pane { grid-area: left; }
-.shard-3pane > .shard-center-pane { grid-area: center; }
-.shard-3pane > .shard-right-pane { grid-area: right; }
-#shard-resize-left { grid-area: resize-l; }
-#shard-resize-right { grid-area: resize-r; }
+.vault-3pane.vault-right-hidden {
+  grid-template-columns: 40px var(--vault-left-w, 200px) 4px 1fr 0px 0px;
+}
+.vault-3pane.vault-ribbon-hidden.vault-right-hidden {
+  grid-template-columns: 0px var(--vault-left-w, 200px) 4px 1fr 0px 0px;
+}
+.vault-3pane.vault-left-hidden {
+  grid-template-columns: 40px 0px 0px 1fr 4px var(--vault-right-w, 200px);
+}
+.vault-3pane.vault-ribbon-hidden.vault-left-hidden {
+  grid-template-columns: 0px 0px 0px 1fr 4px var(--vault-right-w, 200px);
+}
+.vault-3pane.vault-left-hidden.vault-right-hidden {
+  grid-template-columns: 40px 0px 0px 1fr 0px 0px;
+}
+.vault-3pane.vault-ribbon-hidden.vault-left-hidden.vault-right-hidden {
+  grid-template-columns: 0px 0px 0px 1fr 0px 0px;
+}
+.vault-3pane > .vault-ribbon { grid-area: ribbon; }
+.vault-3pane > .vault-left-pane { grid-area: left; }
+.vault-3pane > .vault-center-pane { grid-area: center; }
+.vault-3pane > .vault-right-pane { grid-area: right; }
+#vault-resize-left { grid-area: resize-l; }
+#vault-resize-right { grid-area: resize-r; }
 
 /* ── Ribbon ── */
-.shard-ribbon {
+.vault-ribbon {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -36920,7 +36938,7 @@ body.theme-frosted .modal {
   overflow-x: hidden;
   min-height: 0;
 }
-.shard-ribbon-btn {
+.vault-ribbon-btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -36935,21 +36953,21 @@ body.theme-frosted .modal {
   transition: opacity 0.15s, background 0.15s;
   flex-shrink: 0;
 }
-.shard-ribbon-btn:hover {
+.vault-ribbon-btn:hover {
   opacity: 1;
   background: color-mix(in srgb, var(--fg) 8%, transparent);
 }
-.shard-ribbon-btn:active {
+.vault-ribbon-btn:active {
   opacity: 1;
   background: color-mix(in srgb, var(--fg) 15%, transparent);
 }
-.shard-ribbon-btn.dragging {
+.vault-ribbon-btn.dragging {
   opacity: 0.3;
   cursor: grabbing;
 }
 
 /* Ribbon context menu */
-.shard-ribbon-menu {
+.vault-ribbon-menu {
   position: fixed;
   z-index: 400;
   background: var(--bg-raised, var(--bg));
@@ -36961,7 +36979,7 @@ body.theme-frosted .modal {
   font-size: 12px;
   user-select: none;
 }
-.shard-ribbon-menu-item {
+.vault-ribbon-menu-item {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -36971,10 +36989,10 @@ body.theme-frosted .modal {
   color: var(--fg);
   transition: background 0.1s;
 }
-.shard-ribbon-menu-item:hover {
+.vault-ribbon-menu-item:hover {
   background: color-mix(in srgb, var(--fg) 8%, transparent);
 }
-.shard-ribbon-menu-item .shard-ribbon-menu-icon {
+.vault-ribbon-menu-item .vault-ribbon-menu-icon {
   flex-shrink: 0;
   width: 16px;
   height: 16px;
@@ -36983,7 +37001,7 @@ body.theme-frosted .modal {
   justify-content: center;
   opacity: 0.7;
 }
-.shard-ribbon-menu-item .shard-ribbon-menu-action {
+.vault-ribbon-menu-item .vault-ribbon-menu-action {
   flex-shrink: 0;
   width: 18px;
   height: 18px;
@@ -37000,25 +37018,25 @@ body.theme-frosted .modal {
   background: transparent;
   padding: 0;
 }
-.shard-ribbon-menu-item .shard-ribbon-menu-action:hover {
+.vault-ribbon-menu-item .vault-ribbon-menu-action:hover {
   opacity: 1;
   background: color-mix(in srgb, var(--fg) 10%, transparent);
 }
-.shard-ribbon-menu-item .shard-ribbon-menu-action.remove:hover {
+.vault-ribbon-menu-item .vault-ribbon-menu-action.remove:hover {
   color: var(--color-error, #ff6b6b);
   border-color: var(--color-error, #ff6b6b);
 }
-.shard-ribbon-menu-item .shard-note-menu-checkmark {
+.vault-ribbon-menu-item .vault-note-menu-checkmark {
   margin-left: auto;
 }
-.shard-ribbon-menu-divider {
+.vault-ribbon-menu-divider {
   height: 1px;
   background: var(--border);
   margin: 4px 0;
 }
 
 /* Ribbon config dialog */
-.shard-ribbon-config-overlay {
+.vault-ribbon-config-overlay {
   position: fixed;
   inset: 0;
   z-index: 350;
@@ -37028,8 +37046,8 @@ body.theme-frosted .modal {
   justify-content: center;
   pointer-events: auto;
 }
-.shard-ribbon-config-overlay.hidden { display: none; }
-.shard-ribbon-config-dialog {
+.vault-ribbon-config-overlay.hidden { display: none; }
+.vault-ribbon-config-dialog {
   background: var(--bg-raised, var(--bg));
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -37041,19 +37059,19 @@ body.theme-frosted .modal {
   flex-direction: column;
   overflow: hidden;
 }
-.shard-ribbon-config-header {
+.vault-ribbon-config-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 14px 16px;
   border-bottom: 1px solid var(--border);
 }
-.shard-ribbon-config-header h3 {
+.vault-ribbon-config-header h3 {
   margin: 0;
   font-size: 15px;
   font-weight: 600;
 }
-.shard-ribbon-config-header .close-btn {
+.vault-ribbon-config-header .close-btn {
   background: transparent;
   border: none;
   color: var(--fg);
@@ -37069,23 +37087,23 @@ body.theme-frosted .modal {
   justify-content: center;
   transition: opacity 0.15s, background 0.15s;
 }
-.shard-ribbon-config-header .close-btn:hover {
+.vault-ribbon-config-header .close-btn:hover {
   opacity: 1;
   background: color-mix(in srgb, var(--fg) 8%, transparent);
 }
-.shard-ribbon-config-body {
+.vault-ribbon-config-body {
   padding: 12px 16px;
   overflow-y: auto;
   flex: 1;
   min-height: 0;
 }
-.shard-ribbon-config-desc {
+.vault-ribbon-config-desc {
   font-size: 12px;
   opacity: 0.7;
   margin-bottom: 12px;
   line-height: 1.4;
 }
-.shard-ribbon-config-section-title {
+.vault-ribbon-config-section-title {
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
@@ -37093,12 +37111,12 @@ body.theme-frosted .modal {
   opacity: 0.5;
   margin: 12px 0 8px;
 }
-.shard-ribbon-config-list {
+.vault-ribbon-config-list {
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
-.shard-ribbon-config-item {
+.vault-ribbon-config-item {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -37108,13 +37126,13 @@ body.theme-frosted .modal {
   transition: background 0.1s;
   background: color-mix(in srgb, var(--fg) 2%, transparent);
 }
-.shard-ribbon-config-item:hover {
+.vault-ribbon-config-item:hover {
   background: color-mix(in srgb, var(--fg) 6%, transparent);
 }
-.shard-ribbon-config-item.dragging {
+.vault-ribbon-config-item.dragging {
   opacity: 0.5;
 }
-.shard-ribbon-config-item .item-icon {
+.vault-ribbon-config-item .item-icon {
   flex-shrink: 0;
   width: 18px;
   height: 18px;
@@ -37123,12 +37141,12 @@ body.theme-frosted .modal {
   justify-content: center;
   opacity: 0.7;
 }
-.shard-ribbon-config-item .item-title {
+.vault-ribbon-config-item .item-title {
   flex: 1;
   font-size: 12px;
   font-weight: 500;
 }
-.shard-ribbon-config-item .item-action {
+.vault-ribbon-config-item .item-action {
   flex-shrink: 0;
   width: 20px;
   height: 20px;
@@ -37144,29 +37162,29 @@ body.theme-frosted .modal {
   background: transparent;
   padding: 0;
 }
-.shard-ribbon-config-item .item-action:hover {
+.vault-ribbon-config-item .item-action:hover {
   opacity: 1;
 }
-.shard-ribbon-config-item .item-action.remove:hover {
+.vault-ribbon-config-item .item-action.remove:hover {
   color: var(--color-error, #ff6b6b);
   border-color: var(--color-error, #ff6b6b);
 }
-.shard-ribbon-config-item .item-action.add:hover {
+.vault-ribbon-config-item .item-action.add:hover {
   color: var(--color-success, #51cf66);
   border-color: var(--color-success, #51cf66);
 }
-.shard-ribbon-config-item .item-drag {
+.vault-ribbon-config-item .item-drag {
   flex-shrink: 0;
   opacity: 0.3;
   cursor: grab;
 }
-.shard-ribbon-config-footer {
+.vault-ribbon-config-footer {
   padding: 12px 16px;
   border-top: 1px solid var(--border);
   display: flex;
   justify-content: flex-end;
 }
-.shard-ribbon-config-footer button {
+.vault-ribbon-config-footer button {
   padding: 6px 14px;
   border-radius: 6px;
   border: 1px solid var(--border);
@@ -37177,21 +37195,21 @@ body.theme-frosted .modal {
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
-.shard-ribbon-config-footer button:hover {
+.vault-ribbon-config-footer button:hover {
   background: color-mix(in srgb, var(--red) 12%, transparent);
   border-color: var(--red);
   color: var(--red);
 }
 
-.shard-sidebar-pane[data-pane="graph"] {
+.vault-sidebar-pane[data-pane="graph"] {
   flex: 1;
   min-height: 0;
   overflow: hidden;
   position: relative;
 }
-#shard-graph-canvas,
-#shard-local-graph-canvas,
-#shard-main-graph-canvas {
+#vault-graph-canvas,
+#vault-local-graph-canvas,
+#vault-main-graph-canvas {
   width: 100%;
   height: 100%;
   min-height: 0;
@@ -37200,19 +37218,30 @@ body.theme-frosted .modal {
   pointer-events: auto;
 }
 /* force-graph canvas wrapper must fill container */
-#shard-graph-canvas > div:not(.shard-graph-toolbar):not(.shard-graph-settings-panel):not(.shard-graph-tooltip),
-#shard-local-graph-canvas > div:not(.shard-graph-toolbar):not(.shard-graph-settings-panel):not(.shard-graph-tooltip),
-#shard-main-graph-canvas > div:not(.shard-graph-toolbar):not(.shard-graph-settings-panel):not(.shard-graph-tooltip) {
+#vault-graph-canvas > div:not(.vault-graph-toolbar):not(.vault-graph-settings-panel):not(.vault-graph-tooltip),
+#vault-local-graph-canvas > div:not(.vault-graph-toolbar):not(.vault-graph-settings-panel):not(.vault-graph-tooltip),
+#vault-main-graph-canvas > div:not(.vault-graph-toolbar):not(.vault-graph-settings-panel):not(.vault-graph-tooltip) {
   width: 100% !important;
   height: 100% !important;
   pointer-events: auto !important;
 }
+/* Override force-graph cursor: default everywhere, pointer on nodes */
+#vault-graph-canvas canvas,
+#vault-local-graph-canvas canvas,
+#vault-main-graph-canvas canvas {
+  cursor: default !important;
+}
+#vault-graph-canvas.graph-node-hover canvas,
+#vault-local-graph-canvas.graph-node-hover canvas,
+#vault-main-graph-canvas.graph-node-hover canvas {
+  cursor: pointer !important;
+}
 /* Local graph pane should not scroll — canvas fills it exactly */
-#shard-local-graph-panel {
+#vault-local-graph-panel {
   overflow: hidden !important;
 }
-.shard-graph-loading,
-.shard-graph-error {
+.vault-graph-loading,
+.vault-graph-error {
   padding: 12px;
   text-align: center;
   opacity: 0.6;
@@ -37220,7 +37249,7 @@ body.theme-frosted .modal {
 }
 
 /* Graph toolbar (fit + settings buttons) */
-.shard-graph-toolbar {
+.vault-graph-toolbar {
   position: absolute;
   top: 10px;
   right: 10px;
@@ -37229,7 +37258,7 @@ body.theme-frosted .modal {
   z-index: 100;
   pointer-events: none;
 }
-.shard-graph-toolbtn {
+.vault-graph-toolbtn {
   pointer-events: auto;
   width: 34px;
   height: 34px;
@@ -37244,10 +37273,10 @@ body.theme-frosted .modal {
   opacity: 0.7;
   transition: opacity 0.15s;
 }
-.shard-graph-toolbtn:hover { opacity: 1; }
+.vault-graph-toolbtn:hover { opacity: 1; }
 
 /* Graph settings panel — card aesthetic */
-.shard-graph-settings-panel {
+.vault-graph-settings-panel {
   position: absolute;
   top: 44px;
   right: 10px;
@@ -37268,9 +37297,9 @@ body.theme-frosted .modal {
   flex-direction: column;
   resize: none;
 }
-.shard-graph-settings-panel.hidden { display: none; }
+.vault-graph-settings-panel.hidden { display: none; }
 
-.shard-graph-settings-header {
+.vault-graph-settings-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -37283,9 +37312,9 @@ body.theme-frosted .modal {
   user-select: none;
   flex-shrink: 0;
 }
-.shard-graph-settings-header:active { cursor: grabbing; }
+.vault-graph-settings-header:active { cursor: grabbing; }
 
-.shard-graph-settings-resize {
+.vault-graph-settings-resize {
   position: absolute;
   bottom: 0;
   right: 0;
@@ -37297,7 +37326,7 @@ body.theme-frosted .modal {
   border-bottom-right-radius: 10px;
 }
 
-.shard-graph-slider-tooltip {
+.vault-graph-slider-tooltip {
   position: fixed;
   z-index: 1000;
   background: var(--bg-raised, var(--bg));
@@ -37312,8 +37341,8 @@ body.theme-frosted .modal {
   transition: opacity 0.1s;
   box-shadow: 0 2px 8px rgba(0,0,0,0.2);
 }
-.shard-graph-slider-tooltip.visible { opacity: 1; }
-.shard-graph-settings-close {
+.vault-graph-slider-tooltip.visible { opacity: 1; }
+.vault-graph-settings-close {
   background: transparent;
   border: none;
   color: var(--fg);
@@ -37330,13 +37359,13 @@ body.theme-frosted .modal {
   align-items: center;
   justify-content: center;
 }
-.shard-graph-settings-close:hover {
+.vault-graph-settings-close:hover {
   opacity: 1;
   background: color-mix(in srgb, var(--fg) 8%, transparent);
 }
 
-.shard-graph-settings-body {
-  padding: 10px 14px 14px;
+.vault-graph-settings-body {
+  padding: 10px 14px 80px;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -37345,7 +37374,7 @@ body.theme-frosted .modal {
 }
 
 /* Floating graph window */
-.shard-graph-float {
+.vault-graph-float {
   position: fixed !important;
   top: 60px;
   left: 60px;
@@ -37360,7 +37389,7 @@ body.theme-frosted .modal {
   flex-direction: column;
   overflow: hidden;
 }
-.shard-graph-float-header {
+.vault-graph-float-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -37370,12 +37399,12 @@ body.theme-frosted .modal {
   user-select: none;
   flex-shrink: 0;
 }
-.shard-graph-float-title {
+.vault-graph-float-title {
   font-size: 13px;
   font-weight: 600;
   color: var(--fg);
 }
-.shard-graph-float-close {
+.vault-graph-float-close {
   background: transparent;
   border: none;
   color: var(--fg);
@@ -37385,8 +37414,8 @@ body.theme-frosted .modal {
   padding: 2px 6px;
   border-radius: 5px;
 }
-.shard-graph-float-close:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 8%, transparent); }
-.shard-graph-float-body {
+.vault-graph-float-close:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.vault-graph-float-body {
   flex: 1;
   position: relative;
   overflow: hidden;
@@ -37394,10 +37423,10 @@ body.theme-frosted .modal {
 }
 
 /* Search */
-.shard-graph-settings-search {
+.vault-graph-settings-search {
   margin-bottom: 8px;
 }
-.shard-graph-settings-search input {
+.vault-graph-settings-search input {
   width: 100%;
   background: var(--bg);
   border: 1px solid var(--border);
@@ -37409,21 +37438,21 @@ body.theme-frosted .modal {
   transition: border-color 0.15s;
   box-sizing: border-box;
 }
-.shard-graph-settings-search input:focus {
+.vault-graph-settings-search input:focus {
   border-color: var(--red);
 }
 
 /* Section divider */
-.shard-graph-settings-section {
+.vault-graph-settings-section {
   padding-top: 10px;
   border-top: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
 }
-.shard-graph-settings-section:first-of-type {
+.vault-graph-settings-section:first-of-type {
   border-top: none;
   padding-top: 0;
 }
 
-.shard-graph-section-title {
+.vault-graph-section-title {
   font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
@@ -37434,7 +37463,7 @@ body.theme-frosted .modal {
 }
 
 /* Row */
-.shard-graph-row {
+.vault-graph-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -37442,11 +37471,11 @@ body.theme-frosted .modal {
   padding: 7px 2px;
   min-height: 28px;
 }
-.shard-graph-row + .shard-graph-row {
+.vault-graph-row + .vault-graph-row {
   border-top: 1px solid color-mix(in srgb, var(--border) 25%, transparent);
 }
 
-.shard-graph-row-label {
+.vault-graph-row-label {
   flex-shrink: 0;
   opacity: 0.9;
   font-size: 12px;
@@ -37457,14 +37486,14 @@ body.theme-frosted .modal {
 }
 
 /* Slider wrap */
-.shard-graph-slider-wrap {
+.vault-graph-slider-wrap {
   flex: 1;
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
 }
-.shard-graph-slider-wrap input[type="range"] {
+.vault-graph-slider-wrap input[type="range"] {
   flex: 1;
   min-width: 0;
   -webkit-appearance: none;
@@ -37476,22 +37505,22 @@ body.theme-frosted .modal {
   border: none;
   outline: none;
 }
-.shard-graph-slider-wrap input[type="range"]::-webkit-slider-runnable-track {
+.vault-graph-slider-wrap input[type="range"]::-webkit-slider-runnable-track {
   height: 4px;
   background: var(--border);
   border-radius: 2px;
 }
-.shard-graph-slider-wrap input[type="range"]::-moz-range-track {
+.vault-graph-slider-wrap input[type="range"]::-moz-range-track {
   height: 4px;
   background: var(--border);
   border-radius: 2px;
 }
-.shard-graph-slider-wrap input[type="range"]::-moz-range-progress {
+.vault-graph-slider-wrap input[type="range"]::-moz-range-progress {
   height: 4px;
   background: var(--red);
   border-radius: 2px;
 }
-.shard-graph-slider-wrap input[type="range"]::-webkit-slider-thumb {
+.vault-graph-slider-wrap input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
   width: 14px;
@@ -37502,7 +37531,7 @@ body.theme-frosted .modal {
   cursor: pointer;
   margin-top: -5px;
 }
-.shard-graph-slider-wrap input[type="range"]::-moz-range-thumb {
+.vault-graph-slider-wrap input[type="range"]::-moz-range-thumb {
   width: 14px;
   height: 14px;
   border-radius: 50%;
@@ -37511,7 +37540,7 @@ body.theme-frosted .modal {
   cursor: pointer;
 }
 
-.shard-graph-slider-val {
+.vault-graph-slider-val {
   font-size: 11px;
   font-weight: 600;
   color: var(--fg);
@@ -37522,12 +37551,12 @@ body.theme-frosted .modal {
 }
 
 /* Toggles */
-.shard-graph-row .admin-switch {
+.vault-graph-row .admin-switch {
   flex-shrink: 0;
 }
 
 /* Animate button */
-.shard-graph-animate-btn {
+.vault-graph-animate-btn {
   width: 100%;
   margin-top: 8px;
   padding: 7px 8px;
@@ -37540,14 +37569,14 @@ body.theme-frosted .modal {
   font-weight: 500;
   transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
-.shard-graph-animate-btn:hover {
+.vault-graph-animate-btn:hover {
   background: color-mix(in srgb, var(--red) 12%, transparent);
   border-color: var(--red);
   color: var(--red);
 }
 
 /* Floating node tooltip (Obsidian-style) */
-.shard-graph-tooltip {
+.vault-graph-tooltip {
   position: absolute;
   z-index: 30;
   pointer-events: none;
@@ -37563,32 +37592,26 @@ body.theme-frosted .modal {
   opacity: 0;
   transition: opacity 0.1s;
 }
-.shard-graph-tooltip.visible {
+.vault-graph-tooltip.visible {
   opacity: 1;
 }
 
 /* Collapsible sections */
-.shard-graph-section-title {
+.vault-graph-section-title {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   cursor: pointer;
   user-select: none;
 }
-.shard-graph-section-chevron {
-  font-size: 10px;
-  opacity: 0.6;
-  margin-left: 4px;
-}
 
 /* Groups */
-.shard-graph-groups-list {
+.vault-graph-groups-list {
   display: flex;
   flex-direction: column;
   gap: 6px;
   margin-bottom: 8px;
 }
-.shard-graph-group-row {
+.vault-graph-group-row {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -37597,7 +37620,7 @@ body.theme-frosted .modal {
   border: 1px solid var(--border);
   border-radius: 6px;
 }
-.shard-graph-group-color {
+.vault-graph-group-color {
   width: 18px;
   height: 18px;
   border-radius: 50%;
@@ -37605,7 +37628,7 @@ body.theme-frosted .modal {
   cursor: pointer;
   border: 2px solid color-mix(in srgb, var(--fg) 20%, transparent);
 }
-.shard-graph-group-query {
+.vault-graph-group-query {
   flex: 1;
   min-width: 0;
   font-size: 11px;
@@ -37614,15 +37637,15 @@ body.theme-frosted .modal {
   padding: 2px 4px;
   border-radius: 4px;
 }
-.shard-graph-group-query:focus {
+.vault-graph-group-query:focus {
   background: color-mix(in srgb, var(--fg) 8%, transparent);
 }
-.shard-graph-group-query:empty::before {
+.vault-graph-group-query:empty::before {
   content: 'Enter query...';
   opacity: 0.4;
   pointer-events: none;
 }
-.shard-graph-group-del {
+.vault-graph-group-del {
   background: transparent;
   border: none;
   color: var(--fg);
@@ -37633,11 +37656,11 @@ body.theme-frosted .modal {
   border-radius: 4px;
   line-height: 1;
 }
-.shard-graph-group-del:hover {
+.vault-graph-group-del:hover {
   opacity: 1;
   background: color-mix(in srgb, var(--fg) 8%, transparent);
 }
-.shard-graph-new-group-btn {
+.vault-graph-new-group-btn {
   width: 100%;
   padding: 7px 8px;
   border: 1px solid var(--border);
@@ -37649,20 +37672,141 @@ body.theme-frosted .modal {
   font-weight: 500;
   transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
-.shard-graph-new-group-btn:hover {
+.vault-graph-new-group-btn:hover {
   background: color-mix(in srgb, var(--red) 12%, transparent);
   border-color: var(--red);
   color: var(--red);
 }
 
-.shard-ribbon-sep {
+/* Section chevron */
+.vault-graph-section-chevron {
+  display: inline-block;
+  transition: transform 0.2s ease;
+  margin-right: 8px;
+  font-size: 11px;
+  line-height: 1;
+}
+.vault-graph-section-chevron.expanded {
+  transform: rotate(90deg);
+}
+
+/* Animation controls */
+.vault-graph-anim-top {
+  padding: 4px 0;
+}
+.vault-graph-anim-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  flex-wrap: wrap;
+}
+.vault-graph-anim-btn {
+  background: transparent;
+  border: none;
+  color: var(--fg, #abb2bf);
+  font-size: 14px;
+  cursor: pointer;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 4px;
+  line-height: 1;
+  transition: background 0.15s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+}
+.vault-graph-anim-btn:hover {
+  background: var(--hover, rgba(255,255,255,0.08));
+}
+.vault-graph-anim-speed {
+  background: var(--panel, #1e222a);
+  border: 1px solid var(--border, #3e4451);
+  color: var(--fg, #abb2bf);
+  border-radius: 4px;
+  padding: 2px 5px;
+  font-size: 11px;
+  cursor: pointer;
+  outline: none;
+}
+
+.vault-graph-anim-scrubber {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  display: block;
+  height: 4px;
+  padding: 0 7px;
+  background: transparent;
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+  border: none;
+  margin: 0;
+  box-sizing: border-box;
+}
+.vault-graph-anim-scrubber:focus {
+  outline: none;
+  box-shadow: none;
+}
+.vault-graph-anim-scrubber::-webkit-slider-runnable-track {
+  -webkit-appearance: none;
+  height: 4px;
+  background: linear-gradient(to right, var(--red) var(--progress, 0%), var(--border) var(--progress, 0%));
+  border-radius: 2px;
+}
+.vault-graph-anim-scrubber::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--red);
+  border: none;
+  cursor: pointer;
+  margin-top: -5px;
+  transition: transform 0.12s ease-out, box-shadow 0.12s ease-out;
+  will-change: transform;
+}
+.vault-graph-anim-scrubber:active::-webkit-slider-thumb {
+  transform: scale(1.2);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--red) 30%, transparent);
+}
+.vault-graph-anim-scrubber::-moz-range-track {
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+}
+.vault-graph-anim-scrubber::-moz-range-progress {
+  height: 4px;
+  background: var(--red);
+  border-radius: 2px;
+}
+.vault-graph-anim-scrubber::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--red);
+  border: none;
+  cursor: pointer;
+  transition: transform 0.12s ease-out, box-shadow 0.12s ease-out;
+  will-change: transform;
+}
+.vault-graph-anim-scrubber:active::-moz-range-thumb {
+  transform: scale(1.2);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--red) 30%, transparent);
+}
+
+.vault-ribbon-sep {
   width: 20px;
   height: 1px;
   background: var(--border);
   margin: 2px 0;
   flex-shrink: 0;
 }
-.shard-left-pane {
+.vault-left-pane {
   border: 1px solid var(--border);
   background: var(--panel, var(--bg));
   border-radius: 8px;
@@ -37673,8 +37817,8 @@ body.theme-frosted .modal {
   overflow: hidden;
   position: relative;
 }
-.shard-left-header { display: none; }
-.shard-center-pane {
+.vault-left-header { display: none; }
+.vault-center-pane {
   padding: 10px 12px;
   overflow: hidden;
   display: flex;
@@ -37682,7 +37826,7 @@ body.theme-frosted .modal {
   min-height: 0;
   min-width: 0;
 }
-.shard-right-pane {
+.vault-right-pane {
   border: 1px solid var(--border);
   background: var(--panel, var(--bg));
   border-radius: 8px;
@@ -37693,17 +37837,17 @@ body.theme-frosted .modal {
   min-height: 0;
   position: relative;
 }
-.shard-right-placeholder {
+.vault-right-placeholder {
   padding: 20px;
   text-align: center;
   opacity: 0.5;
   font-size: 12px;
   flex: 1;
 }
-.shard-right-placeholder.hidden { display: none; }
+.vault-right-placeholder.hidden { display: none; }
 
 /* Panel stack system */
-.shard-panel-stack {
+.vault-panel-stack {
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -37711,7 +37855,7 @@ body.theme-frosted .modal {
   gap: 0;
 }
 /* Horizontal row for side-by-side panels */
-.shard-panel-row {
+.vault-panel-row {
   display: flex;
   flex-direction: row;
   flex: 1;
@@ -37719,12 +37863,12 @@ body.theme-frosted .modal {
   min-width: 0;
   gap: 0;
 }
-.shard-panel-row > .shard-panel-group {
+.vault-panel-row > .vault-panel-group {
   flex: 1;
   min-width: 0;
 }
 /* Horizontal resize handle between side-by-side panels */
-.shard-panel-resize-h {
+.vault-panel-resize-h {
   width: 1px;
   cursor: col-resize;
   background: transparent;
@@ -37732,11 +37876,11 @@ body.theme-frosted .modal {
   flex-shrink: 0;
   transition: border-color 0.15s;
 }
-.shard-panel-resize-h:hover {
+.vault-panel-resize-h:hover {
   border-left-color: var(--accent, var(--red, #4a9eff));
 }
 /* Also make vertical resize handle consistent thin line */
-.shard-panel-resize-v {
+.vault-panel-resize-v {
   height: 1px;
   cursor: row-resize;
   background: transparent;
@@ -37744,82 +37888,84 @@ body.theme-frosted .modal {
   flex-shrink: 0;
   transition: border-color 0.15s;
 }
-.shard-panel-resize-v:hover {
+.vault-panel-resize-v:hover {
   border-top-color: var(--accent, var(--red, #4a9eff));
 }
-.shard-panel-group {
+.vault-panel-group {
   display: flex;
   flex-direction: column;
   min-height: 0;
   flex: 1;
   overflow: hidden;
 }
-.shard-panel-group.hidden {
+.vault-panel-group.hidden,
+.vault-right-pane.hidden,
+.vault-left-pane.hidden {
   display: none;
 }
 /* Panel edge drop zones for drag-and-drop new panel creation */
-.shard-panel-group {
+.vault-panel-group {
   position: relative;
 }
-.shard-panel-edge-zone {
+.vault-panel-edge-zone {
   position: absolute;
   z-index: 50;
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.1s;
 }
-.shard-panel-edge-zone.active {
+.vault-panel-edge-zone.active {
   opacity: 1;
 }
-.shard-panel-edge-zone[data-edge="top"],
-.shard-panel-edge-zone[data-edge="bottom"] {
+.vault-panel-edge-zone[data-edge="top"],
+.vault-panel-edge-zone[data-edge="bottom"] {
   left: 0;
   right: 0;
   height: 1px;
   background: var(--accent, var(--red, #4a9eff));
 }
-.shard-panel-edge-zone[data-edge="top"] {
+.vault-panel-edge-zone[data-edge="top"] {
   top: 0;
 }
-.shard-panel-edge-zone[data-edge="bottom"] {
+.vault-panel-edge-zone[data-edge="bottom"] {
   bottom: 0;
 }
-.shard-panel-edge-zone[data-edge="left"],
-.shard-panel-edge-zone[data-edge="right"] {
+.vault-panel-edge-zone[data-edge="left"],
+.vault-panel-edge-zone[data-edge="right"] {
   top: 0;
   bottom: 0;
   width: 1px;
   background: var(--accent, var(--red, #4a9eff));
 }
-.shard-panel-edge-zone[data-edge="left"] {
+.vault-panel-edge-zone[data-edge="left"] {
   left: 0;
 }
-.shard-panel-edge-zone[data-edge="right"] {
+.vault-panel-edge-zone[data-edge="right"] {
   right: 0;
 }
-.shard-panel-placeholder {
+.vault-panel-placeholder {
   padding: 20px;
   text-align: center;
   opacity: 0.5;
   font-size: 12px;
   flex: 1;
 }
-.shard-panel-placeholder.hidden {
+.vault-panel-placeholder.hidden {
   display: none;
 }
-.shard-panel-resize-v {
+.vault-panel-resize-v {
   height: 4px;
   background: transparent;
   cursor: row-resize;
   flex-shrink: 0;
   transition: background 0.15s;
 }
-.shard-panel-resize-v:hover {
+.vault-panel-resize-v:hover {
   background: var(--accent, var(--red, #4a9eff));
 }
 
 /* Right sidebar tabs */
-.shard-right-tabs {
+.vault-right-tabs {
   display: flex;
   border-bottom: 1px solid var(--border);
   padding: 0;
@@ -37829,7 +37975,7 @@ body.theme-frosted .modal {
   justify-content: center;
   flex-wrap: wrap;
 }
-.shard-right-tab {
+.vault-right-tab {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -37850,20 +37996,24 @@ body.theme-frosted .modal {
   outline: none;
   flex-shrink: 0;
 }
-.shard-right-tab:hover { opacity: 0.8; background: color-mix(in srgb, var(--fg) 5%, transparent); }
-.shard-right-tab.active {
+.vault-right-tab:hover { opacity: 0.8; background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.vault-right-tab.active {
   opacity: 1;
   background: color-mix(in srgb, var(--fg) 8%, transparent);
 }
-.shard-right-tab.dragging { opacity: 0.3; cursor: grabbing; }
-.shard-right-tab.drop-target-left { border-left: 2px solid var(--accent, var(--red, #4a9eff)); }
-.shard-right-tab.drop-target-right { border-right: 2px solid var(--accent, var(--red, #4a9eff)); }
-.shard-sidebar-tab.drop-target-left { border-left: 2px solid var(--accent, var(--red, #4a9eff)); }
-.shard-sidebar-tab.drop-target-right { border-right: 2px solid var(--accent, var(--red, #4a9eff)); }
-.shard-right-tab svg { flex-shrink: 0; }
-.shard-right-tab span { display: none; }
+.vault-right-tab.dragging { opacity: 0.3; cursor: grabbing; }
+.vault-right-tab.drop-target-left { border-left: 2px solid var(--accent, var(--red, #4a9eff)); }
+.vault-right-tab.drop-target-right { border-right: 2px solid var(--accent, var(--red, #4a9eff)); }
+.vault-sidebar-tab.drop-target-left { border-left: 2px solid var(--accent, var(--red, #4a9eff)); }
+.vault-sidebar-tab.drop-target-right { border-right: 2px solid var(--accent, var(--red, #4a9eff)); }
+.vault-right-tab svg { flex-shrink: 0; }
+.vault-right-tab span { display: none; }
+.vault-right-tab.hidden,
+.vault-sidebar-tab.hidden {
+  display: none !important;
+}
 /* Context menu */
-.shard-context-menu {
+.vault-context-menu {
   position: fixed;
   z-index: 9999;
   background: var(--bg-raised, var(--bg));
@@ -37875,7 +38025,7 @@ body.theme-frosted .modal {
   font-size: 12px;
   user-select: none;
 }
-.shard-context-menu-item {
+.vault-context-menu-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -37884,24 +38034,24 @@ body.theme-frosted .modal {
   transition: background 0.1s;
   gap: 12px;
 }
-.shard-context-menu-item:hover { background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 15%, transparent); }
-.shard-context-menu-item.disabled {
+.vault-context-menu-item:hover { background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 15%, transparent); }
+.vault-context-menu-item.disabled {
   opacity: 0.4;
   cursor: default;
   pointer-events: none;
 }
-.shard-context-menu-item.danger {
+.vault-context-menu-item.danger {
   color: #ff6b6b;
 }
-.shard-context-menu-item.danger:hover {
+.vault-context-menu-item.danger:hover {
   background: color-mix(in srgb, #ff6b6b 15%, transparent);
 }
-.shard-context-menu-separator {
+.vault-context-menu-separator {
   height: 1px;
   background: var(--border);
   margin: 4px 8px;
 }
-.shard-context-menu-submenu {
+.vault-context-menu-submenu {
   position: fixed;
   z-index: 10000;
   background: var(--bg-raised, var(--bg));
@@ -37913,9 +38063,9 @@ body.theme-frosted .modal {
   font-size: 12px;
 }
 /* Icon-only right tabs always */
-.shard-right-tab svg { margin: 0 auto; }
+.vault-right-tab svg { margin: 0 auto; }
 /* Right sidebar panes */
-.shard-right-panes {
+.vault-right-panes {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -37923,43 +38073,44 @@ body.theme-frosted .modal {
   display: flex;
   flex-direction: column;
 }
-.shard-right-pane-content { display: flex; flex-direction: column; flex: 1; }
-.shard-right-pane-content.hidden { display: none; }
-#shard-right-panes .shard-sidebar-pane {
+.vault-right-pane-content { display: flex; flex-direction: column; flex: 1; }
+.vault-right-pane-content.hidden { display: none; }
+#vault-right-panes .vault-sidebar-pane {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
 }
-.shard-folder-tree {
+.vault-folder-tree {
   flex: 1 1 auto;
   overflow-y: auto;
+  overflow-x: hidden;
   min-height: 0;
   user-select: none;
 }
-.shard-folder-tree ul {
+.vault-folder-tree ul {
   list-style: none;
   margin: 0;
   padding: 0;
 }
 /* Progressive indent for nested folders/notes */
-.shard-folder-tree li > ul {
+.vault-folder-tree li > ul {
   padding-left: 10px;
 }
-.shard-folder-tree li {
+.vault-folder-tree li {
   position: relative;
   margin: 0;
   padding: 0;
 }
 /* Root items: no tree lines, minimal indent */
-.shard-folder-tree li.shard-tree-root > .shard-tree-row.root {
+.vault-folder-tree li.vault-tree-root > .vault-tree-row.root {
   margin-left: 4px;
 }
 /* Sub items: tree lines and indent */
-.shard-folder-tree li.shard-tree-sub > .shard-tree-row.sub {
+.vault-folder-tree li.vault-tree-sub > .vault-tree-row.sub {
   margin-left: 22px;
 }
 /* vertical tree guide line — only for sub items */
-.shard-folder-tree li.shard-tree-sub::before {
+.vault-folder-tree li.vault-tree-sub::before {
   content: '';
   position: absolute;
   left: 12px;
@@ -37970,7 +38121,7 @@ body.theme-frosted .modal {
   pointer-events: none;
 }
 /* horizontal connector — only for sub items */
-.shard-folder-tree li.shard-tree-sub > .shard-tree-row.sub::before {
+.vault-folder-tree li.vault-tree-sub > .vault-tree-row.sub::before {
   content: '';
   position: absolute;
   left: -9px;
@@ -37980,7 +38131,7 @@ body.theme-frosted .modal {
   background: color-mix(in srgb, var(--border) 60%, transparent);
   pointer-events: none;
 }
-.shard-tree-row {
+.vault-tree-row {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -37992,27 +38143,27 @@ body.theme-frosted .modal {
   transition: background 0.15s;
   position: relative;
 }
-.shard-tree-row:hover {
+.vault-tree-row:hover {
   background: color-mix(in srgb, var(--fg) 4%, transparent);
 }
-.shard-tree-row.selected {
+.vault-tree-row.selected {
   background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 10%, transparent);
 }
-.shard-tree-row.drag-over {
+.vault-tree-row.drag-over {
   background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 20%, transparent);
   box-shadow: inset 0 0 0 1px var(--accent, var(--red, #4a9eff));
 }
 /* Grabbing cursor only during active drag */
-.shard-folder-tree.shard-dragging .shard-tree-row[data-note-id],
-.shard-folder-tree.shard-dragging .shard-tree-row[data-folder] {
+.vault-folder-tree.vault-dragging .vault-tree-row[data-note-id],
+.vault-folder-tree.vault-dragging .vault-tree-row[data-folder] {
   cursor: grabbing;
 }
 /* Visual feedback when dragging over empty tree space (root drop target) */
-.shard-folder-tree.shard-root-drag-over {
+.vault-folder-tree.vault-root-drag-over {
   outline: 2px dashed var(--accent, var(--red, #4a9eff));
 }
 /* CSS arrow chevron */
-.shard-tree-arrow {
+.vault-tree-arrow {
   width: 0;
   height: 0;
   border-top: 4px solid transparent;
@@ -38023,51 +38174,51 @@ body.theme-frosted .modal {
   flex-shrink: 0;
   cursor: pointer;
 }
-.shard-tree-arrow.expanded {
+.vault-tree-arrow.expanded {
   transform: rotate(90deg);
 }
-.shard-tree-arrow.leaf {
+.vault-tree-arrow.leaf {
   border: none;
   width: 5px;
 }
 /* Animated expand/collapse for folder subtrees */
-.shard-folder-tree li > ul {
+.vault-folder-tree li > ul {
   max-height: 0;
   overflow: hidden;
   opacity: 0;
   transition: max-height 0.2s ease, opacity 0.15s ease;
 }
-.shard-folder-tree li.expanded > ul {
+.vault-folder-tree li.expanded > ul {
   max-height: 5000px;
   opacity: 1;
   overflow: visible;
 }
-.shard-tree-file-icon,
-.shard-tree-folder-icon {
+.vault-tree-file-icon,
+.vault-tree-folder-icon {
   display: inline-flex;
   align-items: center;
   flex-shrink: 0;
   margin-left: 2px;
 }
-.shard-tree-name {
+.vault-tree-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 /* Resize handles */
-.shard-resize-handle-h {
+.vault-resize-handle-h {
   width: 4px;
   cursor: col-resize;
   background: transparent;
   transition: background 0.2s;
   flex-shrink: 0;
 }
-.shard-resize-handle-h:hover,
-.shard-resize-handle-h.dragging {
+.vault-resize-handle-h:hover,
+.vault-resize-handle-h.dragging {
   background: var(--accent, var(--red, #4a9eff));
 }
-.shard-tabs {
+.vault-tabs {
   display: flex;
   gap: 0;
   margin-bottom: 0;
@@ -38080,8 +38231,8 @@ body.theme-frosted .modal {
   border-bottom: none;
   padding-bottom: 0;
 }
-.shard-tabs::-webkit-scrollbar { display: none; }
-.shard-tab {
+.vault-tabs::-webkit-scrollbar { display: none; }
+.vault-tab {
   background: transparent;
   border: none;
   color: var(--fg);
@@ -38102,11 +38253,11 @@ body.theme-frosted .modal {
   user-select: none;
   -webkit-user-select: none;
 }
-.shard-tab.active {
+.vault-tab.active {
   background: color-mix(in srgb, var(--fg) 5%, transparent);
   opacity: 1;
 }
-.shard-tab-close {
+.vault-tab-close {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -38119,11 +38270,11 @@ body.theme-frosted .modal {
   margin: 0 -2px 0 auto;
   opacity: 0.7;
 }
-.shard-tab-close:hover {
+.vault-tab-close:hover {
   opacity: 1;
   background: color-mix(in srgb, var(--fg) 12%, transparent);
 }
-.shard-tab-new {
+.vault-tab-new {
   background: transparent;
   border: none;
   color: var(--fg);
@@ -38139,11 +38290,11 @@ body.theme-frosted .modal {
   flex-shrink: 0;
   margin-bottom: 0;
 }
-.shard-tab-new:hover {
+.vault-tab-new:hover {
   opacity: 0.8;
   background: color-mix(in srgb, var(--fg) 5%, transparent);
 }
-.shard-vault-perm-btn {
+.vault-vault-perm-btn {
   background: transparent;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -38154,11 +38305,11 @@ body.theme-frosted .modal {
   line-height: 1;
   transition: background 0.15s, border-color 0.15s;
 }
-.shard-vault-perm-btn:hover {
+.vault-vault-perm-btn:hover {
   border-color: var(--accent, var(--red, #4a9eff));
   background: color-mix(in srgb, var(--fg) 6%, transparent);
 }
-.shard-note-toolbar {
+.vault-note-toolbar {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -38169,13 +38320,13 @@ body.theme-frosted .modal {
   flex-shrink: 0;
   position: relative;
 }
-.shard-nav-btns {
+.vault-nav-btns {
   display: flex;
   gap: 4px;
   flex-shrink: 0;
   z-index: 1;
 }
-.shard-nav-btn {
+.vault-nav-btn {
   background: transparent;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -38192,15 +38343,15 @@ body.theme-frosted .modal {
   opacity: 0.5;
   transition: opacity 0.15s, background 0.15s;
 }
-.shard-nav-btn:hover {
+.vault-nav-btn:hover {
   opacity: 1;
   background: color-mix(in srgb, var(--fg) 6%, transparent);
 }
-.shard-nav-btn:disabled {
+.vault-nav-btn:disabled {
   opacity: 0.2;
   cursor: default;
 }
-.shard-breadcrumb {
+.vault-breadcrumb {
   flex: 1;
   display: flex;
   align-items: center;
@@ -38212,30 +38363,30 @@ body.theme-frosted .modal {
   white-space: nowrap;
   min-width: 0;
 }
-.shard-breadcrumb > * {
+.vault-breadcrumb > * {
   flex-shrink: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.shard-breadcrumb-sep {
+.vault-breadcrumb-sep {
   flex-shrink: 0;
   min-width: auto;
   overflow: visible;
   opacity: 0.4;
 }
-.shard-breadcrumb-part {
+.vault-breadcrumb-part {
   cursor: pointer;
   padding: 2px 4px;
   border-radius: 4px;
   transition: background 0.15s;
   max-width: 200px;
 }
-.shard-breadcrumb-part:hover {
+.vault-breadcrumb-part:hover {
   background: color-mix(in srgb, var(--fg) 8%, transparent);
 }
-.shard-breadcrumb-current {
+.vault-breadcrumb-current {
   font-weight: 500;
   opacity: 1;
   min-width: 20px;
@@ -38243,11 +38394,11 @@ body.theme-frosted .modal {
 }
 
 /* Properties collapse */
-.shard-properties-inline.collapsed .shard-prop-grid,
-.shard-properties-inline.collapsed .shard-prop-add-main {
+.vault-properties-inline.collapsed .vault-prop-grid,
+.vault-properties-inline.collapsed .vault-prop-add-main {
   display: none;
 }
-.shard-prop-chevron {
+.vault-prop-chevron {
   display: inline-block;
   width: 0;
   height: 0;
@@ -38260,22 +38411,22 @@ body.theme-frosted .modal {
   opacity: 0;
   cursor: pointer;
 }
-.shard-properties-inline:hover .shard-prop-chevron {
+.vault-properties-inline:hover .vault-prop-chevron {
   opacity: 0.5;
 }
-.shard-properties-inline.collapsed .shard-prop-chevron {
+.vault-properties-inline.collapsed .vault-prop-chevron {
   transform: rotate(-90deg);
 }
-.shard-prop-header {
+.vault-prop-header {
   display: flex;
   align-items: center;
   cursor: pointer;
   user-select: none;
 }
-.shard-search-row {
+.vault-search-row {
   margin-bottom: 8px;
 }
-.shard-search-row input {
+.vault-search-row input {
   width: 100%;
   padding: 6px 10px;
   border-radius: 6px;
@@ -38284,17 +38435,17 @@ body.theme-frosted .modal {
   color: var(--fg);
   font-size: 12px;
 }
-.shard-panel-wrap {
+.vault-panel-wrap {
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
 }
-.shard-panel-wrap.hidden {
+.vault-panel-wrap.hidden {
   display: none;
 }
-.shard-note-list {
+.vault-note-list {
   width: 240px;
   min-width: 180px;
   border: 1px solid var(--border);
@@ -38302,7 +38453,7 @@ body.theme-frosted .modal {
   overflow-y: auto;
   padding: 6px;
 }
-.shard-note-item {
+.vault-note-item {
   padding: 6px 8px;
   border-radius: 6px;
   cursor: pointer;
@@ -38311,23 +38462,23 @@ body.theme-frosted .modal {
   align-items: center;
   gap: 6px;
 }
-.shard-note-item:hover {
+.vault-note-item:hover {
   background: color-mix(in srgb, var(--fg) 5%, transparent);
 }
-.shard-note-item.active {
+.vault-note-item.active {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
-.shard-pane-content {
+.vault-pane-content {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
-.shard-pane-content.hidden {
+.vault-pane-content.hidden {
   display: none;
 }
-.shard-preview {
+.vault-preview {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
@@ -38339,61 +38490,61 @@ body.theme-frosted .modal {
   padding: 0 4px 4px;
   color: var(--fg);
 }
-.shard-preview-header,
-.shard-preview-body {
+.vault-preview-header,
+.vault-preview-body {
   color: var(--fg);
 }
-.shard-preview-body {
+.vault-preview-body {
   flex: 1 1 auto;
   min-height: 80px;
-  font-size: var(--shard-font-size, 16px);
+  font-size: var(--vault-font-size, 16px);
 }
-.shard-preview-header {
+.vault-preview-header {
   padding: 10px 12px;
   border: 1px solid var(--border);
   background: color-mix(in srgb, var(--fg) 3%, transparent);
   border-radius: 8px;
   margin-bottom: 12px;
 }
-.shard-preview-header h1 {
+.vault-preview-header h1 {
   margin: 0;
   font-size: 26px;
   font-weight: 600;
   line-height: 1.3;
 }
-.shard-preview-body h1,
-.shard-preview-body h2,
-.shard-preview-body h3,
-.shard-preview-body h4 {
+.vault-preview-body h1,
+.vault-preview-body h2,
+.vault-preview-body h3,
+.vault-preview-body h4 {
   margin: 18px 0 10px;
   font-weight: 600;
   line-height: 1.3;
 }
-.shard-preview-body h1 { font-size: 22px; overflow-wrap: anywhere; }
-.shard-preview-body h2 { font-size: 18px; overflow-wrap: anywhere; }
-.shard-preview-body h3 { font-size: 15px; overflow-wrap: anywhere; }
-.shard-preview-body h4 { overflow-wrap: anywhere; }
-.shard-preview-body p {
+.vault-preview-body h1 { font-size: 22px; overflow-wrap: anywhere; }
+.vault-preview-body h2 { font-size: 18px; overflow-wrap: anywhere; }
+.vault-preview-body h3 { font-size: 15px; overflow-wrap: anywhere; }
+.vault-preview-body h4 { overflow-wrap: anywhere; }
+.vault-preview-body p {
   margin: 0 0 10px;
   overflow-wrap: anywhere;
 }
-.shard-preview-body ul,
-.shard-preview-body ol {
+.vault-preview-body ul,
+.vault-preview-body ol {
   margin: 0 0 10px;
   padding-left: 22px;
 }
-.shard-preview-body li {
+.vault-preview-body li {
   margin-bottom: 4px;
   overflow-wrap: anywhere;
 }
-.shard-preview-body code {
+.vault-preview-body code {
   background: color-mix(in srgb, var(--fg) 8%, transparent);
   padding: 2px 5px;
   border-radius: 4px;
   font-size: 12px;
   overflow-wrap: anywhere;
 }
-.shard-preview-body pre {
+.vault-preview-body pre {
   background: color-mix(in srgb, var(--fg) 5%, transparent);
   padding: 10px;
   border-radius: 6px;
@@ -38401,7 +38552,7 @@ body.theme-frosted .modal {
   font-size: 12px;
 }
 /* ── Left sidebar tabs ── */
-.shard-sidebar-tabs {
+.vault-sidebar-tabs {
   display: flex;
   gap: 2px;
   padding: 0;
@@ -38410,7 +38561,7 @@ body.theme-frosted .modal {
   justify-content: center;
   flex-wrap: wrap;
 }
-.shard-sidebar-tab {
+.vault-sidebar-tab {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -38431,12 +38582,12 @@ body.theme-frosted .modal {
   outline: none;
   flex-shrink: 0;
 }
-.shard-sidebar-tab:hover { opacity: 0.8; background: color-mix(in srgb, var(--fg) 5%, transparent); }
-.shard-sidebar-tab.active { opacity: 1; background: color-mix(in srgb, var(--fg) 8%, transparent); }
-.shard-sidebar-tab svg { flex-shrink: 0; }
-.shard-sidebar-tab.dragging { opacity: 0.3; cursor: grabbing; }
+.vault-sidebar-tab:hover { opacity: 0.8; background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.vault-sidebar-tab.active { opacity: 1; background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.vault-sidebar-tab svg { flex-shrink: 0; }
+.vault-sidebar-tab.dragging { opacity: 0.3; cursor: grabbing; }
 /* Panes */
-.shard-sidebar-panes {
+.vault-sidebar-panes {
   flex: 1;
   min-height: 0;
   overflow: hidden;
@@ -38444,7 +38595,7 @@ body.theme-frosted .modal {
   flex-direction: column;
   padding: 8px;
 }
-.shard-sidebar-pane {
+.vault-sidebar-pane {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -38452,20 +38603,20 @@ body.theme-frosted .modal {
   flex-direction: column;
   position: relative;
 }
-.shard-sidebar-pane.hidden { display: none; }
+.vault-sidebar-pane.hidden { display: none; }
 /* Left sidebar tabs: always icon-only */
-.shard-sidebar-tab span { display: none; }
-.shard-sidebar-tab svg { margin: 0 auto; }
+.vault-sidebar-tab span { display: none; }
+.vault-sidebar-tab svg { margin: 0 auto; }
 
 /* Search toolbar */
-.shard-search-toolbar {
+.vault-search-toolbar {
   display: flex;
   align-items: center;
   gap: 4px;
   padding: 0 0 6px;
   position: relative;
 }
-.shard-search-field {
+.vault-search-field {
   flex: 1;
   display: flex;
   align-items: center;
@@ -38476,8 +38627,8 @@ body.theme-frosted .modal {
   border-radius: 6px;
   background: var(--bg);
 }
-.shard-search-field svg { flex-shrink: 0; opacity: 0.5; }
-.shard-search-field input {
+.vault-search-field svg { flex-shrink: 0; opacity: 0.5; }
+.vault-search-field input {
   flex: 1;
   border: none;
   background: transparent;
@@ -38487,7 +38638,7 @@ body.theme-frosted .modal {
   outline: none;
   min-width: 0;
 }
-.shard-search-clear {
+.vault-search-clear {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -38503,9 +38654,9 @@ body.theme-frosted .modal {
   padding: 0;
   margin: 0;
 }
-.shard-search-clear:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 10%, transparent); }
-.shard-search-clear.hidden { display: none; }
-.shard-search-toggle {
+.vault-search-clear:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 10%, transparent); }
+.vault-search-clear.hidden { display: none; }
+.vault-search-toggle {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -38523,14 +38674,14 @@ body.theme-frosted .modal {
   transition: opacity 0.15s, background 0.15s;
   flex-shrink: 0;
 }
-.shard-search-toggle:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 5%, transparent); }
-.shard-search-toggle.active {
+.vault-search-toggle:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.vault-search-toggle.active {
   opacity: 1;
   background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 15%, transparent);
   border-color: var(--accent, var(--red, #4a9eff));
 }
 /* Sort dropdown */
-.shard-search-sort-dropdown {
+.vault-search-sort-dropdown {
   position: absolute;
   top: 36px;
   right: 36px;
@@ -38542,17 +38693,17 @@ body.theme-frosted .modal {
   min-width: 180px;
   padding: 4px;
 }
-.shard-search-sort-item {
+.vault-search-sort-item {
   padding: 6px 10px;
   border-radius: 4px;
   font-size: 12px;
   cursor: pointer;
   transition: background 0.1s;
 }
-.shard-search-sort-item:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
-.shard-search-sort-item.active { background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 12%, transparent); }
+.vault-search-sort-item:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.vault-search-sort-item.active { background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 12%, transparent); }
 /* Settings panel */
-.shard-search-settings {
+.vault-search-settings {
   position: absolute;
   top: 36px;
   right: 4px;
@@ -38564,7 +38715,7 @@ body.theme-frosted .modal {
   min-width: 220px;
   padding: 8px 10px;
 }
-.shard-search-setting-row {
+.vault-search-setting-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -38572,14 +38723,14 @@ body.theme-frosted .modal {
   font-size: 12px;
   cursor: pointer;
 }
-.shard-toggle {
+.vault-toggle {
   position: relative;
   display: inline-block;
   width: 32px;
   height: 18px;
 }
-.shard-toggle input { opacity: 0; width: 0; height: 0; margin: 0; }
-.shard-toggle-slider {
+.vault-toggle input { opacity: 0; width: 0; height: 0; margin: 0; }
+.vault-toggle-slider {
   position: absolute;
   cursor: pointer;
   inset: 0;
@@ -38587,7 +38738,7 @@ body.theme-frosted .modal {
   border-radius: 18px;
   transition: background 0.2s;
 }
-.shard-toggle-slider::before {
+.vault-toggle-slider::before {
   content: '';
   position: absolute;
   height: 14px;
@@ -38598,18 +38749,18 @@ body.theme-frosted .modal {
   border-radius: 50%;
   transition: transform 0.2s;
 }
-.shard-toggle input:checked + .shard-toggle-slider { background: var(--accent, var(--red, #4a9eff)); }
-.shard-toggle input:checked + .shard-toggle-slider::before { transform: translateX(14px); }
+.vault-toggle input:checked + .vault-toggle-slider { background: var(--accent, var(--red, #4a9eff)); }
+.vault-toggle input:checked + .vault-toggle-slider::before { transform: translateX(14px); }
 /* Explain bar */
-.shard-search-explain {
+.vault-search-explain {
   font-size: 11px;
   opacity: 0.5;
   padding: 0 0 4px;
   min-height: 16px;
 }
-.shard-search-explain.hidden { display: none; }
+.vault-search-explain.hidden { display: none; }
 /* Empty search state — popover below search bar */
-.shard-search-empty {
+.vault-search-empty {
   position: absolute;
   top: 36px;
   left: 4px;
@@ -38623,25 +38774,25 @@ body.theme-frosted .modal {
   max-height: 380px;
   overflow-y: auto;
 }
-.shard-search-empty.hidden { display: none; }
-.shard-search-empty-section { margin-bottom: 10px; }
-.shard-search-empty-section:last-child { margin-bottom: 0; }
-.shard-search-empty-title {
+.vault-search-empty.hidden { display: none; }
+.vault-search-empty-section { margin-bottom: 10px; }
+.vault-search-empty-section:last-child { margin-bottom: 0; }
+.vault-search-empty-title {
   font-size: 11px;
   opacity: 0.5;
   margin-bottom: 6px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
-.shard-search-empty-item {
+.vault-search-empty-item {
   padding: 5px 6px;
   border-radius: 4px;
   font-size: 12px;
   cursor: default;
   transition: background 0.1s;
 }
-.shard-search-empty-item:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
-.shard-search-empty-item code {
+.vault-search-empty-item:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.vault-search-empty-item code {
   font-family: 'SFMono-Regular', Consolas, monospace;
   font-size: 11px;
   background: color-mix(in srgb, var(--fg) 8%, transparent);
@@ -38649,7 +38800,7 @@ body.theme-frosted .modal {
   border-radius: 3px;
   margin-right: 4px;
 }
-.shard-search-history-item {
+.vault-search-history-item {
   padding: 5px 6px;
   border-radius: 4px;
   font-size: 12px;
@@ -38659,19 +38810,19 @@ body.theme-frosted .modal {
   align-items: center;
   gap: 6px;
 }
-.shard-search-history-item:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
-.shard-search-history-item svg { opacity: 0.5; flex-shrink: 0; }
+.vault-search-history-item:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.vault-search-history-item svg { opacity: 0.5; flex-shrink: 0; }
 /* Results */
-.shard-search-results {
+.vault-search-results {
   flex: 1;
   overflow-y: auto;
   min-height: 0;
 }
 /* Collapsible file result */
-.shard-search-file {
+.vault-search-file {
   margin-bottom: 2px;
 }
-.shard-search-file-header {
+.vault-search-file-header {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -38683,8 +38834,8 @@ body.theme-frosted .modal {
   transition: background 0.1s;
   user-select: none;
 }
-.shard-search-file-header:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
-.shard-search-file-header .shard-search-chevron {
+.vault-search-file-header:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.vault-search-file-header .vault-search-chevron {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -38695,17 +38846,17 @@ body.theme-frosted .modal {
   transition: transform 0.15s;
   flex-shrink: 0;
 }
-.shard-search-file-header.collapsed .shard-search-chevron { transform: rotate(-90deg); }
-.shard-search-file-header .shard-search-file-count {
+.vault-search-file-header.collapsed .vault-search-chevron { transform: rotate(-90deg); }
+.vault-search-file-header .vault-search-file-count {
   margin-left: auto;
   font-size: 11px;
   opacity: 0.5;
   font-weight: 400;
 }
-.shard-search-matches {
+.vault-search-matches {
   padding-left: 24px;
 }
-.shard-search-match {
+.vault-search-match {
   padding: 3px 6px 3px 0;
   font-size: 11px;
   line-height: 1.5;
@@ -38716,23 +38867,23 @@ body.theme-frosted .modal {
   cursor: pointer;
   transition: background 0.1s, border-color 0.1s;
 }
-.shard-search-match:hover {
+.vault-search-match:hover {
   background: color-mix(in srgb, var(--fg) 3%, transparent);
   border-left-color: var(--accent, var(--red, #4a9eff));
 }
-.shard-search-match mark {
+.vault-search-match mark {
   background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 30%, transparent);
   color: inherit;
   border-radius: 2px;
   padding: 0 1px;
 }
-.shard-search-match.raw {
+.vault-search-match.raw {
   font-family: 'SFMono-Regular', Consolas, monospace;
   white-space: pre-wrap;
   opacity: 0.85;
 }
 /* Fallback simple result (used when not grouped) */
-.shard-search-result {
+.vault-search-result {
   padding: 6px 8px;
   border-radius: 6px;
   cursor: pointer;
@@ -38741,19 +38892,19 @@ body.theme-frosted .modal {
   border: 1px solid color-mix(in srgb, var(--fg) 8%, transparent);
   margin-bottom: 4px;
 }
-.shard-search-result:hover {
+.vault-search-result:hover {
   background: color-mix(in srgb, var(--fg) 5%, transparent);
   border-color: color-mix(in srgb, var(--fg) 16%, transparent);
 }
-.shard-search-result-title { font-weight: 500; margin-bottom: 2px; }
-.shard-search-result-snippet { font-size: 11px; opacity: 0.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vault-search-result-title { font-weight: 500; margin-bottom: 2px; }
+.vault-search-result-snippet { font-size: 11px; opacity: 0.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Bookmarks */
-.shard-bookmarks-list {
+.vault-bookmarks-list {
   flex: 1;
   overflow-y: auto;
   min-height: 0;
 }
-.shard-bookmark-item {
+.vault-bookmark-item {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -38763,9 +38914,9 @@ body.theme-frosted .modal {
   font-size: 12px;
   transition: background 0.1s;
 }
-.shard-bookmark-item:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.vault-bookmark-item:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
 /* Tags cloud */
-.shard-tags-cloud {
+.vault-tags-cloud {
   flex: 1;
   overflow-y: auto;
   min-height: 0;
@@ -38775,7 +38926,7 @@ body.theme-frosted .modal {
   gap: 6px;
   padding: 4px 2px;
 }
-.shard-tag-chip {
+.vault-tag-chip {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -38786,10 +38937,10 @@ body.theme-frosted .modal {
   cursor: pointer;
   transition: background 0.1s;
 }
-.shard-tag-chip:hover { background: color-mix(in srgb, var(--fg) 15%, transparent); }
-.shard-tag-chip .shard-tag-count { opacity: 0.6; font-size: 10px; }
+.vault-tag-chip:hover { background: color-mix(in srgb, var(--fg) 15%, transparent); }
+.vault-tag-chip .vault-tag-count { opacity: 0.6; font-size: 10px; }
 
-.shard-status-bar {
+.vault-status-bar {
   margin-top: 8px;
   padding-top: 6px;
   border-top: 1px solid var(--border);
@@ -38798,7 +38949,7 @@ body.theme-frosted .modal {
   justify-content: space-between;
   align-items: center;
 }
-.shard-word-count {
+.vault-word-count {
   text-align: right;
   padding: 4px 4px 4px 0;
   font-size: 10px;
@@ -38809,20 +38960,20 @@ body.theme-frosted .modal {
 }
 
 /* ===== Pane Workspace ===== */
-.shard-pane-workspace {
+.vault-pane-workspace {
   display: flex;
   flex: 1;
   min-height: 0;
   min-width: 0;
   overflow: hidden;
 }
-.shard-pane-workspace.split-h {
+.vault-pane-workspace.split-h {
   flex-direction: row;
 }
-.shard-pane-workspace.split-v {
+.vault-pane-workspace.split-v {
   flex-direction: column;
 }
-.shard-editor-pane {
+.vault-editor-pane {
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -38831,29 +38982,29 @@ body.theme-frosted .modal {
   overflow: hidden;
   position: relative;
 }
-.shard-editor-pane + .shard-editor-pane {
+.vault-editor-pane + .vault-editor-pane {
   border-left: 1px solid var(--border);
 }
-.shard-pane-workspace.split-v .shard-editor-pane + .shard-editor-pane {
+.vault-pane-workspace.split-v .vault-editor-pane + .vault-editor-pane {
   border-left: none;
   border-top: 1px solid var(--border);
 }
 /* Drop zones */
-.shard-drop-zones {
+.vault-drop-zones {
   position: absolute;
   inset: 0;
   z-index: 50;
   display: none;
   pointer-events: none;
 }
-.shard-editor-pane.drag-over .shard-drop-zones {
+.vault-editor-pane.drag-over .vault-drop-zones {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
   grid-template-rows: 1fr 1fr 1fr;
   gap: 2px;
   padding: 2px;
 }
-.shard-drop-zone {
+.vault-drop-zone {
   pointer-events: auto;
   border-radius: 6px;
   opacity: 0;
@@ -38866,30 +39017,30 @@ body.theme-frosted .modal {
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
-.shard-drop-zone.drag-active {
+.vault-drop-zone.drag-active {
   opacity: 1;
   background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 12%, transparent);
 }
-.shard-drop-zone-center {
+.vault-drop-zone-center {
   z-index: 1;
 }
 /* Sidebar panel drop zones */
-.shard-sidebar-drop-zones {
+.vault-sidebar-drop-zones {
   position: absolute;
   inset: 0;
   z-index: 50;
   display: none;
   pointer-events: none;
 }
-.shard-left-pane.drag-over-sidebar .shard-sidebar-drop-zones,
-.shard-right-pane.drag-over-sidebar .shard-sidebar-drop-zones {
+.vault-left-pane.drag-over-sidebar .vault-sidebar-drop-zones,
+.vault-right-pane.drag-over-sidebar .vault-sidebar-drop-zones {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
   grid-template-rows: 1fr 1fr 1fr;
   gap: 2px;
   padding: 2px;
 }
-.shard-sidebar-drop-zone {
+.vault-sidebar-drop-zone {
   pointer-events: auto;
   border-radius: 6px;
   opacity: 0;
@@ -38902,27 +39053,27 @@ body.theme-frosted .modal {
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
-.shard-sidebar-drop-zone.drag-active {
+.vault-sidebar-drop-zone.drag-active {
   opacity: 1;
   background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 12%, transparent);
 }
 /* Tab drag styling */
-.shard-tab[draggable="true"] {
+.vault-tab[draggable="true"] {
   cursor: grab;
 }
-.shard-tab.dragging {
+.vault-tab.dragging {
   opacity: 0.3;
 }
 
-/* Shard-style vault selector */
-.shard-vault-selector-wrap,
-.shard-vault-dropdown-wrap {
+/* Vault-style vault selector */
+.vault-vault-selector-wrap,
+.vault-vault-dropdown-wrap {
   position: relative;
   flex: 1;
   min-width: 0;
   align-self: center;
 }
-.shard-vault-selector-trigger {
+.vault-vault-selector-trigger {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -38937,10 +39088,10 @@ body.theme-frosted .modal {
   transition: border-color 0.15s, background 0.15s;
   user-select: none;
 }
-.shard-vault-selector-trigger:hover {
+.vault-vault-selector-trigger:hover {
   border-color: var(--accent, var(--red, #4a9eff));
 }
-.shard-vault-selector-label {
+.vault-vault-selector-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -38948,17 +39099,17 @@ body.theme-frosted .modal {
   flex: 1;
   min-width: 0;
 }
-.shard-vault-selector-arrow {
+.vault-vault-selector-arrow {
   font-size: 10px;
   opacity: 0.6;
   flex-shrink: 0;
   transition: transform 0.15s;
 }
-.shard-vault-selector-wrap.open .shard-vault-selector-arrow,
-.shard-vault-dropdown-wrap.open .shard-vault-dropdown-arrow {
+.vault-vault-selector-wrap.open .vault-vault-selector-arrow,
+.vault-vault-dropdown-wrap.open .vault-vault-dropdown-arrow {
   transform: rotate(180deg);
 }
-.shard-vault-dropdown-menu {
+.vault-vault-dropdown-menu {
   position: absolute;
   bottom: calc(100% + 4px);
   left: 0;
@@ -38972,7 +39123,7 @@ body.theme-frosted .modal {
   max-height: 200px;
   overflow-y: auto;
 }
-.shard-vault-dropdown-item {
+.vault-vault-dropdown-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -38983,18 +39134,18 @@ body.theme-frosted .modal {
   cursor: pointer;
   transition: background 0.15s;
 }
-.shard-vault-dropdown-item:hover {
+.vault-vault-dropdown-item:hover {
   background: color-mix(in srgb, var(--fg) 6%, transparent);
 }
-.shard-vault-dropdown-item.selected {
+.vault-vault-dropdown-item.selected {
   background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 12%, transparent);
 }
-.shard-vault-dropdown-item .vault-name {
+.vault-vault-dropdown-item .vault-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.shard-vault-dropdown-item .vault-menu-btn {
+.vault-vault-dropdown-item .vault-menu-btn {
   background: none;
   border: none;
   color: var(--fg);
@@ -39007,24 +39158,24 @@ body.theme-frosted .modal {
   align-items: center;
   justify-content: center;
 }
-.shard-vault-dropdown-item:hover .vault-menu-btn {
+.vault-vault-dropdown-item:hover .vault-menu-btn {
   opacity: 0.5;
 }
-.shard-vault-dropdown-item .vault-menu-btn:hover {
+.vault-vault-dropdown-item .vault-menu-btn:hover {
   opacity: 1;
   background: color-mix(in srgb, var(--fg) 12%, transparent);
 }
-.shard-vault-dropdown-add {
+.vault-vault-dropdown-add {
   border-top: 1px solid var(--border);
   margin-top: 2px;
   padding-top: 4px;
   color: var(--accent, var(--red, #4a9eff));
   font-weight: 500;
 }
-.shard-vault-dropdown-add:hover {
+.vault-vault-dropdown-add:hover {
   background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 8%, transparent);
 }
-.shard-vault-dialog {
+.vault-vault-dialog {
   position: absolute;
   inset: 0;
   z-index: 300;
@@ -39033,10 +39184,10 @@ body.theme-frosted .modal {
   justify-content: center;
   background: rgba(0,0,0,0.35);
 }
-.shard-vault-dialog.hidden {
+.vault-vault-dialog.hidden {
   display: none;
 }
-.shard-vault-dialog-card {
+.vault-vault-dialog-card {
   background: var(--bg-raised, var(--bg));
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -39044,19 +39195,19 @@ body.theme-frosted .modal {
   width: min(360px, 90vw);
   box-shadow: 0 8px 32px rgba(0,0,0,0.3);
 }
-/* Reset all buttons inside the Shard modal body — a global .modal-body button
-   { margin-top:6px } rule pushes every button down. Shard buttons should sit
+/* Reset all buttons inside the Vault modal body — a global .modal-body button
+   { margin-top:6px } rule pushes every button down. Vault buttons should sit
    flush with their adjacent inputs. inline-flex+align-items:center fixes the
    ~1px baseline drift Windows Chrome adds to <button> elements in flex rows. */
-.modal-body.shard-modal-body button,
-.modal-body.shard-modal-body input[type="button"] {
+.modal-body.vault-modal-body button,
+.modal-body.vault-modal-body input[type="button"] {
   margin-top: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
 
-.shard-vault-edit-btn {
+.vault-vault-edit-btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -39081,14 +39232,14 @@ body.theme-frosted .modal {
   vertical-align: middle;
   transition: background 0.15s, border-color 0.15s, opacity 0.15s;
 }
-.shard-vault-edit-btn:hover {
+.vault-vault-edit-btn:hover {
   border-color: var(--accent, var(--red, #4a9eff));
   background: color-mix(in srgb, var(--fg) 6%, transparent);
   opacity: 1;
 }
 
 /* Loading Overlay */
-.shard-loading-overlay {
+.vault-loading-overlay {
   position: absolute;
   inset: 0;
   background: rgba(0,0,0,0.35);
@@ -39101,28 +39252,28 @@ body.theme-frosted .modal {
   backdrop-filter: blur(2px);
   transition: opacity 0.2s ease;
 }
-.shard-loading-overlay.hidden {
+.vault-loading-overlay.hidden {
   display: none;
 }
-.shard-loading-spinner {
+.vault-loading-spinner {
   width: 28px;
   height: 28px;
   border: 2px solid var(--border);
   border-top-color: var(--accent, var(--red, #4a9eff));
   border-radius: 50%;
-  animation: shard-spin 0.8s linear infinite;
+  animation: vault-spin 0.8s linear infinite;
 }
-.shard-loading-text {
+.vault-loading-text {
   font-size: 12px;
   color: var(--fg);
   opacity: 0.8;
 }
-@keyframes shard-spin {
+@keyframes vault-spin {
   to { transform: rotate(360deg); }
 }
 
 /* Add Vault Overlay */
-.shard-add-vault-overlay {
+.vault-add-vault-overlay {
   position: absolute;
   inset: 0;
   background: rgba(0,0,0,0.4);
@@ -39132,10 +39283,10 @@ body.theme-frosted .modal {
   z-index: 50;
   backdrop-filter: blur(2px);
 }
-.shard-add-vault-overlay.hidden {
+.vault-add-vault-overlay.hidden {
   display: none;
 }
-.shard-add-vault-card {
+.vault-add-vault-card {
   background: var(--bg-raised, var(--bg));
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -39144,19 +39295,19 @@ body.theme-frosted .modal {
   max-width: 360px;
   box-shadow: 0 8px 24px rgba(0,0,0,0.3);
 }
-.shard-vault-path-row {
+.vault-vault-path-row {
   display: flex;
   gap: 8px;
   margin-top: 3px;
   align-items: center;
 }
-.shard-vault-path-row input,
-.shard-vault-path-row button {
+.vault-vault-path-row input,
+.vault-vault-path-row button {
   box-sizing: border-box;
   height: 34px;
   line-height: 1;
 }
-.shard-vault-path-row input {
+.vault-vault-path-row input {
   padding: 6px 10px;
   font-size: 13px;
   border-radius: 6px;
@@ -39165,7 +39316,7 @@ body.theme-frosted .modal {
   background: var(--bg);
   color: var(--fg);
 }
-.shard-vault-path-row button {
+.vault-vault-path-row button {
   padding: 0 14px;
   font-size: 12px;
   white-space: nowrap;
@@ -39175,7 +39326,7 @@ body.theme-frosted .modal {
 }
 
 /* Fullscreen snap state */
-#shard-modal.shard-fullscreen .shard-modal-content {
+#vault-modal.vault-fullscreen .vault-modal-content {
   width: 100vw;
   max-width: 100vw;
   height: 100vh;
@@ -39184,7 +39335,7 @@ body.theme-frosted .modal {
 }
 
 /* Badges */
-.shard-badge {
+.vault-badge {
   display: inline-block;
   padding: 2px 6px;
   border-radius: 4px;
@@ -39193,44 +39344,44 @@ body.theme-frosted .modal {
   text-transform: uppercase;
   letter-spacing: 0.02em;
 }
-.shard-badge.read {
+.vault-badge.read {
   background: color-mix(in srgb, var(--green, #69db7c) 18%, transparent);
   color: var(--green, #69db7c);
 }
-.shard-badge.write {
+.vault-badge.write {
   background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 18%, transparent);
   color: var(--accent, var(--red, #4a9eff));
 }
-.shard-badge.none {
+.vault-badge.none {
   background: color-mix(in srgb, var(--fg) 8%, transparent);
   color: var(--fg);
   opacity: 0.5;
 }
 
 /* Tab content panes */
-.shard-tab-content {
+.vault-tab-content {
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
 }
-.shard-tab-content.hidden {
+.vault-tab-content.hidden {
   display: none;
 }
 
 /* Permissions */
-.shard-permissions-wrap {
+.vault-permissions-wrap {
   flex: 1 1 auto;
   overflow-y: auto;
   padding-right: 4px;
 }
-.shard-permissions-table {
+.vault-permissions-table {
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
-.shard-perm-header {
+.vault-perm-header {
   display: grid;
   grid-template-columns: 70px 1fr 60px 50px 30px;
   gap: 6px;
@@ -39240,7 +39391,7 @@ body.theme-frosted .modal {
   opacity: 0.6;
   border-bottom: 1px solid var(--border);
 }
-.shard-perm-row {
+.vault-perm-row {
   display: grid;
   grid-template-columns: 70px 1fr 60px 50px 30px;
   gap: 6px;
@@ -39249,24 +39400,24 @@ body.theme-frosted .modal {
   border-radius: 6px;
   font-size: 11px;
 }
-.shard-perm-row:hover {
+.vault-perm-row:hover {
   background: color-mix(in srgb, var(--fg) 4%, transparent);
 }
-.shard-perm-pattern {
+.vault-perm-pattern {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.shard-perm-level.read {
+.vault-perm-level.read {
   color: var(--green, #69db7c);
 }
-.shard-perm-level.write {
+.vault-perm-level.write {
   color: var(--accent, var(--red, #4a9eff));
 }
-.shard-perm-level.none {
+.vault-perm-level.none {
   color: var(--red, #ff6b6b);
 }
-.shard-perm-del {
+.vault-perm-del {
   background: none;
   border: none;
   color: var(--fg);
@@ -39276,29 +39427,29 @@ body.theme-frosted .modal {
   padding: 0;
   line-height: 1;
 }
-.shard-perm-del:hover {
+.vault-perm-del:hover {
   opacity: 1;
   color: var(--red, #ff6b6b);
 }
 
 /* Regular links in note content use the accent color, not browser blue */
-.shard-preview-body a {
+.vault-preview-body a {
   color: var(--accent, var(--red, #ff6b6b));
   text-decoration: underline;
   text-decoration-color: color-mix(in srgb, var(--accent, var(--red)) 50%, transparent);
 }
-.shard-preview-body a:hover {
+.vault-preview-body a:hover {
   text-decoration-color: var(--accent, var(--red));
 }
 
 /* Wikilinks */
-.shard-preview a.wikilink {
+.vault-preview a.wikilink {
   color: var(--accent, var(--red, #4a9eff));
   text-decoration: underline;
   text-decoration-style: solid;
   cursor: pointer;
 }
-.shard-preview a.wikilink.ghost {
+.vault-preview a.wikilink.ghost {
   color: var(--accent, var(--red, #4a9eff));
   opacity: 0.6;
   text-decoration: underline;
@@ -39306,7 +39457,7 @@ body.theme-frosted .modal {
 }
 
 /* Embeds */
-.shard-embed {
+.vault-embed {
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 10px 12px;
@@ -39314,7 +39465,7 @@ body.theme-frosted .modal {
   background: color-mix(in srgb, var(--fg) 2%, transparent);
   font-size: 12px;
 }
-.shard-embed-error {
+.vault-embed-error {
   color: var(--red, #ff6b6b);
   font-size: 11px;
   opacity: 0.7;
@@ -39322,35 +39473,35 @@ body.theme-frosted .modal {
 }
 
 /* Callouts */
-.shard-callout {
+.vault-callout {
   border-radius: 8px;
   padding: 10px 12px;
   margin: 8px 0;
   border-left: 3px solid var(--border);
   background: color-mix(in srgb, var(--fg) 3%, transparent);
 }
-.shard-callout-title {
+.vault-callout-title {
   font-weight: 600;
   font-size: 12px;
   margin-bottom: 4px;
 }
-.shard-callout-icon {
+.vault-callout-icon {
   margin-right: 4px;
 }
-.shard-callout-body {
+.vault-callout-body {
   font-size: 12px;
   line-height: 1.5;
 }
-.shard-callout.callout-info    { border-left-color: #3b82f6; background: color-mix(in srgb, #3b82f6 6%, transparent); }
-.shard-callout.callout-warning { border-left-color: #f59e0b; background: color-mix(in srgb, #f59e0b 6%, transparent); }
-.shard-callout.callout-danger  { border-left-color: #ef4444; background: color-mix(in srgb, #ef4444 6%, transparent); }
-.shard-callout.callout-tip     { border-left-color: #22c55e; background: color-mix(in srgb, #22c55e 6%, transparent); }
-.shard-callout.callout-note    { border-left-color: #8b5cf6; background: color-mix(in srgb, #8b5cf6 6%, transparent); }
-.shard-callout.callout-quote   { border-left-color: #6b7280; background: color-mix(in srgb, #6b7280 6%, transparent); }
-.shard-callout.callout-example { border-left-color: #06b6d4; background: color-mix(in srgb, #06b6d4 6%, transparent); }
+.vault-callout.callout-info    { border-left-color: #3b82f6; background: color-mix(in srgb, #3b82f6 6%, transparent); }
+.vault-callout.callout-warning { border-left-color: #f59e0b; background: color-mix(in srgb, #f59e0b 6%, transparent); }
+.vault-callout.callout-danger  { border-left-color: #ef4444; background: color-mix(in srgb, #ef4444 6%, transparent); }
+.vault-callout.callout-tip     { border-left-color: #22c55e; background: color-mix(in srgb, #22c55e 6%, transparent); }
+.vault-callout.callout-note    { border-left-color: #8b5cf6; background: color-mix(in srgb, #8b5cf6 6%, transparent); }
+.vault-callout.callout-quote   { border-left-color: #6b7280; background: color-mix(in srgb, #6b7280 6%, transparent); }
+.vault-callout.callout-example { border-left-color: #06b6d4; background: color-mix(in srgb, #06b6d4 6%, transparent); }
 
 /* Preview mode toggle */
-.shard-mode-toggle {
+.vault-mode-toggle {
   background: transparent;
   border: 1px solid var(--border);
   color: var(--fg);
@@ -39360,12 +39511,12 @@ body.theme-frosted .modal {
   cursor: pointer;
   opacity: 0.6;
 }
-.shard-mode-toggle.active {
+.vault-mode-toggle.active {
   background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 12%, transparent);
   border-color: var(--accent, var(--red, #4a9eff));
   opacity: 1;
 }
-.shard-mode-icon {
+.vault-mode-icon {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -39384,12 +39535,12 @@ body.theme-frosted .modal {
   transition: background 0.15s, border-color 0.15s, opacity 0.15s;
   flex-shrink: 0;
 }
-.shard-mode-icon:hover {
+.vault-mode-icon:hover {
   border-color: var(--accent, var(--red, #4a9eff));
   background: color-mix(in srgb, var(--fg) 6%, transparent);
   opacity: 1;
 }
-.shard-mode-tooltip {
+.vault-mode-tooltip {
   position: fixed;
   z-index: 300;
   background: var(--panel, var(--bg));
@@ -39406,7 +39557,7 @@ body.theme-frosted .modal {
 }
 
 /* ===== View Mode Buttons ===== */
-.shard-view-modes {
+.vault-view-modes {
   display: flex;
   align-items: center;
   gap: 0;
@@ -39417,7 +39568,7 @@ body.theme-frosted .modal {
   border-radius: 0;
   flex-shrink: 0;
 }
-.shard-mode-btn {
+.vault-mode-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -39438,23 +39589,23 @@ body.theme-frosted .modal {
   width: 28px;
   height: 28px;
 }
-.shard-mode-btn:hover {
+.vault-mode-btn:hover {
   opacity: 0.9;
   background: color-mix(in srgb, var(--fg) 6%, transparent);
 }
-.shard-mode-btn.active {
+.vault-mode-btn.active {
   opacity: 1;
   background: color-mix(in srgb, var(--fg) 10%, transparent);
   color: var(--accent, var(--red, #4a9eff));
 }
-.shard-mode-btn svg {
+.vault-mode-btn svg {
   flex-shrink: 0;
 }
 
-.shard-mode-tooltip .shard-tooltip-line {
+.vault-mode-tooltip .vault-tooltip-line {
   white-space: nowrap;
 }
-.shard-edit-textarea {
+.vault-edit-textarea {
   width: 100%;
   min-height: 300px;
   background: transparent;
@@ -39471,7 +39622,7 @@ body.theme-frosted .modal {
 }
 
 /* Source mode textarea styled like rendered content */
-.shard-source-textarea {
+.vault-source-textarea {
   width: 100%;
   min-height: 300px;
   background: transparent;
@@ -39486,8 +39637,8 @@ body.theme-frosted .modal {
 }
 
 /* Source mode: contentEditable styled text div */
-.shard-source-view,
-.shard-live-view {
+.vault-source-view,
+.vault-live-view {
   width: 100%;
   min-height: 300px;
   color: var(--fg);
@@ -39500,21 +39651,21 @@ body.theme-frosted .modal {
   outline: none;
   cursor: text;
 }
-.shard-reading-view {
+.vault-reading-view {
   padding: 8px 0;
   color: var(--fg);
   width: 100%;
   overflow-wrap: anywhere;
   word-wrap: break-word;
 }
-.shard-source-view .md-bracket {
+.vault-source-view .md-bracket {
   opacity: 0.5;
 }
-.shard-live-view .md-bracket {
+.vault-live-view .md-bracket {
   opacity: 1;
 }
-.shard-source-view a.wikilink-source,
-.shard-live-view a.wikilink-source {
+.vault-source-view a.wikilink-source,
+.vault-live-view a.wikilink-source {
   color: var(--accent, var(--red, #4a9eff));
   text-decoration: underline;
   text-decoration-style: solid;
@@ -39522,22 +39673,22 @@ body.theme-frosted .modal {
 }
 
 /* Rich markdown formatting in source / live preview */
-.shard-source-view .md-hash,
-.shard-source-view .md-syntax,
-.shard-source-view .md-li-marker,
-.shard-source-view .md-bq-mark,
-.shard-source-view .md-link-url {
+.vault-source-view .md-hash,
+.vault-source-view .md-syntax,
+.vault-source-view .md-li-marker,
+.vault-source-view .md-bq-mark,
+.vault-source-view .md-link-url {
   opacity: 0.45;
 }
 /* Live Preview: dual-mode per-line editing */
-.shard-live-view .lp-line,
-.shard-source-view .lp-line,
-.shard-reading-view .lp-line {
+.vault-live-view .lp-line,
+.vault-source-view .lp-line,
+.vault-reading-view .lp-line {
   position: relative;
   margin-bottom: 0.35em;
 }
 /* Fold toggles in reading view */
-.shard-reading-view .shard-fold-toggle {
+.vault-reading-view .vault-fold-toggle {
   display: inline-block;
   cursor: pointer;
   margin-right: 6px;
@@ -39546,17 +39697,17 @@ body.theme-frosted .modal {
   user-select: none;
   transition: opacity 0.15s;
 }
-.shard-reading-view .shard-fold-toggle:hover {
+.vault-reading-view .vault-fold-toggle:hover {
   opacity: 1;
 }
-.shard-live-view .lp-line {
+.vault-live-view .lp-line {
   cursor: text;
 }
-.shard-reading-view .lp-line {
+.vault-reading-view .lp-line {
   cursor: default;
 }
 /* Wikilink suggestion dropdown */
-.shard-wiki-suggest {
+.vault-wiki-suggest {
   background: var(--panel, var(--bg, #1a1a1a));
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -39566,7 +39717,7 @@ body.theme-frosted .modal {
   max-height: 220px;
   overflow-y: auto;
 }
-.shard-wiki-suggest-item {
+.vault-wiki-suggest-item {
   padding: 6px 10px;
   cursor: pointer;
   color: var(--fg);
@@ -39574,20 +39725,23 @@ body.theme-frosted .modal {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.shard-wiki-suggest-item:hover,
-.shard-wiki-suggest-item.selected {
+.vault-wiki-suggest-item:hover,
+.vault-wiki-suggest-item.selected {
   background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 12%, transparent);
 }
 
 /* Token-level inline editing: no dark background fill on active line */
-.shard-live-view .lp-line.active {
+.vault-live-view .lp-line.active {
   border-radius: 4px;
 }
 /* Source layer is always visible in Live Preview (no clean layer) */
-.shard-live-view .lp-source {
+.vault-live-view .lp-source {
   display: block;
   outline: none;
   cursor: text;
+}
+.vault-source-view .lp-source {
+  display: inline;
 }
 /* Hide ALL syntax markers by default in an active source line */
 .lp-source .md-syntax,
@@ -39622,18 +39776,18 @@ body.theme-frosted .modal {
   display: inline;
 }
 /* Source token wrappers must visually match clean equivalents when syntax is hidden */
-.shard-live-view .lp-source .md-h1,
-.shard-reading-view .lp-source .md-h1 { font-size: 2em; font-weight: 700; display: block; margin: 0; line-height: inherit; }
-.shard-live-view .lp-source .md-h2,
-.shard-reading-view .lp-source .md-h2 { font-size: 1.6em; font-weight: 600; display: block; margin: 0; line-height: inherit; }
-.shard-live-view .lp-source .md-h3,
-.shard-reading-view .lp-source .md-h3 { font-size: 1.3em; font-weight: 600; display: block; margin: 0; line-height: inherit; }
-.shard-live-view .lp-source .md-h4,
-.shard-reading-view .lp-source .md-h4 { font-size: 1.15em; font-weight: 600; display: block; margin: 0; line-height: inherit; }
-.shard-live-view .lp-source .md-h5,
-.shard-reading-view .lp-source .md-h5 { font-size: 1em; font-weight: 600; display: block; margin: 0; line-height: inherit; }
-.shard-live-view .lp-source .md-h6,
-.shard-reading-view .lp-source .md-h6 { font-size: 0.9em; font-weight: 600; display: block; margin: 0; line-height: inherit; }
+.vault-live-view .lp-source .md-h1,
+.vault-reading-view .lp-source .md-h1 { font-size: 2em; font-weight: 700; display: block; margin: 0; line-height: inherit; }
+.vault-live-view .lp-source .md-h2,
+.vault-reading-view .lp-source .md-h2 { font-size: 1.6em; font-weight: 600; display: block; margin: 0; line-height: inherit; }
+.vault-live-view .lp-source .md-h3,
+.vault-reading-view .lp-source .md-h3 { font-size: 1.3em; font-weight: 600; display: block; margin: 0; line-height: inherit; }
+.vault-live-view .lp-source .md-h4,
+.vault-reading-view .lp-source .md-h4 { font-size: 1.15em; font-weight: 600; display: block; margin: 0; line-height: inherit; }
+.vault-live-view .lp-source .md-h5,
+.vault-reading-view .lp-source .md-h5 { font-size: 1em; font-weight: 600; display: block; margin: 0; line-height: inherit; }
+.vault-live-view .lp-source .md-h6,
+.vault-reading-view .lp-source .md-h6 { font-size: 0.9em; font-weight: 600; display: block; margin: 0; line-height: inherit; }
 .lp-source .md-bold { font-weight: bold; }
 .lp-source .md-italic { font-style: italic; }
 .lp-source .md-strike { text-decoration: line-through; opacity: 0.75; }
@@ -39683,33 +39837,33 @@ body.theme-frosted .modal {
 .lp-source .md-escaped {
   opacity: 0.75;
 }
-.shard-live-view .lp-line.lp-empty,
-.shard-reading-view .lp-line.lp-empty {
+.vault-live-view .lp-line.lp-empty,
+.vault-reading-view .lp-line.lp-empty {
   margin-bottom: 0;
   min-height: 0.35em;
 }
-.shard-reading-view .lp-source {
+.vault-reading-view .lp-source {
   display: block;
   outline: none;
   cursor: default;
 }
-.shard-source-view .md-h1, .shard-live-view .md-h1 { font-size: 2em; font-weight: 700; line-height: 1.2; display: block; margin: 0.6em 0 0.3em; }
-.shard-source-view .md-h2, .shard-live-view .md-h2 { font-size: 1.6em; font-weight: 600; line-height: 1.25; display: block; margin: 0.5em 0 0.25em; }
-.shard-source-view .md-h3, .shard-live-view .md-h3 { font-size: 1.3em; font-weight: 600; line-height: 1.3; display: block; margin: 0.4em 0 0.2em; }
-.shard-source-view .md-h4, .shard-live-view .md-h4 { font-size: 1.15em; font-weight: 600; line-height: 1.35; display: block; margin: 0.35em 0 0.15em; }
-.shard-source-view .md-h5, .shard-live-view .md-h5 { font-size: 1em; font-weight: 600; line-height: 1.4; display: block; margin: 0.3em 0 0.1em; }
-.shard-source-view .md-h6, .shard-live-view .md-h6 { font-size: 0.9em; font-weight: 600; line-height: 1.4; display: block; margin: 0.25em 0 0.1em; }
-.shard-source-view .md-bold, .shard-live-view .md-bold { font-weight: bold; }
-.shard-source-view .md-italic, .shard-live-view .md-italic { font-style: italic; }
-.shard-source-view .md-strike, .shard-live-view .md-strike { text-decoration: line-through; opacity: 0.75; }
-.shard-source-view .md-code, .shard-live-view .md-code {
+.vault-source-view .md-h1, .vault-live-view .md-h1 { font-size: 2em; font-weight: 700; line-height: 1.2; display: block; margin: 0.6em 0 0.3em; }
+.vault-source-view .md-h2, .vault-live-view .md-h2 { font-size: 1.6em; font-weight: 600; line-height: 1.25; display: block; margin: 0.5em 0 0.25em; }
+.vault-source-view .md-h3, .vault-live-view .md-h3 { font-size: 1.3em; font-weight: 600; line-height: 1.3; display: block; margin: 0.4em 0 0.2em; }
+.vault-source-view .md-h4, .vault-live-view .md-h4 { font-size: 1.15em; font-weight: 600; line-height: 1.35; display: block; margin: 0.35em 0 0.15em; }
+.vault-source-view .md-h5, .vault-live-view .md-h5 { font-size: 1em; font-weight: 600; line-height: 1.4; display: block; margin: 0.3em 0 0.1em; }
+.vault-source-view .md-h6, .vault-live-view .md-h6 { font-size: 0.9em; font-weight: 600; line-height: 1.4; display: block; margin: 0.25em 0 0.1em; }
+.vault-source-view .md-bold, .vault-live-view .md-bold { font-weight: bold; }
+.vault-source-view .md-italic, .vault-live-view .md-italic { font-style: italic; }
+.vault-source-view .md-strike, .vault-live-view .md-strike { text-decoration: line-through; opacity: 0.75; }
+.vault-source-view .md-code, .vault-live-view .md-code {
   font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
   background: color-mix(in srgb, var(--fg) 8%, transparent);
   padding: 1px 4px;
   border-radius: 3px;
   font-size: 0.92em;
 }
-.shard-source-view .md-code-block, .shard-live-view .md-code-block, .shard-reading-view .md-code-block {
+.vault-source-view .md-code-block, .vault-live-view .md-code-block, .vault-reading-view .md-code-block {
   font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
   background: color-mix(in srgb, var(--fg) 5%, transparent);
   padding: 8px 12px;
@@ -39718,17 +39872,61 @@ body.theme-frosted .modal {
   font-size: 0.92em;
   line-height: 1.5;
 }
-.shard-source-view .md-bq, .shard-live-view .md-bq {
+.vault-source-view .md-bq, .vault-live-view .md-bq {
   border-left: 3px solid color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 50%, transparent);
   padding-left: 12px;
   margin: 4px 0;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  padding-top: 6px;
+  padding-bottom: 6px;
+  border-radius: 0 4px 4px 0;
   display: block;
 }
-.shard-source-view .md-link-text, .shard-live-view .md-link-text {
+/* Editor callouts (live preview / source view) */
+.lp-source .md-callout,
+.vault-source-view .md-callout,
+.vault-live-view .md-callout {
+  display: block;
+  border-left: 3px solid var(--border);
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  padding: 8px 12px;
+  margin: 4px 0;
+  border-radius: 0 6px 6px 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.lp-source .md-callout-info,
+.vault-source-view .md-callout-info,
+.vault-live-view .md-callout-info { border-left-color: #3b82f6; background: color-mix(in srgb, #3b82f6 6%, transparent); }
+.lp-source .md-callout-warning,
+.vault-source-view .md-callout-warning,
+.vault-live-view .md-callout-warning { border-left-color: #f59e0b; background: color-mix(in srgb, #f59e0b 6%, transparent); }
+.lp-source .md-callout-danger,
+.vault-source-view .md-callout-danger,
+.vault-live-view .md-callout-danger { border-left-color: #ef4444; background: color-mix(in srgb, #ef4444 6%, transparent); }
+.lp-source .md-callout-tip,
+.vault-source-view .md-callout-tip,
+.vault-live-view .md-callout-tip { border-left-color: #22c55e; background: color-mix(in srgb, #22c55e 6%, transparent); }
+.lp-source .md-callout-note,
+.vault-source-view .md-callout-note,
+.vault-live-view .md-callout-note { border-left-color: #8b5cf6; background: color-mix(in srgb, #8b5cf6 6%, transparent); }
+.lp-source .md-callout-quote,
+.vault-source-view .md-callout-quote,
+.vault-live-view .md-callout-quote { border-left-color: #6b7280; background: color-mix(in srgb, #6b7280 6%, transparent); }
+.lp-source .md-callout-example,
+.vault-source-view .md-callout-example,
+.vault-live-view .md-callout-example { border-left-color: #06b6d4; background: color-mix(in srgb, #06b6d4 6%, transparent); }
+.lp-source .md-callout .md-callout-title,
+.vault-source-view .md-callout .md-callout-title,
+.vault-live-view .md-callout .md-callout-title { font-weight: 600; }
+.lp-source .md-callout .md-callout-icon,
+.vault-source-view .md-callout .md-callout-icon,
+.vault-live-view .md-callout .md-callout-icon { margin-right: 4px; }
+.vault-source-view .md-link-text, .vault-live-view .md-link-text {
   color: var(--accent, var(--red, #4a9eff));
   text-decoration: underline;
 }
-.shard-source-view .md-hr, .shard-live-view .md-hr {
+.vault-source-view .md-hr, .vault-live-view .md-hr {
   display: block;
   border-bottom: 1px solid color-mix(in srgb, var(--fg) 20%, transparent);
   margin: 8px 0;
@@ -39736,14 +39934,14 @@ body.theme-frosted .modal {
 }
 
 /* Source view line numbers */
-.shard-source-view.shard-show-line-numbers {
+.vault-source-view.vault-show-line-numbers {
   counter-reset: source-line;
 }
-.shard-source-view.shard-show-line-numbers .lp-line {
+.vault-source-view.vault-show-line-numbers .lp-line {
   display: flex;
   gap: 8px;
 }
-.shard-source-view.shard-show-line-numbers .lp-line::before {
+.vault-source-view.vault-show-line-numbers .lp-line::before {
   counter-increment: source-line;
   content: counter(source-line);
   display: inline-block;
@@ -39757,22 +39955,22 @@ body.theme-frosted .modal {
 }
 
 /* Unified heading sizes across Reading / Source / Live Preview */
-.shard-body-wrap {
+.vault-body-wrap {
   width: 100%;
   overflow-wrap: anywhere;
   word-wrap: break-word;
 }
-.shard-readable-line .shard-body-wrap {
+.vault-readable-line .vault-body-wrap {
   max-width: 700px;
   margin-left: auto;
   margin-right: auto;
 }
-.shard-body-wrap h1 { font-size: 2em; font-weight: 700; line-height: 1.2; margin: 0.6em 0 0.3em; }
-.shard-body-wrap h2 { font-size: 1.6em; font-weight: 600; line-height: 1.25; margin: 0.5em 0 0.25em; }
-.shard-body-wrap h3 { font-size: 1.3em; font-weight: 600; line-height: 1.3; margin: 0.4em 0 0.2em; }
-.shard-body-wrap h4 { font-size: 1.15em; font-weight: 600; line-height: 1.35; margin: 0.35em 0 0.15em; }
-.shard-body-wrap h5 { font-size: 1em; font-weight: 600; line-height: 1.4; margin: 0.3em 0 0.1em; }
-.shard-body-wrap h6 { font-size: 0.9em; font-weight: 600; line-height: 1.4; margin: 0.25em 0 0.1em; }
+.vault-body-wrap h1 { font-size: 2em; font-weight: 700; line-height: 1.2; margin: 0.6em 0 0.3em; }
+.vault-body-wrap h2 { font-size: 1.6em; font-weight: 600; line-height: 1.25; margin: 0.5em 0 0.25em; }
+.vault-body-wrap h3 { font-size: 1.3em; font-weight: 600; line-height: 1.3; margin: 0.4em 0 0.2em; }
+.vault-body-wrap h4 { font-size: 1.15em; font-weight: 600; line-height: 1.35; margin: 0.35em 0 0.15em; }
+.vault-body-wrap h5 { font-size: 1em; font-weight: 600; line-height: 1.4; margin: 0.3em 0 0.1em; }
+.vault-body-wrap h6 { font-size: 0.9em; font-weight: 600; line-height: 1.4; margin: 0.25em 0 0.1em; }
 
 /* Live Preview: element-level syntax reveal */
 .lp-wl {
@@ -39793,7 +39991,7 @@ body.theme-frosted .modal {
 }
 
 /* Inline title editing */
-.shard-title-edit {
+.vault-title-edit {
   font-size: 24px;
   font-weight: 600;
   line-height: 1.3;
@@ -39804,7 +40002,7 @@ body.theme-frosted .modal {
 }
 
 /* Note more-options button */
-.shard-note-menu-btn {
+.vault-note-menu-btn {
   background: none;
   border: 1px solid var(--border);
   outline: 1px solid var(--border);
@@ -39820,21 +40018,21 @@ body.theme-frosted .modal {
   width: 28px;
   height: 28px;
 }
-.shard-note-menu-btn:hover {
+.vault-note-menu-btn:hover {
   opacity: 1;
   background: color-mix(in srgb, var(--fg) 10%, transparent);
 }
 
 /* Outline */
-.shard-outline-item {
+.vault-outline-item {
   transition: background 0.15s;
 }
-.shard-outline-item:hover {
+.vault-outline-item:hover {
   background: color-mix(in srgb, var(--fg) 4%, transparent);
 }
 
 /* Right sidebar */
-.shard-sidebar-link {
+.vault-sidebar-link {
   padding: 4px 6px;
   border-radius: 4px;
   font-size: 12px;
@@ -39844,23 +40042,23 @@ body.theme-frosted .modal {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.shard-sidebar-link:hover {
+.vault-sidebar-link:hover {
   background: color-mix(in srgb, var(--fg) 4%, transparent);
 }
-.shard-sidebar-link.ghost {
+.vault-sidebar-link.ghost {
   opacity: 0.5;
 }
-.shard-backlinks-toggle {
+.vault-backlinks-toggle {
   transition: opacity 0.15s, color 0.15s;
 }
-.shard-backlinks-toggle:hover {
+.vault-backlinks-toggle:hover {
   opacity: 1 !important;
 }
-.shard-backlinks-toggle.active {
+.vault-backlinks-toggle.active {
   opacity: 1 !important;
   color: var(--accent, var(--red, #4a9eff)) !important;
 }
-.shard-prop-row {
+.vault-prop-row {
   display: grid;
   grid-template-columns: 80px 1fr;
   gap: 8px;
@@ -39869,25 +40067,25 @@ body.theme-frosted .modal {
   border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
   align-items: center;
 }
-.shard-prop-key {
+.vault-prop-key {
   opacity: 0.6;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.shard-prop-val {
+.vault-prop-val {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: normal;
   text-align: left;
   word-wrap: break-word;
 }
-.shard-prop-val .shard-tag {
+.vault-prop-val .vault-tag {
   display: inline-block;
   margin-right: 4px;
   margin-bottom: 2px;
 }
-.shard-properties-panel h4 {
+.vault-properties-panel h4 {
   font-size: 11px;
   opacity: 0.6;
   margin: 0 0 6px;
@@ -39896,25 +40094,25 @@ body.theme-frosted .modal {
 }
 
 /* Inline properties block — 2-column grid */
-.shard-properties-inline {
+.vault-properties-inline {
   margin: 12px 0 4px;
   padding: 10px 0 4px;
 }
-.shard-properties-inline h4 {
+.vault-properties-inline h4 {
   font-size: 13px;
   font-weight: 600;
   opacity: 0.85;
   margin: 0 0 8px;
 }
-.shard-prop-grid {
+.vault-prop-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 2px 24px;
 }
-.shard-prop-grid:has(> :nth-child(2)) {
+.vault-prop-grid:has(> :nth-child(2)) {
   grid-template-columns: repeat(2, 1fr);
 }
-.shard-properties-inline .shard-prop-row {
+.vault-properties-inline .vault-prop-row {
   display: flex;
   align-items: flex-start;
   gap: 6px;
@@ -39927,14 +40125,14 @@ body.theme-frosted .modal {
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
   cursor: text;
 }
-.shard-properties-inline .shard-prop-row:hover {
+.vault-properties-inline .vault-prop-row:hover {
   border-color: color-mix(in srgb, var(--fg) 12%, transparent);
 }
-.shard-properties-inline .shard-prop-row:focus-within,
-.shard-properties-inline .shard-prop-row:active {
+.vault-properties-inline .vault-prop-row:focus-within,
+.vault-properties-inline .vault-prop-row:active {
   border-color: color-mix(in srgb, var(--fg) 12%, transparent);
 }
-.shard-properties-inline .shard-prop-icon {
+.vault-properties-inline .vault-prop-icon {
   width: 16px;
   height: 16px;
   flex-shrink: 0;
@@ -39944,10 +40142,10 @@ body.theme-frosted .modal {
   align-items: center;
   justify-content: center;
 }
-.shard-properties-inline .shard-prop-icon:hover {
+.vault-properties-inline .vault-prop-icon:hover {
   opacity: 1;
 }
-.shard-properties-inline .shard-prop-key {
+.vault-properties-inline .vault-prop-key {
   opacity: 0.55;
   white-space: nowrap;
   overflow: hidden;
@@ -39956,21 +40154,21 @@ body.theme-frosted .modal {
   min-width: 60px;
   max-width: 120px;
 }
-.shard-properties-inline .shard-prop-val {
+.vault-properties-inline .vault-prop-val {
   overflow: visible;
   flex: 1 1 auto;
   min-width: 0;
   white-space: normal;
   word-wrap: break-word;
 }
-.shard-properties-inline .shard-prop-val[data-type="array"] {
+.vault-properties-inline .vault-prop-val[data-type="array"] {
   display: flex;
   flex-wrap: wrap;
   gap: 2px 4px;
   align-items: center;
 }
 /* URL properties: clickable link */
-.shard-properties-inline .shard-prop-val.shard-prop-url {
+.vault-properties-inline .vault-prop-val.vault-prop-url {
   color: var(--accent, var(--red, #4a9eff));
   text-decoration: underline;
   text-decoration-style: solid;
@@ -39980,23 +40178,23 @@ body.theme-frosted .modal {
   white-space: nowrap;
   display: block;
 }
-.shard-properties-inline .shard-prop-val.shard-prop-url:hover {
+.vault-properties-inline .vault-prop-val.vault-prop-url:hover {
   opacity: 0.8;
 }
 /* Text properties: truncate long values */
-.shard-properties-inline .shard-prop-val[data-prop-type="text"] {
+.vault-properties-inline .vault-prop-val[data-prop-type="text"] {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   display: block;
 }
-.shard-properties-inline .shard-prop-val[data-prop-type="text"]:hover,
-.shard-properties-inline .shard-prop-val[data-prop-type="text"]:focus {
+.vault-properties-inline .vault-prop-val[data-prop-type="text"]:hover,
+.vault-properties-inline .vault-prop-val[data-prop-type="text"]:focus {
   white-space: normal;
   word-wrap: break-word;
   overflow: visible;
 }
-.shard-prop-add-main {
+.vault-prop-add-main {
   margin-top: 12px;
   background: transparent;
   border: 1px dashed transparent;
@@ -40014,15 +40212,15 @@ body.theme-frosted .modal {
   outline: none;
   user-select: none;
 }
-.shard-prop-add-main:hover {
+.vault-prop-add-main:hover {
   opacity: 0.85;
   border-color: color-mix(in srgb, var(--fg) 15%, transparent);
 }
-.shard-prop-add-main:focus-visible {
+.vault-prop-add-main:focus-visible {
   opacity: 1;
   border-color: color-mix(in srgb, var(--fg) 30%, transparent);
 }
-.shard-prop-add-area {
+.vault-prop-add-area {
   margin-top: 16px;
   background: transparent;
   border: 1px dashed var(--border);
@@ -40039,15 +40237,15 @@ body.theme-frosted .modal {
   outline: none;
   user-select: none;
 }
-.shard-prop-add-area:hover {
+.vault-prop-add-area:hover {
   opacity: 0.85;
   border-color: color-mix(in srgb, var(--fg) 30%, transparent);
 }
-.shard-prop-add-area:focus-visible {
+.vault-prop-add-area:focus-visible {
   opacity: 1;
   border-color: var(--fg);
 }
-.shard-properties-inline[data-properties-container] {
+.vault-properties-inline[data-properties-container] {
   border: 1px dashed transparent;
   border-radius: 6px;
   padding: 10px 8px 4px;
@@ -40055,14 +40253,14 @@ body.theme-frosted .modal {
   transition: border-color 0.15s;
   cursor: text;
 }
-.shard-properties-inline[data-properties-container]:hover {
+.vault-properties-inline[data-properties-container]:hover {
   border-color: color-mix(in srgb, var(--fg) 15%, transparent);
 }
-.shard-properties-inline[data-properties-container]:focus-within {
+.vault-properties-inline[data-properties-container]:focus-within {
   border-color: color-mix(in srgb, var(--fg) 15%, transparent);
 }
 /* Tag chips */
-.shard-prop-chip {
+.vault-prop-chip {
   display: inline-flex;
   align-items: center;
   gap: 2px;
@@ -40073,14 +40271,14 @@ body.theme-frosted .modal {
   margin-right: 4px;
   vertical-align: middle;
 }
-.shard-prop-chip.is-tag {
+.vault-prop-chip.is-tag {
   background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 12%, transparent);
   color: var(--accent, var(--red, #4a9eff));
 }
-.shard-prop-chip-text {
+.vault-prop-chip-text {
   user-select: none;
 }
-.shard-prop-chip-x {
+.vault-prop-chip-x {
   opacity: 0.6;
   cursor: pointer;
   font-size: 14px;
@@ -40088,10 +40286,10 @@ body.theme-frosted .modal {
   padding: 0 2px;
   margin-right: -2px;
 }
-.shard-prop-chip-x:hover {
+.vault-prop-chip-x:hover {
   opacity: 1 !important;
 }
-.shard-prop-chip-input {
+.vault-prop-chip-input {
   display: inline-block;
   min-width: 10px;
   outline: none;
@@ -40099,12 +40297,12 @@ body.theme-frosted .modal {
   opacity: 0.6;
   caret-color: var(--fg);
 }
-.shard-prop-val[contenteditable] {
+.vault-prop-val[contenteditable] {
   outline: none;
   caret-color: var(--fg);
 }
 /* Property icon menu */
-.shard-prop-menu {
+.vault-prop-menu {
   position: absolute;
   background: var(--panel);
   border: 1px solid var(--border);
@@ -40114,7 +40312,7 @@ body.theme-frosted .modal {
   min-width: 180px;
   box-shadow: 0 4px 16px rgba(0,0,0,0.3);
 }
-.shard-prop-menu-item {
+.vault-prop-menu-item {
   padding: 6px 12px;
   font-size: 13px;
   cursor: pointer;
@@ -40123,18 +40321,18 @@ body.theme-frosted .modal {
   gap: 10px;
   color: var(--fg);
 }
-.shard-prop-menu-item:hover {
+.vault-prop-menu-item:hover {
   background: color-mix(in srgb, var(--fg) 6%, transparent);
 }
-.shard-prop-menu-item.danger {
+.vault-prop-menu-item.danger {
   color: var(--color-error, #ff6b6b);
 }
-.shard-prop-menu-divider {
+.vault-prop-menu-divider {
   height: 1px;
   background: color-mix(in srgb, var(--border) 50%, transparent);
   margin: 4px 8px;
 }
-.shard-prop-submenu {
+.vault-prop-submenu {
   position: fixed;
   z-index: 99999;
   background: var(--panel);
@@ -40144,7 +40342,7 @@ body.theme-frosted .modal {
   min-width: 140px;
   box-shadow: 0 4px 16px rgba(0,0,0,0.3);
 }
-.shard-prop-submenu-item {
+.vault-prop-submenu-item {
   padding: 6px 12px;
   font-size: 13px;
   cursor: pointer;
@@ -40152,15 +40350,15 @@ body.theme-frosted .modal {
   align-items: center;
   gap: 8px;
 }
-.shard-prop-submenu-item:hover {
+.vault-prop-submenu-item:hover {
   background: color-mix(in srgb, var(--fg) 6%, transparent);
 }
-.shard-prop-submenu-item.active::after {
+.vault-prop-submenu-item.active::after {
   content: '\2713';
   margin-left: auto;
   opacity: 0.7;
 }
-.shard-prop-add-dropdown {
+.vault-prop-add-dropdown {
   position: fixed;
   z-index: 99999;
   background: var(--panel);
@@ -40171,7 +40369,7 @@ body.theme-frosted .modal {
   overflow-y: auto;
   box-shadow: 0 4px 16px rgba(0,0,0,0.3);
 }
-.shard-prop-add-option {
+.vault-prop-add-option {
   padding: 6px 12px;
   font-size: 13px;
   cursor: pointer;
@@ -40179,16 +40377,16 @@ body.theme-frosted .modal {
   align-items: center;
   gap: 8px;
 }
-.shard-prop-add-option:hover {
+.vault-prop-add-option:hover {
   background: color-mix(in srgb, var(--fg) 6%, transparent);
 }
-.shard-prop-add-name {
+.vault-prop-add-name {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.shard-prop-add-type {
+.vault-prop-add-type {
   font-size: 11px;
   opacity: 0.45;
   margin-left: auto;
@@ -40196,51 +40394,51 @@ body.theme-frosted .modal {
   white-space: nowrap;
 }
 
-/* Shard scrollbar styling — narrower than the global 8px red scrollbar */
-.shard-sidebar-pane::-webkit-scrollbar,
-.shard-right-pane-content::-webkit-scrollbar,
-.shard-right-panes::-webkit-scrollbar,
-.shard-folder-tree::-webkit-scrollbar,
-.shard-note-list::-webkit-scrollbar,
-.shard-preview::-webkit-scrollbar,
-.shard-settings-nav::-webkit-scrollbar,
-.shard-settings-content::-webkit-scrollbar {
+/* Vault scrollbar styling — narrower than the global 8px red scrollbar */
+.vault-sidebar-pane::-webkit-scrollbar,
+.vault-right-pane-content::-webkit-scrollbar,
+.vault-right-panes::-webkit-scrollbar,
+.vault-folder-tree::-webkit-scrollbar,
+.vault-note-list::-webkit-scrollbar,
+.vault-preview::-webkit-scrollbar,
+.vault-settings-nav::-webkit-scrollbar,
+.vault-settings-content::-webkit-scrollbar {
   width: 4px;
 }
-.shard-sidebar-pane::-webkit-scrollbar-track,
-.shard-right-pane-content::-webkit-scrollbar-track,
-.shard-right-panes::-webkit-scrollbar-track,
-.shard-folder-tree::-webkit-scrollbar-track,
-.shard-note-list::-webkit-scrollbar-track,
-.shard-preview::-webkit-scrollbar-track,
-.shard-settings-nav::-webkit-scrollbar-track,
-.shard-settings-content::-webkit-scrollbar-track {
+.vault-sidebar-pane::-webkit-scrollbar-track,
+.vault-right-pane-content::-webkit-scrollbar-track,
+.vault-right-panes::-webkit-scrollbar-track,
+.vault-folder-tree::-webkit-scrollbar-track,
+.vault-note-list::-webkit-scrollbar-track,
+.vault-preview::-webkit-scrollbar-track,
+.vault-settings-nav::-webkit-scrollbar-track,
+.vault-settings-content::-webkit-scrollbar-track {
   background: transparent;
 }
-.shard-sidebar-pane::-webkit-scrollbar-thumb,
-.shard-right-pane-content::-webkit-scrollbar-thumb,
-.shard-right-panes::-webkit-scrollbar-thumb,
-.shard-folder-tree::-webkit-scrollbar-thumb,
-.shard-note-list::-webkit-scrollbar-thumb,
-.shard-preview::-webkit-scrollbar-thumb,
-.shard-settings-nav::-webkit-scrollbar-thumb,
-.shard-settings-content::-webkit-scrollbar-thumb {
+.vault-sidebar-pane::-webkit-scrollbar-thumb,
+.vault-right-pane-content::-webkit-scrollbar-thumb,
+.vault-right-panes::-webkit-scrollbar-thumb,
+.vault-folder-tree::-webkit-scrollbar-thumb,
+.vault-note-list::-webkit-scrollbar-thumb,
+.vault-preview::-webkit-scrollbar-thumb,
+.vault-settings-nav::-webkit-scrollbar-thumb,
+.vault-settings-content::-webkit-scrollbar-thumb {
   background: var(--accent, var(--red, #4a9eff));
   border-radius: 2px;
 }
-.shard-sidebar-pane,
-.shard-right-pane-content,
-.shard-folder-tree,
-.shard-note-list,
-.shard-preview,
-.shard-settings-nav,
-.shard-settings-content {
+.vault-sidebar-pane,
+.vault-right-pane-content,
+.vault-folder-tree,
+.vault-note-list,
+.vault-preview,
+.vault-settings-nav,
+.vault-settings-content {
   scrollbar-width: thin;
   scrollbar-color: var(--accent, var(--red, #4a9eff)) transparent;
 }
 
 /* Tag autocomplete dropdown */
-.shard-tag-dropdown {
+.vault-tag-dropdown {
   position: fixed;
   z-index: 99999;
   background: var(--panel);
@@ -40252,7 +40450,7 @@ body.theme-frosted .modal {
   box-shadow: 0 4px 16px rgba(0,0,0,0.3);
   padding: 4px 0;
 }
-.shard-tag-dropdown-item {
+.vault-tag-dropdown-item {
   padding: 6px 12px;
   font-size: 13px;
   cursor: pointer;
@@ -40260,13 +40458,13 @@ body.theme-frosted .modal {
   align-items: center;
   gap: 8px;
 }
-.shard-tag-dropdown-item:hover,
-.shard-tag-dropdown-item.selected {
+.vault-tag-dropdown-item:hover,
+.vault-tag-dropdown-item.selected {
   background: color-mix(in srgb, var(--fg) 6%, transparent);
 }
 
 /* Graph group query dropdown — matches search empty state style */
-.shard-graph-group-dropdown {
+.vault-graph-group-dropdown {
   position: fixed;
   z-index: 99999;
   background: var(--bg-raised, var(--bg));
@@ -40278,16 +40476,16 @@ body.theme-frosted .modal {
   overflow-y: auto;
   min-width: 180px;
 }
-.shard-graph-group-section { margin-bottom: 8px; }
-.shard-graph-group-section:last-child { margin-bottom: 0; }
-.shard-graph-group-title {
+.vault-graph-group-section { margin-bottom: 8px; }
+.vault-graph-group-section:last-child { margin-bottom: 0; }
+.vault-graph-group-title {
   font-size: 11px;
   opacity: 0.5;
   margin-bottom: 4px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
-.shard-graph-group-item {
+.vault-graph-group-item {
   padding: 5px 6px;
   border-radius: 4px;
   font-size: 12px;
@@ -40297,18 +40495,18 @@ body.theme-frosted .modal {
   align-items: center;
   gap: 6px;
 }
-.shard-graph-group-item:hover,
-.shard-graph-group-item.selected {
+.vault-graph-group-item:hover,
+.vault-graph-group-item.selected {
   background: color-mix(in srgb, var(--fg) 5%, transparent);
 }
-.shard-graph-group-help {
+.vault-graph-group-help {
   cursor: default;
   opacity: 0.75;
 }
-.shard-graph-group-help:hover {
+.vault-graph-group-help:hover {
   background: transparent;
 }
-.shard-graph-group-item code {
+.vault-graph-group-item code {
   font-family: 'SFMono-Regular', Consolas, monospace;
   font-size: 11px;
   background: color-mix(in srgb, var(--fg) 8%, transparent);
@@ -40318,26 +40516,26 @@ body.theme-frosted .modal {
 }
 
 /* Note cards */
-.shard-note-card {
+.vault-note-card {
   padding: 8px;
   border-radius: 6px;
   cursor: pointer;
   margin-bottom: 4px;
   border: 1px solid transparent;
 }
-.shard-note-card:hover {
+.vault-note-card:hover {
   background: color-mix(in srgb, var(--fg) 4%, transparent);
 }
-.shard-note-card.selected {
+.vault-note-card.selected {
   border-color: var(--accent, var(--red, #4a9eff));
   background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 8%, transparent);
 }
-.shard-note-card-title {
+.vault-note-card-title {
   font-weight: 600;
   font-size: 12px;
   margin-bottom: 2px;
 }
-.shard-note-card-preview {
+.vault-note-card-preview {
   font-size: 11px;
   opacity: 0.6;
   line-height: 1.4;
@@ -40346,13 +40544,13 @@ body.theme-frosted .modal {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
 }
-.shard-note-card-meta {
+.vault-note-card-meta {
   display: flex;
   gap: 4px;
   margin-top: 4px;
   flex-wrap: wrap;
 }
-.shard-tag {
+.vault-tag {
   display: inline-block;
   padding: 1px 5px;
   border-radius: 4px;
@@ -40362,33 +40560,34 @@ body.theme-frosted .modal {
 }
 
 @media (max-width: 640px) {
-  .shard-modal-content {
+  .vault-modal-content {
     width: 100vw;
     max-height: 100dvh;
     border-radius: 0;
   }
-  .shard-3pane {
+  .vault-3pane {
     grid-template-columns: 1fr;
     grid-template-rows: auto 1fr;
   }
-  .shard-ribbon {
+  .vault-ribbon {
     display: none;
   }
-  .shard-left-pane {
+  .vault-left-pane {
     border-right: none;
     border-bottom: 1px solid var(--border);
     max-height: 200px;
   }
-  .shard-right-pane {
+  .vault-right-pane {
     display: none;
   }
-  .shard-panel-wrap {
+  .vault-panel-wrap {
     flex-direction: column;
   }
-  .shard-note-list {
+  .vault-note-list {
     width: 100%;
     max-height: 180px;
   }
+}
 /* GitHub Copilot device-flow connect block (model endpoints → API) */
 .adm-copilot-connect {
   margin-top: 10px;
@@ -40638,12 +40837,12 @@ body.theme-frosted .modal {
 }
 @keyframes note-card-flash-anim {
   0%   { box-shadow: 0 0 0 2px var(--accent, var(--red)); }
-  100% { box-shadow: 0 0 0 2px transparent;
+  100% { box-shadow: 0 0 0 2px transparent; }
 }
 
 
-/* ===== Shard Settings Dialog (in-panel) ===== */
-.shard-settings-cog {
+/* ===== Vault Settings Dialog (in-panel) ===== */
+.vault-settings-cog {
   background: transparent;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -40660,12 +40859,12 @@ body.theme-frosted .modal {
   opacity: 0.6;
   transition: opacity 0.15s, border-color 0.15s, background 0.15s;
 }
-.shard-settings-cog:hover {
+.vault-settings-cog:hover {
   opacity: 1;
   border-color: var(--accent, var(--red, #4a9eff));
   background: color-mix(in srgb, var(--fg) 6%, transparent);
 }
-.shard-settings-dialog {
+.vault-settings-dialog {
   position: fixed;
   inset: 0;
   z-index: 300;
@@ -40674,10 +40873,10 @@ body.theme-frosted .modal {
   justify-content: center;
   background: rgba(0,0,0,0.35);
 }
-.shard-settings-dialog.hidden {
+.vault-settings-dialog.hidden {
   display: none;
 }
-.shard-settings-dialog-card {
+.vault-settings-dialog-card {
   background: var(--bg-raised, var(--bg));
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -40694,7 +40893,7 @@ body.theme-frosted .modal {
   transform: translate(-50%, -50%);
   pointer-events: auto;
 }
-.shard-settings-resize-grip {
+.vault-settings-resize-grip {
   position: absolute;
   right: 0;
   top: 48px;
@@ -40704,7 +40903,7 @@ body.theme-frosted .modal {
   z-index: 20;
 }
 
-.shard-settings-header {
+.vault-settings-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -40714,13 +40913,13 @@ body.theme-frosted .modal {
   cursor: grab;
   user-select: none;
 }
-.shard-settings-layout {
+.vault-settings-layout {
   display: flex;
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
 }
-.shard-settings-nav {
+.vault-settings-nav {
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -40732,7 +40931,7 @@ body.theme-frosted .modal {
   max-width: 220px;
   background: color-mix(in srgb, var(--fg) 2%, transparent);
 }
-.shard-settings-nav-item {
+.vault-settings-nav-item {
   display: flex;
   align-items: center;
   justify-content: flex-start;
@@ -40753,37 +40952,37 @@ body.theme-frosted .modal {
   box-sizing: border-box;
   user-select: none;
 }
-.shard-settings-nav-item svg {
+.vault-settings-nav-item svg {
   flex-shrink: 0;
   width: 14px;
   height: 14px;
   opacity: 0.7;
 }
-.shard-settings-nav-item:hover {
+.vault-settings-nav-item:hover {
   background: color-mix(in srgb, var(--fg) 8%, transparent);
   color: var(--fg);
 }
-.shard-settings-nav-item.active {
+.vault-settings-nav-item.active {
   background: color-mix(in srgb, var(--red) 12%, transparent);
   color: var(--red);
 }
-.shard-settings-nav-item.active svg {
+.vault-settings-nav-item.active svg {
   opacity: 1;
 }
-.shard-settings-nav-item[data-disabled],
-.shard-settings-nav-item.shard-settings-nav-disabled {
+.vault-settings-nav-item[data-disabled],
+.vault-settings-nav-item.vault-settings-nav-disabled {
   opacity: 0.35;
   cursor: not-allowed;
   pointer-events: none;
 }
 
 /* Force left alignment in settings nav */
-.shard-settings-nav-item,
-.shard-settings-nav-item span {
+.vault-settings-nav-item,
+.vault-settings-nav-item span {
   text-align: left !important;
   justify-content: flex-start !important;
 }
-.shard-settings-nav-cat {
+.vault-settings-nav-cat {
   font-size: 9px;
   font-weight: 600;
   text-transform: uppercase;
@@ -40795,7 +40994,7 @@ body.theme-frosted .modal {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 /* Divider between nav sections */
-.shard-settings-nav-divider {
+.vault-settings-nav-divider {
   height: 1px;
   background: var(--border);
   margin: 8px 12px;
@@ -40803,120 +41002,120 @@ body.theme-frosted .modal {
 }
 
 
-/* Monospace font mode for Shard — vault content only
+/* Monospace font mode for Vault — vault content only
    Use ID selectors for key containers so specificity (a=2) beats
    the UI-chrome pane overrides (a=1) that come later in the file. */
-#shard-modal.shard-monospace-font #shard-preview,
-#shard-modal.shard-monospace-font #shard-preview *,
-#shard-modal.shard-monospace-font #shard-folder-tree,
-#shard-modal.shard-monospace-font #shard-folder-tree *,
-#shard-modal.shard-monospace-font #shard-note-list,
-#shard-modal.shard-monospace-font #shard-note-list *,
-#shard-modal.shard-monospace-font #shard-right-pane .shard-right-pane-content,
-#shard-modal.shard-monospace-font #shard-right-pane .shard-right-pane-content *,
-#shard-modal.shard-monospace-font #shard-main-panel .shard-panel-wrap,
-#shard-modal.shard-monospace-font #shard-main-panel .shard-panel-wrap *,
-#shard-modal.shard-monospace-font #shard-main-panel .shard-live-view,
-#shard-modal.shard-monospace-font #shard-main-panel .shard-live-view *,
-#shard-modal.shard-monospace-font #shard-main-panel .shard-source-view,
-#shard-modal.shard-monospace-font #shard-main-panel .shard-source-view *,
-#shard-modal.shard-monospace-font #shard-main-panel .shard-reading-view,
-#shard-modal.shard-monospace-font #shard-main-panel .shard-reading-view * {
+#vault-modal.vault-monospace-font #vault-preview,
+#vault-modal.vault-monospace-font #vault-preview *,
+#vault-modal.vault-monospace-font #vault-folder-tree,
+#vault-modal.vault-monospace-font #vault-folder-tree *,
+#vault-modal.vault-monospace-font #vault-note-list,
+#vault-modal.vault-monospace-font #vault-note-list *,
+#vault-modal.vault-monospace-font #vault-right-pane .vault-right-pane-content,
+#vault-modal.vault-monospace-font #vault-right-pane .vault-right-pane-content *,
+#vault-modal.vault-monospace-font #vault-main-panel .vault-panel-wrap,
+#vault-modal.vault-monospace-font #vault-main-panel .vault-panel-wrap *,
+#vault-modal.vault-monospace-font #vault-main-panel .vault-live-view,
+#vault-modal.vault-monospace-font #vault-main-panel .vault-live-view *,
+#vault-modal.vault-monospace-font #vault-main-panel .vault-source-view,
+#vault-modal.vault-monospace-font #vault-main-panel .vault-source-view *,
+#vault-modal.vault-monospace-font #vault-main-panel .vault-reading-view,
+#vault-modal.vault-monospace-font #vault-main-panel .vault-reading-view * {
   font-family: 'Fira Code', 'Consolas', monospace !important;
 }
 
 /* UI chrome stays sans-serif (override must come AFTER the * rule above) */
-#shard-modal.shard-monospace-font .shard-ribbon,
-#shard-modal.shard-monospace-font .shard-ribbon *,
-#shard-modal.shard-monospace-font .shard-left-pane,
-#shard-modal.shard-monospace-font .shard-left-pane *,
-#shard-modal.shard-monospace-font .shard-right-pane,
-#shard-modal.shard-monospace-font .shard-right-pane *,
-#shard-modal.shard-monospace-font .shard-tabs,
-#shard-modal.shard-monospace-font .shard-tabs *,
-#shard-modal.shard-monospace-font .shard-note-toolbar,
-#shard-modal.shard-monospace-font .shard-note-toolbar *,
-#shard-modal.shard-monospace-font .shard-vault-dropdown-current,
-#shard-modal.shard-monospace-font .shard-vault-dropdown-menu,
-#shard-modal.shard-monospace-font .shard-vault-dropdown-current *,
-#shard-modal.shard-monospace-font .shard-vault-dropdown-menu *,
-#shard-modal.shard-monospace-font .shard-settings-dialog,
-#shard-modal.shard-monospace-font .shard-settings-dialog *,
-#shard-modal.shard-monospace-font .shard-settings-header,
-#shard-modal.shard-monospace-font .shard-settings-header *,
-#shard-modal.shard-monospace-font .shard-settings-nav,
-#shard-modal.shard-monospace-font .shard-settings-nav *,
-#shard-modal.shard-monospace-font .shard-settings-content,
-#shard-modal.shard-monospace-font .shard-settings-content *,
-#shard-modal.shard-monospace-font .shard-context-menu,
-#shard-modal.shard-monospace-font .shard-context-menu *,
-#shard-modal.shard-monospace-font .shard-ribbon-menu,
-#shard-modal.shard-monospace-font .shard-ribbon-menu *,
-#shard-modal.shard-monospace-font .shard-ribbon-config-dialog,
-#shard-modal.shard-monospace-font .shard-ribbon-config-dialog *,
-#shard-modal.shard-monospace-font .shard-graph-toolbar,
-#shard-modal.shard-monospace-font .shard-graph-toolbar *,
-#shard-modal.shard-monospace-font .shard-graph-settings-panel,
-#shard-modal.shard-monospace-font .shard-graph-settings-panel *,
-#shard-modal.shard-monospace-font .shard-graph-tooltip,
-#shard-modal.shard-monospace-font .shard-plugin-settings-sidebar,
-#shard-modal.shard-monospace-font .shard-plugin-settings-sidebar *,
-#shard-modal.shard-monospace-font .shard-plugin-settings-content,
-#shard-modal.shard-monospace-font .shard-plugin-settings-content *,
-#shard-modal.shard-monospace-font #shard-header,
-#shard-modal.shard-monospace-font #shard-header * {
+#vault-modal.vault-monospace-font .vault-ribbon,
+#vault-modal.vault-monospace-font .vault-ribbon *,
+#vault-modal.vault-monospace-font .vault-left-pane,
+#vault-modal.vault-monospace-font .vault-left-pane *,
+#vault-modal.vault-monospace-font .vault-right-pane,
+#vault-modal.vault-monospace-font .vault-right-pane *,
+#vault-modal.vault-monospace-font .vault-tabs,
+#vault-modal.vault-monospace-font .vault-tabs *,
+#vault-modal.vault-monospace-font .vault-note-toolbar,
+#vault-modal.vault-monospace-font .vault-note-toolbar *,
+#vault-modal.vault-monospace-font .vault-vault-dropdown-current,
+#vault-modal.vault-monospace-font .vault-vault-dropdown-menu,
+#vault-modal.vault-monospace-font .vault-vault-dropdown-current *,
+#vault-modal.vault-monospace-font .vault-vault-dropdown-menu *,
+#vault-modal.vault-monospace-font .vault-settings-dialog,
+#vault-modal.vault-monospace-font .vault-settings-dialog *,
+#vault-modal.vault-monospace-font .vault-settings-header,
+#vault-modal.vault-monospace-font .vault-settings-header *,
+#vault-modal.vault-monospace-font .vault-settings-nav,
+#vault-modal.vault-monospace-font .vault-settings-nav *,
+#vault-modal.vault-monospace-font .vault-settings-content,
+#vault-modal.vault-monospace-font .vault-settings-content *,
+#vault-modal.vault-monospace-font .vault-context-menu,
+#vault-modal.vault-monospace-font .vault-context-menu *,
+#vault-modal.vault-monospace-font .vault-ribbon-menu,
+#vault-modal.vault-monospace-font .vault-ribbon-menu *,
+#vault-modal.vault-monospace-font .vault-ribbon-config-dialog,
+#vault-modal.vault-monospace-font .vault-ribbon-config-dialog *,
+#vault-modal.vault-monospace-font .vault-graph-toolbar,
+#vault-modal.vault-monospace-font .vault-graph-toolbar *,
+#vault-modal.vault-monospace-font .vault-graph-settings-panel,
+#vault-modal.vault-monospace-font .vault-graph-settings-panel *,
+#vault-modal.vault-monospace-font .vault-graph-tooltip,
+#vault-modal.vault-monospace-font .vault-plugin-settings-sidebar,
+#vault-modal.vault-monospace-font .vault-plugin-settings-sidebar *,
+#vault-modal.vault-monospace-font .vault-plugin-settings-content,
+#vault-modal.vault-monospace-font .vault-plugin-settings-content *,
+#vault-modal.vault-monospace-font #vault-header,
+#vault-modal.vault-monospace-font #vault-header * {
   font-family: var(--font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif) !important;
 }
 
 /* Code blocks inside the editor keep their monospace font even in reading/live view */
-#shard-modal.shard-monospace-font .shard-source-view .md-code,
-#shard-modal.shard-monospace-font .shard-source-view .md-code-block,
-#shard-modal.shard-monospace-font .shard-live-view .md-code,
-#shard-modal.shard-monospace-font .shard-live-view .md-code-block,
-#shard-modal.shard-monospace-font .shard-reading-view .md-code,
-#shard-modal.shard-monospace-font .shard-reading-view .md-code-block {
+#vault-modal.vault-monospace-font .vault-source-view .md-code,
+#vault-modal.vault-monospace-font .vault-source-view .md-code-block,
+#vault-modal.vault-monospace-font .vault-live-view .md-code,
+#vault-modal.vault-monospace-font .vault-live-view .md-code-block,
+#vault-modal.vault-monospace-font .vault-reading-view .md-code,
+#vault-modal.vault-monospace-font .vault-reading-view .md-code-block {
   font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace !important;
 }
 /* Settings dialog scrollbars at full opacity */
-.shard-settings-content::-webkit-scrollbar,
-.shard-settings-nav::-webkit-scrollbar {
+.vault-settings-content::-webkit-scrollbar,
+.vault-settings-nav::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
-.shard-settings-content::-webkit-scrollbar-track,
-.shard-settings-nav::-webkit-scrollbar-track {
+.vault-settings-content::-webkit-scrollbar-track,
+.vault-settings-nav::-webkit-scrollbar-track {
   background: transparent;
 }
-.shard-settings-content::-webkit-scrollbar-thumb,
-.shard-settings-nav::-webkit-scrollbar-thumb {
+.vault-settings-content::-webkit-scrollbar-thumb,
+.vault-settings-nav::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--fg) 25%, transparent);
   border-radius: 5px;
 }
-.shard-settings-content::-webkit-scrollbar-thumb:hover,
-.shard-settings-nav::-webkit-scrollbar-thumb:hover {
+.vault-settings-content::-webkit-scrollbar-thumb:hover,
+.vault-settings-nav::-webkit-scrollbar-thumb:hover {
   background: color-mix(in srgb, var(--fg) 40%, transparent);
 }
 
-.shard-settings-content {
+.vault-settings-content {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   padding: 10px 16px;
 }
-.shard-settings-section.hidden {
+.vault-settings-section.hidden {
   display: none;
 }
-.shard-settings-group {
+.vault-settings-group {
   margin-bottom: 16px;
   background: color-mix(in srgb, var(--fg) 2%, transparent);
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 12px 14px;
 }
-.shard-settings-group:last-child {
+.vault-settings-group:last-child {
   margin-bottom: 0;
 }
-.shard-settings-group-title {
+.vault-settings-group-title {
   margin: 0 0 10px;
   font-size: 10px;
   text-transform: uppercase;
@@ -40924,7 +41123,7 @@ body.theme-frosted .modal {
   opacity: 0.45;
   font-weight: 600;
 }
-.shard-settings-row {
+.vault-settings-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -40933,14 +41132,14 @@ body.theme-frosted .modal {
   border-bottom: 1px solid color-mix(in srgb, var(--border) 35%, transparent);
   font-size: 12.5px;
 }
-.shard-settings-row:first-child {
+.vault-settings-row:first-child {
   padding-top: 4px;
 }
-.shard-settings-row:last-child {
+.vault-settings-row:last-child {
   border-bottom: none;
   padding-bottom: 4px;
 }
-.shard-settings-info {
+.vault-settings-info {
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -40948,18 +41147,18 @@ body.theme-frosted .modal {
   min-width: 0;
   overflow: hidden;
 }
-.shard-settings-info > span:first-child {
+.vault-settings-info > span:first-child {
   font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.shard-settings-desc {
+.vault-settings-desc {
   font-size: 11px;
   opacity: 0.5;
   line-height: 1.3;
 }
-.shard-settings-input {
+.vault-settings-input {
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 5px;
@@ -40972,11 +41171,11 @@ body.theme-frosted .modal {
   width: 100%;
   box-sizing: border-box;
 }
-.shard-settings-input:disabled {
+.vault-settings-input:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
-.shard-settings-select {
+.vault-settings-select {
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 5px;
@@ -40990,35 +41189,35 @@ body.theme-frosted .modal {
   box-sizing: border-box;
   cursor: pointer;
 }
-.shard-settings-select:focus {
+.vault-settings-select:focus {
   outline: none;
   border-color: var(--accent, var(--red, #4a9eff));
 }
 
 /* Settings range slider — match app theme */
-.shard-settings-content input[type="range"] {
+.vault-settings-content input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
   height: 4px;
   background: transparent;
   border-radius: 2px;
 }
-.shard-settings-content input[type="range"]::-webkit-slider-runnable-track {
+.vault-settings-content input[type="range"]::-webkit-slider-runnable-track {
   height: 4px;
   background: var(--border);
   border-radius: 2px;
 }
-.shard-settings-content input[type="range"]::-moz-range-track {
+.vault-settings-content input[type="range"]::-moz-range-track {
   height: 4px;
   background: var(--border);
   border-radius: 2px;
 }
-.shard-settings-content input[type="range"]::-moz-range-progress {
+.vault-settings-content input[type="range"]::-moz-range-progress {
   height: 4px;
   background: var(--red);
   border-radius: 2px;
 }
-.shard-settings-content input[type="range"]::-webkit-slider-thumb {
+.vault-settings-content input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
   width: 14px;
@@ -41029,7 +41228,7 @@ body.theme-frosted .modal {
   cursor: pointer;
   margin-top: -5px;
 }
-.shard-settings-content input[type="range"]::-moz-range-thumb {
+.vault-settings-content input[type="range"]::-moz-range-thumb {
   width: 14px;
   height: 14px;
   border-radius: 50%;
@@ -41037,15 +41236,15 @@ body.theme-frosted .modal {
   border: none;
   cursor: pointer;
 }
-.shard-settings-disabled {
+.vault-settings-disabled {
   opacity: 0.45;
   cursor: not-allowed;
   pointer-events: none;
 }
-.shard-settings-disabled .admin-slider {
+.vault-settings-disabled .admin-slider {
   opacity: 0.4;
 }
-.shard-plugin-toggle-row {
+.vault-plugin-toggle-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -41055,19 +41254,19 @@ body.theme-frosted .modal {
   border: 1px solid var(--border);
   background: color-mix(in srgb, var(--fg) 2%, transparent);
 }
-.shard-plugin-toggle-row .shard-plugin-info {
+.vault-plugin-toggle-row .vault-plugin-info {
   flex: 1;
   min-width: 0;
 }
-.shard-plugin-toggle-row .shard-plugin-name {
+.vault-plugin-toggle-row .vault-plugin-name {
   font-size: 13px;
   font-weight: 500;
 }
-.shard-plugin-toggle-row .shard-plugin-desc {
+.vault-plugin-toggle-row .vault-plugin-desc {
   font-size: 11px;
   opacity: 0.6;
 }
-.shard-plugin-cog {
+.vault-plugin-cog {
   background: none;
   border: none;
   color: var(--fg);
@@ -41081,21 +41280,21 @@ body.theme-frosted .modal {
   transition: opacity 0.1s, background 0.1s;
   flex-shrink: 0;
 }
-.shard-plugin-cog:hover {
+.vault-plugin-cog:hover {
   opacity: 1;
   background: color-mix(in srgb, var(--fg) 10%, transparent);
 }
-.shard-plugin-settings-sidebar-item {
+.vault-plugin-settings-sidebar-item {
   transition: background 0.08s;
 }
-.shard-plugin-settings-sidebar-item:hover {
+.vault-plugin-settings-sidebar-item:hover {
   background: color-mix(in srgb, var(--fg) 6%, transparent);
 }
-.shard-plugin-settings-sidebar-item.active {
+.vault-plugin-settings-sidebar-item.active {
   background: color-mix(in srgb, var(--red) 15%, transparent);
   color: var(--red);
 }
-.shard-plugin-title {
+.vault-plugin-title {
   font-size: 16px;
   font-weight: 600;
   margin: 0 0 12px 0;
@@ -41103,12 +41302,12 @@ body.theme-frosted .modal {
   border-bottom: 1px solid var(--border);
   color: var(--fg);
 }
-#shard-plugin-resize:hover,
-#shard-plugin-resize.dragging {
+#vault-plugin-resize:hover,
+#vault-plugin-resize.dragging {
   background: var(--accent, var(--red, #4a9eff));
 }
 /* Note menu dropdown */
-.shard-note-menu-dropdown {
+.vault-note-menu-dropdown {
   position: absolute;
   top: calc(100% + 4px);
   right: 0;
@@ -41121,8 +41320,8 @@ body.theme-frosted .modal {
   padding: 4px;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
-.shard-note-menu-dropdown.hidden { display: none; }
-.shard-note-menu-item {
+.vault-note-menu-dropdown.hidden { display: none; }
+.vault-note-menu-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -41135,34 +41334,35 @@ body.theme-frosted .modal {
   transition: background 0.1s;
   white-space: nowrap;
 }
-.shard-note-menu-item:hover:not(.shard-note-menu-disabled) {
+.vault-note-menu-item:hover:not(.vault-note-menu-disabled) {
   background: color-mix(in srgb, var(--fg) 8%, transparent);
 }
-.shard-note-menu-disabled {
+.vault-note-menu-disabled {
   opacity: 0.35;
   cursor: not-allowed;
   pointer-events: none;
 }
-.shard-note-menu-danger {
+.vault-note-menu-danger {
   color: var(--red, #ff6b6b);
 }
-.shard-note-menu-sep {
+.vault-note-menu-sep {
   height: 1px;
   background: var(--border);
   margin: 4px 0;
 }
-.shard-note-menu-check {
+.vault-note-menu-check {
   position: relative;
 }
-.shard-note-menu-checkmark {
+.vault-note-menu-checkmark {
   width: 14px;
   height: 14px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
-.shard-note-menu-check.is-checked .shard-note-menu-checkmark::after {
+.vault-note-menu-check.is-checked .vault-note-menu-checkmark::after {
   content: '';
+  display: block;
   width: 6px;
   height: 10px;
   border-right: 2px solid var(--accent, var(--red, #4a9eff));

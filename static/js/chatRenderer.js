@@ -524,7 +524,7 @@ export function shortModel(name) {
   let short = name.split('/').pop();
   // Strip .gguf extension
   short = short.replace(/\.gguf$/i, '');
-  // Strip quantization suffixes (Q4_K_M, Q8_0, etc.) and shard numbers
+  // Strip quantization suffixes (Q4_K_M, Q8_0, etc.) and vault numbers
   short = short.replace(/-0000\d-of-\d+$/, '');
   short = short.replace(/[-_](Q\d[_A-Z\d]*|F16|F32|BF16|fp16|fp32)$/i, '');
   // Truncate if still too long (keep first meaningful part)

@@ -1,9 +1,9 @@
 /**
- * Shard Graph Canvas — force-graph wrapper for interactive backlink graph.
+ * Vault Graph Canvas — force-graph wrapper for interactive backlink graph.
  * Replaces vis-network with GPU-accelerated WebGL rendering.
  */
 
-import { createMainGraph, createLocalGraph, setSettingsPanelHover, clearGraphHover } from './forceGraphRenderer.js';
+import { createMainGraph, createLocalGraph, setSettingsPanelHover, clearGraphHover } from './pixiGraphRenderer.js';
 
 const API_BASE = window.location.origin;
 
@@ -24,6 +24,10 @@ let _localActiveNoteId = null;
 let _localAllNodes = [];
 let _localAllEdges = [];
 
+// Position cache: preserved across graph closes so reopening is instant.
+let _cachedPositions = new Map();
+let _cachedGraphDataHash = '';
+
 // Default graph settings
 const DEFAULT_SETTINGS = {
   showOrphans: true,
@@ -36,7 +40,7 @@ const DEFAULT_SETTINGS = {
   linkForce: 0.04,     // UI 0-1, direct d3 strength
   linkDistance: 120,
   curvedLines: false,
-  curveAngle: 0.5,
+  curveAngle: 0.7,
   dynamicLinkDistance: true,
   groups: [],
 };
@@ -57,7 +61,7 @@ const DEFAULT_LOCAL_SETTINGS = {
 
 function _loadSettings() {
   try {
-    const raw = localStorage.getItem('shard-graph-settings');
+    const raw = localStorage.getItem('vault-graph-settings');
     if (raw) {
       const saved = JSON.parse(raw);
       // Migrate old negative repel values to new 0-20 scale
@@ -76,13 +80,13 @@ function _loadSettings() {
 
 function _saveSettings() {
   try {
-    localStorage.setItem('shard-graph-settings', JSON.stringify(_graphSettings));
+    localStorage.setItem('vault-graph-settings', JSON.stringify(_graphSettings));
   } catch {}
 }
 
 function _loadLocalSettings() {
   try {
-    const raw = localStorage.getItem('shard-local-graph-settings');
+    const raw = localStorage.getItem('vault-local-graph-settings');
     if (raw) return { ...DEFAULT_LOCAL_SETTINGS, ...JSON.parse(raw) };
   } catch {}
   return { ...DEFAULT_LOCAL_SETTINGS };
@@ -90,7 +94,7 @@ function _loadLocalSettings() {
 
 function _saveLocalSettings() {
   try {
-    localStorage.setItem('shard-local-graph-settings', JSON.stringify(_localSettings));
+    localStorage.setItem('vault-local-graph-settings', JSON.stringify(_localSettings));
   } catch {}
 }
 
@@ -138,24 +142,32 @@ function _dataHash(nodes, edges) {
   return `${nodes.length}|${edges.length}|${nodes.slice(0, 3).map(n => n.id).join(',')}`;
 }
 
-export async function renderShardGraph(container, vaultId) {
+export async function renderVaultGraph(container, vaultId) {
   if (!container) return;
   _container = container;
   _graphSettings = _loadSettings();
 
-  const hasCache = _allNodes.length > 0;
-  if (hasCache) {
-    _draw();
-  } else {
-    container.innerHTML = '<div class="shard-graph-loading">Loading graph...</div>';
+  // If we already have a live graph instance, just make sure its canvas is
+  // in the container. Re-creating the engine every time the tab is shown
+  // causes the blank + zoom-to-fit flash the user sees on reopen.
+  const alreadyRendered = _mainGraphInstance && !_mainGraphInstance.graph?.destroyed;
+  if (alreadyRendered) {
+    const engine = _mainGraphInstance.graph;
+    if (engine?.app?.view && !container.contains(engine.app.view)) {
+      container.appendChild(engine.app.view);
+    }
+  } else if (_allNodes.length === 0) {
+    container.innerHTML = '<div class="vault-graph-loading">Loading graph...</div>';
   }
 
   try {
     const qs = new URLSearchParams();
     if (vaultId) qs.set('vault_id', vaultId);
-    const r = await fetch(`${API_BASE}/api/shard/graph?${qs.toString()}`);
+    const r = await fetch(`${API_BASE}/api/vault/graph?${qs.toString()}`);
     if (!r.ok) {
-      if (!hasCache) container.innerHTML = '<div class="shard-graph-error">Failed to load graph</div>';
+      if (!alreadyRendered && _allNodes.length === 0) {
+        container.innerHTML = '<div class="vault-graph-error">Failed to load graph</div>';
+      }
       return;
     }
     const data = await r.json();
@@ -167,14 +179,16 @@ export async function renderShardGraph(container, vaultId) {
     const newHash = _dataHash(_allNodes, _allEdges);
     const changed = prevHash !== newHash;
 
-    if (!hasCache) {
+    if (!alreadyRendered) {
       _draw();
     } else if (changed) {
       _redraw();
     }
   } catch (e) {
-    console.error('[shardGraph] Error loading graph', e);
-    if (!hasCache) container.innerHTML = `<div class="shard-graph-error">${e.message}</div>`;
+    console.error('[vaultGraph] Error loading graph', e);
+    if (!alreadyRendered && _allNodes.length === 0) {
+      container.innerHTML = `<div class="vault-graph-error">${e.message}</div>`;
+    }
   }
 }
 
@@ -187,43 +201,224 @@ function _draw() {
   if (!target) return;
   target.innerHTML = '';
 
-  const filteredNodes = _getFilteredNodes();
-  const { nodes: safeNodes, edges: safeEdges } = _sanitizeGraphData(filteredNodes, _allEdges);
-  const visibleIds = new Set(safeNodes.map(n => n.id));
-  const visibleEdges = safeEdges.filter(e => visibleIds.has(String(e.from)) && visibleIds.has(String(e.to)));
+  // Pass the FULL node set; orphan/name filtering is applied as a visibility
+  // mask by the engine so it animates and never resets the physics layout.
+  const { nodes: safeNodes, edges: safeEdges } = _sanitizeGraphData(_allNodes, _allEdges);
+  const data = { nodes: safeNodes, edges: safeEdges };
 
-  const data = {
-    nodes: safeNodes,
-    edges: visibleEdges,
-  };
+  // If data hasn't changed since last session, inject cached positions so the
+  // worker can skip warmup and the graph appears instantly at its old layout.
+  const dataHash = _dataHash(safeNodes, safeEdges);
+  if (dataHash === _cachedGraphDataHash && _cachedPositions.size > 0) {
+    for (const node of data.nodes) {
+      const pos = _cachedPositions.get(String(node.id));
+      if (pos) { node.x = pos.x; node.y = pos.y; }
+    }
+  }
 
   _mainGraphInstance = createMainGraph(target, data, _graphSettings);
   _buildToolbar();
   _buildSettingsPanel();
+  // Apply any persisted filter on first render
+  if (_graphSettings.showOrphans === false || (_graphSettings.searchQuery || '').trim()) {
+    _applyFilter();
+  }
 }
 
+// Re-send full data to the engine (used on a genuine data reload), then
+// re-apply the current group colours and visibility filter.
 function _redraw() {
   if (!_mainGraphInstance) return;
-  const filteredNodes = _allNodes.filter(n => {
-    if (_graphSettings.showOrphans === false) {
-      const nid = String(n.id ?? '');
-      const hasEdge = _allEdges.some(e => String(e.from ?? '') === nid || String(e.to ?? '') === nid);
-      return hasEdge;
-    }
-    return true;
-  });
-  const { nodes: safeNodes, edges: safeEdges } = _sanitizeGraphData(filteredNodes, _allEdges);
-  const visibleIds = new Set(safeNodes.map(n => n.id));
-  const visibleEdges = safeEdges.filter(e => visibleIds.has(String(e.from)) && visibleIds.has(String(e.to)));
+  const { nodes: safeNodes, edges: safeEdges } = _sanitizeGraphData(_allNodes, _allEdges);
+  _mainGraphInstance.updateData({ nodes: safeNodes, edges: safeEdges });
+  _applyGroups();
+  _applyFilter();
+}
 
-  _mainGraphInstance.updateData({
-    nodes: safeNodes,
-    edges: visibleEdges,
+// Toggle node visibility (orphans + name search) without disturbing physics.
+function _applyFilter() {
+  _mainGraphInstance?.setVisibilityFilter({
+    showOrphans: _graphSettings.showOrphans,
+    searchQuery: _graphSettings.searchQuery,
   });
+}
+
+// Recolour nodes by group membership only.
+function _applyGroups() {
+  _mainGraphInstance?.setGroups(_graphSettings.groups || []);
+}
+
+// ── Animation Playback ───────────────────────────────────
+
+let _isAnimationMode = false;
+let _lastAnimTime = 0; // remembered position when user stops
+
+function _enterAnimationMode(instance = _mainGraphInstance) {
+  if (!instance) return;
+  _isAnimationMode = true;
+  instance.onAnimationTick = (time, count) => {
+    _lastAnimTime = time;
+    _updateAnimationBar(time, count);
+  };
+  instance.onAnimationEnd = () => {
+    _updatePlayButton(false);
+  };
+  instance.startAnimation();
+}
+
+function _exitAnimationMode(instance = _mainGraphInstance) {
+  _isAnimationMode = false;
+  instance?.stopAnimation();
+}
+
+function _fmtAnimDate(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function _activeAnimPanel() {
+  // Find which settings panel contains the currently-running animation controls
+  if (_mainGraphInstance?.isAnimating) {
+    return document.getElementById('vault-graph-settings-panel');
+  }
+  if (_localGraphInstance?.isAnimating) {
+    return document.getElementById('vault-local-graph-settings-panel');
+  }
+  return null;
+}
+
+function _updateScrubberFill(scrubber) {
+  if (!scrubber) return;
+  const pct = scrubber.value + '%';
+  scrubber.style.setProperty('--progress', pct);
+}
+
+function _wireAnimationControls(panel, instance) {
+  const animSection = panel.querySelector('[data-section="animation"]');
+  if (!animSection) return;
+
+  const stopBtn = animSection.querySelector('button[title="Stop"]');
+  const playBtn = animSection.querySelector('button[title="Play / Pause"]');
+  const speedSel = animSection.querySelector('select[title="Speed"]');
+  const scrubber = animSection.querySelector('input[title="Timeline"]');
+  const tooltip = panel.querySelector('.vault-graph-slider-tooltip');
+
+  function _showScrubberTooltip(input, noteCount) {
+    if (!tooltip) return;
+    const rect = input.getBoundingClientRect();
+    tooltip.textContent = `${noteCount} notes`;
+    tooltip.classList.add('visible');
+    const thumbW = 14;
+    const ratio = (input.value - input.min) / (input.max - input.min);
+    const left = rect.left + ratio * (rect.width - thumbW) + thumbW / 2 - tooltip.offsetWidth / 2;
+    const top = rect.top - tooltip.offsetHeight - 6;
+    tooltip.style.left = left + 'px';
+    tooltip.style.top = top + 'px';
+  }
+  function _hideScrubberTooltip() { tooltip?.classList.remove('visible'); }
+
+  if (stopBtn) {
+    stopBtn.addEventListener('click', () => {
+      if (!instance) return;
+      _exitAnimationMode(instance);
+      _updatePlayButton(false, panel);
+      if (scrubber) {
+        scrubber.value = 0;
+        _updateScrubberFill(scrubber);
+      }
+      _lastAnimTime = 0;
+    });
+  }
+  if (playBtn) {
+    playBtn.addEventListener('click', () => {
+      if (!instance) return;
+      if (instance.isAnimating && instance.animationTime < instance.maxCreated) {
+        if (playBtn.dataset.playing === 'true') {
+          instance.pauseAnimation();
+          playBtn.dataset.playing = 'false';
+          playBtn.textContent = '▶';
+        } else {
+          instance.resumeAnimation();
+          playBtn.dataset.playing = 'true';
+          playBtn.textContent = '⏸';
+        }
+      } else {
+        const resumeTime = _lastAnimTime || instance.animationTime;
+        _enterAnimationMode(instance);
+        if (resumeTime > instance.minCreated && resumeTime < instance.maxCreated) {
+          instance.seekAnimation(resumeTime);
+        }
+        _updatePlayButton(true, panel);
+      }
+    });
+  }
+  if (speedSel) {
+    speedSel.addEventListener('change', (e) => {
+      instance?.setAnimationSpeed(parseFloat(e.target.value));
+    });
+  }
+  if (scrubber) {
+    scrubber.addEventListener('input', (e) => {
+      if (!instance) return;
+      const min = instance.minCreated;
+      const max = instance.maxCreated;
+      if (max <= min) return;
+      const pct = parseInt(e.target.value, 10) / 100;
+      const targetTime = min + (max - min) * pct;
+      if (!instance.isAnimating) _enterAnimationMode(instance);
+      instance.pauseAnimation();
+      instance.seekAnimation(targetTime);
+      _updatePlayButton(false, panel);
+      _updateScrubberFill(scrubber);
+      const count = instance.graph?._visibleCount?.() ?? 0;
+      _showScrubberTooltip(scrubber, count);
+    });
+    scrubber.addEventListener('change', _hideScrubberTooltip);
+    scrubber.addEventListener('mouseleave', _hideScrubberTooltip);
+    _updateScrubberFill(scrubber);
+  }
+}
+
+function _updatePlayButton(playing, panel) {
+  const p = panel || _activeAnimPanel();
+  if (!p) return;
+  const btn = p.querySelector('button[title="Play / Pause"]');
+  if (!btn) return;
+  btn.dataset.playing = playing ? 'true' : 'false';
+  btn.textContent = playing ? '⏸' : '▶';
+}
+
+function _updateAnimationBar(time, count) {
+  const panel = _activeAnimPanel();
+  if (!panel) return;
+  const animSection = panel.querySelector('[data-section="animation"]');
+  if (!animSection) return;
+  const scrubber = animSection.querySelector('.vault-graph-anim-scrubber');
+  const g = _mainGraphInstance?.isAnimating ? _mainGraphInstance : (_localGraphInstance?.isAnimating ? _localGraphInstance : null);
+  if (scrubber && g) {
+    const min = g.minCreated;
+    const max = g.maxCreated;
+    if (max > min) {
+      const pct = ((time - min) / (max - min)) * 100;
+      scrubber.value = Math.max(0, Math.min(100, pct));
+      _updateScrubberFill(scrubber);
+    }
+  }
 }
 
 export function destroyGraph() {
+  _isAnimationMode = false;
   if (_mainGraphInstance) {
+    // Snapshot positions before destroying so the next open can skip warmup.
+    const engine = _mainGraphInstance.graph;
+    if (engine?.posMap) {
+      _cachedPositions.clear();
+      for (const [id, pos] of engine.posMap) {
+        _cachedPositions.set(id, { x: pos.x, y: pos.y });
+      }
+      _cachedGraphDataHash = _dataHash(_allNodes, _allEdges);
+    }
     _mainGraphInstance.destroy();
     _mainGraphInstance = null;
   }
@@ -235,23 +430,23 @@ export function destroyGraph() {
 
 function _buildToolbar() {
   const toolbar = document.createElement('div');
-  toolbar.className = 'shard-graph-toolbar';
+  toolbar.className = 'vault-graph-toolbar';
 
   const fitBtn = document.createElement('button');
-  fitBtn.className = 'shard-graph-toolbtn';
+  fitBtn.className = 'vault-graph-toolbtn';
   fitBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>';
   fitBtn.title = 'Fit to view';
   fitBtn.addEventListener('click', () => _mainGraphInstance?.zoomToFit());
   toolbar.appendChild(fitBtn);
 
   const settingsBtn = document.createElement('button');
-  settingsBtn.className = 'shard-graph-toolbtn';
-  settingsBtn.id = 'shard-graph-settings-btn';
+  settingsBtn.className = 'vault-graph-toolbtn';
+  settingsBtn.id = 'vault-graph-settings-btn';
   settingsBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
   settingsBtn.title = 'Graph settings';
   settingsBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    const panel = document.getElementById('shard-graph-settings-panel');
+    const panel = document.getElementById('vault-graph-settings-panel');
     if (panel) panel.classList.toggle('hidden');
   });
   toolbar.appendChild(settingsBtn);
@@ -281,130 +476,131 @@ function _nextGroupHue(groups) {
 }
 
 function _buildGroupRow(g, idx) {
-  return `<div class="shard-graph-group-row" data-group-idx="${idx}">
-    <span class="shard-graph-group-color" style="background:${g.color}" title="Click to change color"></span>
-    <span class="shard-graph-group-query" contenteditable="plaintext-only" spellcheck="false">${g.query || ''}</span>
-    <button class="shard-graph-group-del" title="Remove">&#x2715;</button>
+  return `<div class="vault-graph-group-row" data-group-idx="${idx}">
+    <span class="vault-graph-group-color" style="background:${g.color}" title="Click to change color"></span>
+    <span class="vault-graph-group-query" contenteditable="plaintext-only" spellcheck="false">${g.query || ''}</span>
+    <button class="vault-graph-group-del" title="Remove">&#x2715;</button>
   </div>`;
 }
 
 function _buildSettingsPanel() {
-  const existing = document.getElementById('shard-graph-settings-panel');
+  const existing = document.getElementById('vault-graph-settings-panel');
   if (existing) existing.remove();
 
   const s = _graphSettings;
 
   const panel = document.createElement('div');
-  panel.id = 'shard-graph-settings-panel';
-  panel.className = 'shard-graph-settings-panel hidden';
+  panel.id = 'vault-graph-settings-panel';
+  panel.className = 'vault-graph-settings-panel hidden';
   panel.innerHTML = `
-    <div class="shard-graph-settings-header">
+    <div class="vault-graph-settings-header">
       <span>Graph Settings</span>
-      <button class="shard-graph-settings-close" title="Close">&#x2715;</button>
+      <button class="vault-graph-settings-close" title="Close">&#x2715;</button>
     </div>
-    <div class="shard-graph-settings-body">
-      <div class="shard-graph-settings-search">
+    <div class="vault-graph-settings-body">
+      <div class="vault-graph-settings-search">
         <input type="text" id="sg-filter-search" placeholder="Filter by name..." />
       </div>
 
-      <div class="shard-graph-settings-section" data-section="groups">
-        <div class="shard-graph-section-title">Groups <span class="shard-graph-section-chevron">&#9662;</span></div>
-        <div class="shard-graph-section-content">
-          <div class="shard-graph-groups-list">
+      <div class="vault-graph-settings-section" data-section="groups">
+        <div class="vault-graph-section-title"><span class="vault-graph-section-chevron expanded">></span>Groups</div>
+        <div class="vault-graph-section-content">
+          <div class="vault-graph-groups-list">
             ${(s.groups || []).map((g, i) => _buildGroupRow(g, i)).join('')}
           </div>
-          <button class="shard-graph-new-group-btn" id="sg-new-group">New group</button>
+          <button class="vault-graph-new-group-btn" id="sg-new-group">New group</button>
         </div>
       </div>
 
-      <div class="shard-graph-settings-section" data-section="filters">
-        <div class="shard-graph-section-title">Filters <span class="shard-graph-section-chevron">&#9662;</span></div>
-        <div class="shard-graph-section-content">
-          <div class="shard-graph-row">
-            <span class="shard-graph-row-label">Show orphans</span>
+      <div class="vault-graph-settings-section" data-section="display">
+        <div class="vault-graph-section-title"><span class="vault-graph-section-chevron expanded">></span>Display</div>
+        <div class="vault-graph-section-content">
+          <div class="vault-graph-row">
+            <span class="vault-graph-row-label">Show orphans</span>
             <label class="admin-switch"><input type="checkbox" id="sg-filter-orphans" ${s.showOrphans ? 'checked' : ''}><span class="admin-slider"></span></label>
           </div>
-        </div>
-      </div>
-
-      <div class="shard-graph-settings-section" data-section="display">
-        <div class="shard-graph-section-title">Display <span class="shard-graph-section-chevron">&#9662;</span></div>
-        <div class="shard-graph-section-content">
-          <div class="shard-graph-row">
-            <span class="shard-graph-row-label">Arrows</span>
+          <div class="vault-graph-row">
+            <span class="vault-graph-row-label">Arrows</span>
             <label class="admin-switch"><input type="checkbox" id="sg-display-arrows" ${s.arrows ? 'checked' : ''}><span class="admin-slider"></span></label>
           </div>
-          <div class="shard-graph-row">
-            <span class="shard-graph-row-label">Node size</span>
-            <div class="shard-graph-slider-wrap">
+          <div class="vault-graph-row">
+            <span class="vault-graph-row-label">Node size</span>
+            <div class="vault-graph-slider-wrap">
               <input type="range" id="sg-display-nodeSize" min="0.3" max="6" step="0.1" value="${s.nodeSize}">
             </div>
           </div>
-          <div class="shard-graph-row">
-            <span class="shard-graph-row-label">Link thickness</span>
-            <div class="shard-graph-slider-wrap">
+          <div class="vault-graph-row">
+            <span class="vault-graph-row-label">Link thickness</span>
+            <div class="vault-graph-slider-wrap">
               <input type="range" id="sg-display-linkThickness" min="1" max="10" step="0.5" value="${s.linkThickness}">
             </div>
           </div>
-        </div>
-      </div>
-
-      <div class="shard-graph-settings-section" data-section="links">
-        <div class="shard-graph-section-title">Links <span class="shard-graph-section-chevron">&#9662;</span></div>
-        <div class="shard-graph-section-content">
-          <div class="shard-graph-row">
-            <span class="shard-graph-row-label">Curved lines</span>
+          <div class="vault-graph-row">
+            <span class="vault-graph-row-label">Curved lines</span>
             <label class="admin-switch"><input type="checkbox" id="sg-display-curved" ${s.curvedLines ? 'checked' : ''}><span class="admin-slider"></span></label>
           </div>
-          <div class="shard-graph-row" id="sg-curve-angle-row" style="${s.curvedLines ? '' : 'display:none'}">
-            <span class="shard-graph-row-label">Curve angle</span>
-            <div class="shard-graph-slider-wrap">
-              <input type="range" id="sg-display-curveAngle" min="0.1" max="2" step="0.1" value="${s.curveAngle}">
-            </div>
-          </div>
         </div>
       </div>
 
-      <div class="shard-graph-settings-section" data-section="forces">
-        <div class="shard-graph-section-title">Forces <span class="shard-graph-section-chevron">&#9662;</span></div>
-        <div class="shard-graph-section-content">
-          <div class="shard-graph-row">
-            <span class="shard-graph-row-label">Centre force</span>
-            <div class="shard-graph-slider-wrap">
+      <div class="vault-graph-settings-section" data-section="forces">
+        <div class="vault-graph-section-title"><span class="vault-graph-section-chevron expanded">></span>Forces</div>
+        <div class="vault-graph-section-content">
+          <div class="vault-graph-row">
+            <span class="vault-graph-row-label">Centre force</span>
+            <div class="vault-graph-slider-wrap">
               <input type="range" id="sg-force-centre" min="0" max="1" step="0.05" value="${s.centreForce}">
             </div>
           </div>
-          <div class="shard-graph-row">
-            <span class="shard-graph-row-label">Repel force</span>
-            <div class="shard-graph-slider-wrap">
+          <div class="vault-graph-row">
+            <span class="vault-graph-row-label">Repel force</span>
+            <div class="vault-graph-slider-wrap">
               <input type="range" id="sg-force-repel" min="0" max="20" step="1" value="${s.repelForce}">
             </div>
           </div>
-          <div class="shard-graph-row">
-            <span class="shard-graph-row-label">Link force</span>
-            <div class="shard-graph-slider-wrap">
+          <div class="vault-graph-row">
+            <span class="vault-graph-row-label">Link force</span>
+            <div class="vault-graph-slider-wrap">
               <input type="range" id="sg-force-link" min="0" max="1" step="0.01" value="${s.linkForce}">
             </div>
           </div>
-          <div class="shard-graph-row">
-            <span class="shard-graph-row-label">Link distance</span>
-            <div class="shard-graph-slider-wrap">
+          <div class="vault-graph-row">
+            <span class="vault-graph-row-label">Link distance</span>
+            <div class="vault-graph-slider-wrap">
               <input type="range" id="sg-force-distance" min="50" max="500" step="10" value="${s.linkDistance}">
             </div>
           </div>
-          <button class="shard-graph-animate-btn" id="sg-force-animate">Animate</button>
+        </div>
+      </div>
+
+      <div class="vault-graph-settings-section" data-section="animation">
+        <div class="vault-graph-section-title"><span class="vault-graph-section-chevron expanded">></span>Animation</div>
+        <div class="vault-graph-section-content">
+          <div class="vault-graph-anim-top">
+            <input type="range" class="vault-graph-anim-scrubber" id="sg-anim-scrubber" min="0" max="100" value="0" title="Timeline">
+          </div>
+          <div class="vault-graph-anim-controls">
+            <button class="vault-graph-anim-btn" id="sg-anim-play" title="Play / Pause">▶</button>
+            <button class="vault-graph-anim-btn" id="sg-anim-stop" title="Stop">⏹</button>
+            <select class="vault-graph-anim-speed" id="sg-anim-speed" title="Speed">
+              <option value="0.25">0.25×</option>
+              <option value="0.5">0.5×</option>
+              <option value="1" selected>1×</option>
+              <option value="1.5">1.5×</option>
+              <option value="2">2.0×</option>
+            </select>
+          </div>
         </div>
       </div>
     </div>
-    <div class="shard-graph-settings-resize"></div>
-    <div class="shard-graph-slider-tooltip" id="sg-slider-tooltip"></div>
+    <div class="vault-graph-settings-resize"></div>
+    <div class="vault-graph-slider-tooltip" id="sg-slider-tooltip"></div>
   `;
 
   const target = _getGraphTarget();
   if (target) target.appendChild(panel);
 
   // ── Draggable header ──
-  const header = panel.querySelector('.shard-graph-settings-header');
+  const header = panel.querySelector('.vault-graph-settings-header');
   let dragStartX = 0, dragStartY = 0, dragStartLeft = 0, dragStartTop = 0, isDragging = false;
   header.addEventListener('mousedown', (e) => {
     isDragging = true;
@@ -426,7 +622,7 @@ function _buildSettingsPanel() {
   });
 
   // ── Resizable corner ──
-  const resizeHandle = panel.querySelector('.shard-graph-settings-resize');
+  const resizeHandle = panel.querySelector('.vault-graph-settings-resize');
   let isResizing = false, startW = 0, startH = 0, startX = 0, startY = 0;
   resizeHandle.addEventListener('mousedown', (e) => {
     isResizing = true;
@@ -447,7 +643,7 @@ function _buildSettingsPanel() {
   panel.addEventListener('mouseenter', () => { setSettingsPanelHover(true); clearGraphHover(); });
   panel.addEventListener('mouseleave', () => setSettingsPanelHover(false));
 
-  panel.querySelector('.shard-graph-settings-close').addEventListener('click', () => {
+  panel.querySelector('.vault-graph-settings-close').addEventListener('click', () => {
     panel.classList.add('hidden');
     setSettingsPanelHover(false);
   });
@@ -456,29 +652,32 @@ function _buildSettingsPanel() {
   panel.addEventListener('click', (e) => e.stopPropagation());
   panel.addEventListener('wheel', (e) => e.stopPropagation(), { passive: true });
 
-  if (!window._shardGraphSettingsClickAway) {
-    window._shardGraphSettingsClickAway = (e) => {
-      const p = document.getElementById('shard-graph-settings-panel');
+  if (!window._vaultGraphSettingsClickAway) {
+    window._vaultGraphSettingsClickAway = (e) => {
+      const p = document.getElementById('vault-graph-settings-panel');
       if (!p || p.classList.contains('hidden')) return;
-      if (!p.contains(e.target) && !e.target.closest('#shard-graph-settings-btn')) {
+      if (!p.contains(e.target) && !e.target.closest('#vault-graph-settings-btn')) {
         p.classList.add('hidden');
         setSettingsPanelHover(false);
       }
     };
-    document.addEventListener('click', window._shardGraphSettingsClickAway);
+    document.addEventListener('click', window._vaultGraphSettingsClickAway);
   }
 
   // ── Collapsible sections ──
-  panel.querySelectorAll('.shard-graph-settings-section').forEach(section => {
-    const title = section.querySelector('.shard-graph-section-title');
-    const chevron = title?.querySelector('.shard-graph-section-chevron');
-    const content = section.querySelector('.shard-graph-section-content');
+  panel.querySelectorAll('.vault-graph-settings-section').forEach(section => {
+    const title = section.querySelector('.vault-graph-section-title');
+    const chevron = title?.querySelector('.vault-graph-section-chevron');
+    const content = section.querySelector('.vault-graph-section-content');
     if (!title || !content) return;
     title.style.cursor = 'pointer';
     title.addEventListener('click', () => {
       const isCollapsed = content.style.display === 'none';
       content.style.display = isCollapsed ? '' : 'none';
-      if (chevron) chevron.innerHTML = isCollapsed ? '&#9662;' : '&#9656;';
+      if (chevron) {
+        if (isCollapsed) chevron.classList.add('expanded');
+        else chevron.classList.remove('expanded');
+      }
     });
   });
 
@@ -496,25 +695,25 @@ function _buildSettingsPanel() {
     tooltip.style.top = top + 'px';
   }
   function _hideSliderTooltip() { tooltip.classList.remove('visible'); }
-  panel.querySelectorAll('input[type="range"]').forEach(input => {
+  panel.querySelectorAll('input[type="range"]:not(.vault-graph-anim-scrubber)').forEach(input => {
     input.addEventListener('input', (e) => _showSliderTooltip(e.target, e.target.value));
     input.addEventListener('change', _hideSliderTooltip);
     input.addEventListener('mouseleave', _hideSliderTooltip);
   });
 
   // ── Groups ──
-  const groupsList = panel.querySelector('.shard-graph-groups-list');
+  const groupsList = panel.querySelector('.vault-graph-groups-list');
   function _refreshGroups() {
     if (!groupsList) return;
     groupsList.innerHTML = (_graphSettings.groups || []).map((g, i) => _buildGroupRow(g, i)).join('');
     _wireGroupRows();
   }
   function _wireGroupRows() {
-    panel.querySelectorAll('.shard-graph-group-row').forEach(row => {
+    panel.querySelectorAll('.vault-graph-group-row').forEach(row => {
       const idx = parseInt(row.dataset.groupIdx, 10);
-      const colorBtn = row.querySelector('.shard-graph-group-color');
-      const queryEl = row.querySelector('.shard-graph-group-query');
-      const delBtn = row.querySelector('.shard-graph-group-del');
+      const colorBtn = row.querySelector('.vault-graph-group-color');
+      const queryEl = row.querySelector('.vault-graph-group-query');
+      const delBtn = row.querySelector('.vault-graph-group-del');
 
       if (colorBtn) {
         colorBtn.addEventListener('click', () => {
@@ -528,7 +727,7 @@ function _buildSettingsPanel() {
             _graphSettings.groups[idx].color = e.target.value;
             colorBtn.style.background = e.target.value;
             _saveSettings();
-            _redraw();
+            _applyGroups();
           });
           picker.addEventListener('change', () => { picker.remove(); });
           picker.click();
@@ -549,7 +748,7 @@ function _buildSettingsPanel() {
           const tagMatches = (_allTags || []).filter(t => t.toLowerCase().includes(f)).slice(0, 6);
 
           dropdown = document.createElement('div');
-          dropdown.className = 'shard-graph-group-dropdown';
+          dropdown.className = 'vault-graph-group-dropdown';
           dropdown.style.zIndex = '99999';
           const rect = queryEl.getBoundingClientRect();
           dropdown.style.left = rect.left + 'px';
@@ -557,49 +756,43 @@ function _buildSettingsPanel() {
           dropdown.style.minWidth = rect.width + 'px';
 
           let html = '';
-          // Static search-syntax help (always visible)
-          html += `<div class="shard-graph-group-section"><div class="shard-graph-group-title">Search options</div>`;
-          html += `<div class="shard-graph-group-item shard-graph-group-help"><code>path:</code> match path of the file</div>`;
-          html += `<div class="shard-graph-group-item shard-graph-group-help"><code>file:</code> match file name</div>`;
-          html += `<div class="shard-graph-group-item shard-graph-group-help"><code>tag:</code> search for tags</div>`;
-          html += `<div class="shard-graph-group-item shard-graph-group-help"><code>line:</code> search keywords on same line</div>`;
-          html += `<div class="shard-graph-group-item shard-graph-group-help"><code>section:</code> search keywords under same heading</div>`;
-          html += `<div class="shard-graph-group-item shard-graph-group-help"><code>[property]</code> match property</div>`;
+          // Search-syntax shortcuts (clickable)
+          html += `<div class="vault-graph-group-section"><div class="vault-graph-group-title">Search options</div>`;
+          html += `<div class="vault-graph-group-item" data-prefix="path:"><code>path:</code> match path of the file</div>`;
+          html += `<div class="vault-graph-group-item" data-prefix="file:"><code>file:</code> match file name</div>`;
+          html += `<div class="vault-graph-group-item" data-prefix="tag:"><code>tag:</code> search for tags</div>`;
+          html += `<div class="vault-graph-group-item" data-prefix="line:"><code>line:</code> search keywords on same line</div>`;
+          html += `<div class="vault-graph-group-item" data-prefix="section:"><code>section:</code> search keywords under same heading</div>`;
+          html += `<div class="vault-graph-group-item" data-prefix="["><code>[property]</code> match property</div>`;
           html += `</div>`;
-
-          if (tagMatches.length) {
-            html += `<div class="shard-graph-group-section"><div class="shard-graph-group-title">Tags</div>`;
-            html += tagMatches.map((t, i) => `<div class="shard-graph-group-item" data-type="tag" data-val="${_esc(t)}" data-index="${i}"><code>${_esc(t)}</code></div>`).join('');
-            html += `</div>`;
-          }
-          if (noteMatches.length) {
-            html += `<div class="shard-graph-group-section"><div class="shard-graph-group-title">Notes</div>`;
-            html += noteMatches.map((n, i) => `<div class="shard-graph-group-item" data-type="note" data-val="${_esc(n.label || n.id)}" data-index="${i + tagMatches.length}"><span>${_esc(n.label || n.id)}</span></div>`).join('');
-            html += `</div>`;
-          }
           dropdown.innerHTML = html;
           document.body.appendChild(dropdown);
 
-          dropdown.querySelectorAll('.shard-graph-group-item').forEach(item => {
-            item.addEventListener('click', () => {
-              const val = item.dataset.val;
-              if (item.dataset.type === 'tag') {
-                const tagVal = val.startsWith('#') ? val.slice(1) : val;
-                queryEl.textContent = `tag:#${tagVal}`;
-              } else {
-                queryEl.textContent = val;
+          dropdown.querySelectorAll('.vault-graph-group-item').forEach(item => {
+            item.addEventListener('click', (e) => {
+              e.stopPropagation();
+              const prefix = item.dataset.prefix;
+              if (prefix) {
+                queryEl.textContent = prefix;
+                const sel = window.getSelection();
+                const range = document.createRange();
+                range.selectNodeContents(queryEl);
+                range.collapse(false);
+                sel.removeAllRanges();
+                sel.addRange(range);
               }
               _graphSettings.groups[idx].query = queryEl.textContent.trim();
               _saveSettings();
-              _redraw();
+              _applyGroups();
               _closeGroupDropdown();
+              queryEl.focus();
             });
           });
         }
         queryEl.addEventListener('focus', () => { _renderGroupDropdown(queryEl.textContent.trim()); });
         queryEl.addEventListener('input', () => { _renderGroupDropdown(queryEl.textContent.trim()); });
         queryEl.addEventListener('keydown', (e) => {
-          const items = dropdown?.querySelectorAll('.shard-graph-group-item');
+          const items = dropdown?.querySelectorAll('.vault-graph-group-item');
           if (e.key === 'Enter') {
             e.preventDefault();
             if (items && selectedIndex >= 0 && items[selectedIndex]) {
@@ -631,7 +824,7 @@ function _buildSettingsPanel() {
             const val = queryEl.textContent.trim();
             _graphSettings.groups[idx].query = val;
             _saveSettings();
-            _redraw();
+            _applyGroups();
           }, 150);
         });
       }
@@ -641,7 +834,7 @@ function _buildSettingsPanel() {
           _graphSettings.groups.splice(idx, 1);
           _saveSettings();
           _refreshGroups();
-          _redraw();
+          _applyGroups();
         });
       }
     });
@@ -654,19 +847,19 @@ function _buildSettingsPanel() {
     _graphSettings.groups.push({ query: '', color: _hslToHex(hue, 70, 60) });
     _saveSettings();
     _refreshGroups();
-    _redraw();
+    _applyGroups();
   });
 
   panel.querySelector('#sg-filter-search').addEventListener('input', (e) => {
     _graphSettings.searchQuery = e.target.value;
     _saveSettings();
-    _redraw();
+    _applyFilter();
   });
 
   panel.querySelector('#sg-filter-orphans').addEventListener('change', (e) => {
     _graphSettings.showOrphans = e.target.checked;
     _saveSettings();
-    _redraw();
+    _applyFilter();
   });
 
   panel.querySelector('#sg-display-arrows').addEventListener('change', (e) => {
@@ -689,20 +882,17 @@ function _buildSettingsPanel() {
     _mainGraphInstance?.updateLinkThickness(val);
   });
 
-  const forceUpdate = () => _mainGraphInstance?.updateSettings(_graphSettings);
+  const forceUpdate = () => _mainGraphInstance?.updateSettings({
+    centreForce: _graphSettings.centreForce,
+    repelForce: _graphSettings.repelForce,
+    linkForce: _graphSettings.linkForce,
+    linkDistance: _graphSettings.linkDistance,
+  });
 
   panel.querySelector('#sg-display-curved').addEventListener('change', (e) => {
     _graphSettings.curvedLines = e.target.checked;
     _saveSettings();
-    const row = panel.querySelector('#sg-curve-angle-row');
-    if (row) row.style.display = e.target.checked ? '' : 'none';
     _mainGraphInstance?.updateCurvedLines(e.target.checked);
-  });
-  panel.querySelector('#sg-display-curveAngle').addEventListener('input', (e) => {
-    const val = parseFloat(e.target.value);
-    _graphSettings.curveAngle = val;
-    _saveSettings();
-    _mainGraphInstance?.updateCurveAngle(val);
   });
 
   panel.querySelector('#sg-force-centre').addEventListener('input', (e) => {
@@ -727,7 +917,8 @@ function _buildSettingsPanel() {
   panel.querySelector('#sg-force-link').addEventListener('change', forceUpdate);
   panel.querySelector('#sg-force-distance').addEventListener('change', forceUpdate);
 
-  panel.querySelector('#sg-force-animate').addEventListener('click', forceUpdate);
+  // ── In-panel Animation controls ──
+  _wireAnimationControls(panel, _mainGraphInstance);
 }
 
 // ── Local Graph ────────────────────────────────────────────
@@ -738,19 +929,19 @@ export async function renderLocalGraph(container, vaultId, noteId) {
   _localActiveNoteId = noteId;
   _localSettings = _loadLocalSettings();
 
-  container.innerHTML = '<div class="shard-graph-loading">Loading local graph...</div>';
+  container.innerHTML = '<div class="vault-graph-loading">Loading local graph...</div>';
 
   try {
     const qs = new URLSearchParams();
     if (vaultId) qs.set('vault_id', vaultId);
-    const r = await fetch(`${API_BASE}/api/shard/graph?${qs.toString()}`);
-    if (!r.ok) { container.innerHTML = '<div class="shard-graph-error">Failed to load graph</div>'; return; }
+    const r = await fetch(`${API_BASE}/api/vault/graph?${qs.toString()}`);
+    if (!r.ok) { container.innerHTML = '<div class="vault-graph-error">Failed to load graph</div>'; return; }
     const data = await r.json();
     _localAllNodes = data.nodes || [];
     _localAllEdges = data.edges || [];
     _drawLocal();
   } catch (e) {
-    container.innerHTML = `<div class="shard-graph-error">${e.message}</div>`;
+    container.innerHTML = `<div class="vault-graph-error">${e.message}</div>`;
   }
 }
 
@@ -839,7 +1030,7 @@ function _drawLocal() {
   const visibleEdges = _getLocalVisibleEdges(visibleIds);
 
   if (filteredNodes.length === 0) {
-    _localContainer.innerHTML = '<div class="shard-graph-loading">Select a note to see its local graph.</div>';
+    _localContainer.innerHTML = '<div class="vault-graph-loading">Select a note to see its local graph.</div>';
     return;
   }
 
@@ -866,6 +1057,7 @@ function _redrawLocal() {
 }
 
 export function destroyLocalGraph() {
+  _isAnimationMode = false;
   if (_localGraphInstance) {
     _localGraphInstance.destroy();
     _localGraphInstance = null;
@@ -879,23 +1071,23 @@ export function destroyLocalGraph() {
 
 function _buildLocalToolbar() {
   const toolbar = document.createElement('div');
-  toolbar.className = 'shard-graph-toolbar';
+  toolbar.className = 'vault-graph-toolbar';
 
   const fitBtn = document.createElement('button');
-  fitBtn.className = 'shard-graph-toolbtn';
+  fitBtn.className = 'vault-graph-toolbtn';
   fitBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>';
   fitBtn.title = 'Fit to view';
   fitBtn.addEventListener('click', () => _localGraphInstance?.zoomToFit());
   toolbar.appendChild(fitBtn);
 
   const settingsBtn = document.createElement('button');
-  settingsBtn.className = 'shard-graph-toolbtn';
-  settingsBtn.id = 'shard-local-graph-settings-btn';
+  settingsBtn.className = 'vault-graph-toolbtn';
+  settingsBtn.id = 'vault-local-graph-settings-btn';
   settingsBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
   settingsBtn.title = 'Local graph settings';
   settingsBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    const panel = document.getElementById('shard-local-graph-settings-panel');
+    const panel = document.getElementById('vault-local-graph-settings-panel');
     if (panel) panel.classList.toggle('hidden');
   });
   toolbar.appendChild(settingsBtn);
@@ -906,103 +1098,130 @@ function _buildLocalToolbar() {
 // ── Local Settings Panel ───────────────────────────────────
 
 function _buildLocalSettingsPanel() {
-  const existing = document.getElementById('shard-local-graph-settings-panel');
+  const existing = document.getElementById('vault-local-graph-settings-panel');
   if (existing) existing.remove();
 
   const s = _localSettings;
 
   const panel = document.createElement('div');
-  panel.id = 'shard-local-graph-settings-panel';
-  panel.className = 'shard-graph-settings-panel hidden';
+  panel.id = 'vault-local-graph-settings-panel';
+  panel.className = 'vault-graph-settings-panel hidden';
   panel.innerHTML = `
-    <div class="shard-graph-settings-header">
+    <div class="vault-graph-settings-header">
       <span>Local Graph Settings</span>
-      <button class="shard-graph-settings-close" title="Close">&#x2715;</button>
+      <button class="vault-graph-settings-close" title="Close">&#x2715;</button>
     </div>
-    <div class="shard-graph-settings-body">
-      <div class="shard-graph-settings-section">
-        <div class="shard-graph-section-title">Depth</div>
-        <div class="shard-graph-row">
-          <span class="shard-graph-row-label">Depth</span>
-          <div class="shard-graph-slider-wrap">
-            <input type="range" id="sg-local-depth" min="1" max="5" step="1" value="${s.depth}">
+    <div class="vault-graph-settings-body">
+      <div class="vault-graph-settings-section">
+        <div class="vault-graph-section-title"><span class="vault-graph-section-chevron expanded">></span>Depth</div>
+        <div class="vault-graph-section-content">
+          <div class="vault-graph-row">
+            <span class="vault-graph-row-label">Depth</span>
+            <div class="vault-graph-slider-wrap">
+              <input type="range" id="sg-local-depth" min="1" max="5" step="1" value="${s.depth}">
+            </div>
           </div>
         </div>
       </div>
 
-      <div class="shard-graph-settings-section">
-        <div class="shard-graph-section-title">Filters</div>
-        <div class="shard-graph-row">
-          <span class="shard-graph-row-label">Incoming links</span>
-          <label class="admin-switch"><input type="checkbox" id="sg-local-incoming" ${s.incomingLinks ? 'checked' : ''}><span class="admin-slider"></span></label>
-        </div>
-        <div class="shard-graph-row">
-          <span class="shard-graph-row-label">Outgoing links</span>
-          <label class="admin-switch"><input type="checkbox" id="sg-local-outgoing" ${s.outgoingLinks ? 'checked' : ''}><span class="admin-slider"></span></label>
-        </div>
-        <div class="shard-graph-row">
-          <span class="shard-graph-row-label">Neighbor links</span>
-          <label class="admin-switch"><input type="checkbox" id="sg-local-neighbor" ${s.neighborLinks ? 'checked' : ''}><span class="admin-slider"></span></label>
-        </div>
-      </div>
-
-      <div class="shard-graph-settings-section">
-        <div class="shard-graph-section-title">Display</div>
-        <div class="shard-graph-row">
-          <span class="shard-graph-row-label">Arrows</span>
-          <label class="admin-switch"><input type="checkbox" id="sg-local-arrows" ${s.arrows ? 'checked' : ''}><span class="admin-slider"></span></label>
-        </div>
-        <div class="shard-graph-row">
-          <span class="shard-graph-row-label">Node size</span>
-          <div class="shard-graph-slider-wrap">
-            <input type="range" id="sg-local-nodeSize" min="0.3" max="6" step="0.1" value="${s.nodeSize}">
+      <div class="vault-graph-settings-section">
+        <div class="vault-graph-section-title"><span class="vault-graph-section-chevron expanded">></span>Filters</div>
+        <div class="vault-graph-section-content">
+          <div class="vault-graph-row">
+            <span class="vault-graph-row-label">Incoming links</span>
+            <label class="admin-switch"><input type="checkbox" id="sg-local-incoming" ${s.incomingLinks ? 'checked' : ''}><span class="admin-slider"></span></label>
           </div>
-        </div>
-        <div class="shard-graph-row">
-          <span class="shard-graph-row-label">Link thickness</span>
-          <div class="shard-graph-slider-wrap">
-            <input type="range" id="sg-local-linkThickness" min="1" max="10" step="0.5" value="${s.linkThickness}">
+          <div class="vault-graph-row">
+            <span class="vault-graph-row-label">Outgoing links</span>
+            <label class="admin-switch"><input type="checkbox" id="sg-local-outgoing" ${s.outgoingLinks ? 'checked' : ''}><span class="admin-slider"></span></label>
+          </div>
+          <div class="vault-graph-row">
+            <span class="vault-graph-row-label">Neighbor links</span>
+            <label class="admin-switch"><input type="checkbox" id="sg-local-neighbor" ${s.neighborLinks ? 'checked' : ''}><span class="admin-slider"></span></label>
           </div>
         </div>
       </div>
 
-      <div class="shard-graph-settings-section">
-        <div class="shard-graph-section-title">Forces</div>
-        <div class="shard-graph-row">
-          <span class="shard-graph-row-label">Centre force</span>
-          <div class="shard-graph-slider-wrap">
-            <input type="range" id="sg-local-centre" min="0" max="1" step="0.05" value="${s.centreForce}">
+      <div class="vault-graph-settings-section">
+        <div class="vault-graph-section-title"><span class="vault-graph-section-chevron expanded">></span>Display</div>
+        <div class="vault-graph-section-content">
+          <div class="vault-graph-row">
+            <span class="vault-graph-row-label">Arrows</span>
+            <label class="admin-switch"><input type="checkbox" id="sg-local-arrows" ${s.arrows ? 'checked' : ''}><span class="admin-slider"></span></label>
+          </div>
+          <div class="vault-graph-row">
+            <span class="vault-graph-row-label">Node size</span>
+            <div class="vault-graph-slider-wrap">
+              <input type="range" id="sg-local-nodeSize" min="0.3" max="6" step="0.1" value="${s.nodeSize}">
+            </div>
+          </div>
+          <div class="vault-graph-row">
+            <span class="vault-graph-row-label">Link thickness</span>
+            <div class="vault-graph-slider-wrap">
+              <input type="range" id="sg-local-linkThickness" min="1" max="10" step="0.5" value="${s.linkThickness}">
+            </div>
           </div>
         </div>
-        <div class="shard-graph-row">
-          <span class="shard-graph-row-label">Repel force</span>
-          <div class="shard-graph-slider-wrap">
-            <input type="range" id="sg-local-repel" min="0" max="20" step="1" value="${s.repelForce}">
+      </div>
+
+      <div class="vault-graph-settings-section">
+        <div class="vault-graph-section-title"><span class="vault-graph-section-chevron expanded">></span>Forces</div>
+        <div class="vault-graph-section-content">
+          <div class="vault-graph-row">
+            <span class="vault-graph-row-label">Centre force</span>
+            <div class="vault-graph-slider-wrap">
+              <input type="range" id="sg-local-centre" min="0" max="1" step="0.05" value="${s.centreForce}">
+            </div>
+          </div>
+          <div class="vault-graph-row">
+            <span class="vault-graph-row-label">Repel force</span>
+            <div class="vault-graph-slider-wrap">
+              <input type="range" id="sg-local-repel" min="0" max="20" step="1" value="${s.repelForce}">
+            </div>
+          </div>
+          <div class="vault-graph-row">
+            <span class="vault-graph-row-label">Link force</span>
+            <div class="vault-graph-slider-wrap">
+              <input type="range" id="sg-local-link" min="0" max="1" step="0.01" value="${s.linkForce}">
+            </div>
+          </div>
+          <div class="vault-graph-row">
+            <span class="vault-graph-row-label">Link distance</span>
+            <div class="vault-graph-slider-wrap">
+              <input type="range" id="sg-local-distance" min="50" max="500" step="10" value="${s.linkDistance}">
+            </div>
           </div>
         </div>
-        <div class="shard-graph-row">
-          <span class="shard-graph-row-label">Link force</span>
-          <div class="shard-graph-slider-wrap">
-            <input type="range" id="sg-local-link" min="0" max="1" step="0.01" value="${s.linkForce}">
+      </div>
+
+      <div class="vault-graph-settings-section" data-section="animation">
+        <div class="vault-graph-section-title"><span class="vault-graph-section-chevron expanded">></span>Animation</div>
+        <div class="vault-graph-section-content">
+          <div class="vault-graph-anim-top">
+            <input type="range" class="vault-graph-anim-scrubber" id="sg-local-anim-scrubber" min="0" max="100" value="0" title="Timeline">
+          </div>
+          <div class="vault-graph-anim-controls">
+            <button class="vault-graph-anim-btn" id="sg-local-anim-play" title="Play / Pause">▶</button>
+            <button class="vault-graph-anim-btn" id="sg-local-anim-stop" title="Stop">⏹</button>
+            <select class="vault-graph-anim-speed" id="sg-local-anim-speed" title="Speed">
+              <option value="0.25">0.25×</option>
+              <option value="0.5">0.5×</option>
+              <option value="1" selected>1×</option>
+              <option value="1.5">1.5×</option>
+              <option value="2">2.0×</option>
+            </select>
           </div>
         </div>
-        <div class="shard-graph-row">
-          <span class="shard-graph-row-label">Link distance</span>
-          <div class="shard-graph-slider-wrap">
-            <input type="range" id="sg-local-distance" min="50" max="500" step="10" value="${s.linkDistance}">
-          </div>
-        </div>
-        <button class="shard-graph-animate-btn" id="sg-local-animate">Animate</button>
       </div>
     </div>
-    <div class="shard-graph-settings-resize"></div>
-    <div class="shard-graph-slider-tooltip" id="sg-local-slider-tooltip"></div>
+    <div class="vault-graph-settings-resize"></div>
+    <div class="vault-graph-slider-tooltip" id="sg-local-slider-tooltip"></div>
   `;
 
   _localContainer.appendChild(panel);
 
   // Draggable header
-  const header = panel.querySelector('.shard-graph-settings-header');
+  const header = panel.querySelector('.vault-graph-settings-header');
   let dragStartX = 0, dragStartY = 0, dragStartLeft = 0, dragStartTop = 0, isDragging = false;
   header.addEventListener('mousedown', (e) => {
     isDragging = true;
@@ -1028,7 +1247,7 @@ function _buildLocalSettingsPanel() {
   panel.addEventListener('mouseleave', () => setSettingsPanelHover(false));
 
   // Resizable corner
-  const resizeHandle = panel.querySelector('.shard-graph-settings-resize');
+  const resizeHandle = panel.querySelector('.vault-graph-settings-resize');
   let isResizing = false, startW = 0, startH = 0, startX = 0, startY = 0;
   resizeHandle.addEventListener('mousedown', (e) => {
     isResizing = true;
@@ -1045,7 +1264,7 @@ function _buildLocalSettingsPanel() {
   });
   document.addEventListener('mouseup', () => { isResizing = false; });
 
-  panel.querySelector('.shard-graph-settings-close').addEventListener('click', () => {
+  panel.querySelector('.vault-graph-settings-close').addEventListener('click', () => {
     panel.classList.add('hidden');
   });
 
@@ -1053,15 +1272,15 @@ function _buildLocalSettingsPanel() {
   panel.addEventListener('click', (e) => e.stopPropagation());
   panel.addEventListener('wheel', (e) => e.stopPropagation(), { passive: true });
 
-  if (!window._shardLocalGraphSettingsClickAway) {
-    window._shardLocalGraphSettingsClickAway = (e) => {
-      const p = document.getElementById('shard-local-graph-settings-panel');
+  if (!window._vaultLocalGraphSettingsClickAway) {
+    window._vaultLocalGraphSettingsClickAway = (e) => {
+      const p = document.getElementById('vault-local-graph-settings-panel');
       if (!p || p.classList.contains('hidden')) return;
-      if (!p.contains(e.target) && !e.target.closest('#shard-local-graph-settings-btn')) {
+      if (!p.contains(e.target) && !e.target.closest('#vault-local-graph-settings-btn')) {
         p.classList.add('hidden');
       }
     };
-    document.addEventListener('click', window._shardLocalGraphSettingsClickAway);
+    document.addEventListener('click', window._vaultLocalGraphSettingsClickAway);
   }
 
   // Floating slider tooltip
@@ -1078,7 +1297,7 @@ function _buildLocalSettingsPanel() {
     tooltip.style.top = top + 'px';
   }
   function _hideSliderTooltip() { tooltip.classList.remove('visible'); }
-  panel.querySelectorAll('input[type="range"]').forEach(input => {
+  panel.querySelectorAll('input[type="range"]:not(.vault-graph-anim-scrubber)').forEach(input => {
     input.addEventListener('input', (e) => _showSliderTooltip(e.target, e.target.value));
     input.addEventListener('change', _hideSliderTooltip);
     input.addEventListener('mouseleave', _hideSliderTooltip);
@@ -1126,7 +1345,12 @@ function _buildLocalSettingsPanel() {
     _localGraphInstance?.updateLinkThickness(val);
   });
 
-  const forceUpdate = () => _localGraphInstance?.updateSettings(_localSettings);
+  const forceUpdate = () => _localGraphInstance?.updateSettings({
+    centreForce: _localSettings.centreForce,
+    repelForce: _localSettings.repelForce,
+    linkForce: _localSettings.linkForce,
+    linkDistance: _localSettings.linkDistance,
+  });
   panel.querySelector('#sg-local-centre').addEventListener('input', (e) => {
     _localSettings.centreForce = parseFloat(e.target.value);
     _saveLocalSettings();
@@ -1149,5 +1373,6 @@ function _buildLocalSettingsPanel() {
   panel.querySelector('#sg-local-link').addEventListener('change', forceUpdate);
   panel.querySelector('#sg-local-distance').addEventListener('change', forceUpdate);
 
-  panel.querySelector('#sg-local-animate').addEventListener('click', forceUpdate);
+  // ── In-panel Animation controls ──
+  _wireAnimationControls(panel, _localGraphInstance);
 }

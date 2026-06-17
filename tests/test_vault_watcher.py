@@ -1,4 +1,4 @@
-"""Tests for Shard vault file watcher and link extraction."""
+"""Tests for Vault file watcher and link extraction."""
 
 from __future__ import annotations
 
@@ -13,11 +13,11 @@ import pytest
 # Ensure project root is on sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.shard_watcher import (
+from src.vault_watcher import (
     _parse_frontmatter,
     _parse_yaml_tags,
     _extract_links,
-    _resolve_shard_link,
+    _resolve_vault_link,
     _sync_file,
     _recompute_backlinks,
     get_watcher,
@@ -103,7 +103,7 @@ def test_extract_skips_external_urls():
 # ---------------------------------------------------------------------------
 
 def test_sync_file_with_links(tmp_path):
-    from core.database import SessionLocal, Shard, engine, Base
+    from core.database import SessionLocal, VaultNote, engine, Base
 
     # Ensure table exists (in-memory SQLite for test isolation)
     Base.metadata.create_all(engine)
@@ -121,30 +121,30 @@ def test_sync_file_with_links(tmp_path):
 
     db = SessionLocal()
     try:
-        a = db.query(Shard).filter_by(rel_path="A.md").first()
+        a = db.query(VaultNote).filter_by(rel_path="A.md").first()
         assert a is not None
         assert a.title == "Note A"
         assert json.loads(a.tags) == ["alpha"]
         # B may not resolve yet if file doesn't exist
-        b = db.query(Shard).filter_by(rel_path="B.md").first()
+        b = db.query(VaultNote).filter_by(rel_path="B.md").first()
         assert b.title == "Note B"
     finally:
         db.close()
 
 
 def test_recompute_backlinks():
-    from core.database import SessionLocal, Shard, engine, Base
+    from core.database import SessionLocal, VaultNote, engine, Base
     Base.metadata.create_all(engine)
 
     db = SessionLocal()
     try:
         # Insert two notes manually
-        db.add(Shard(
+        db.add(VaultNote(
             id="u:v:A.md", owner="u", vault_path="v", rel_path="A.md",
             title="A", content="x", outbound_links='["B.md"]',
             backlinks="[]", sync_status="synced"
         ))
-        db.add(Shard(
+        db.add(VaultNote(
             id="u:v:B.md", owner="u", vault_path="v", rel_path="B.md",
             title="B", content="y", outbound_links='[]',
             backlinks="[]", sync_status="synced"
@@ -152,7 +152,7 @@ def test_recompute_backlinks():
         db.commit()
         _recompute_backlinks(db, "u", "v")
 
-        b = db.query(Shard).filter_by(rel_path="B.md").first()
+        b = db.query(VaultNote).filter_by(rel_path="B.md").first()
         assert json.loads(b.backlinks) == ["A.md"]
     finally:
         db.close()

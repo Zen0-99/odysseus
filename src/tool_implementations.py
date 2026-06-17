@@ -3035,7 +3035,7 @@ async def do_tail_serve_output(content: str, owner: Optional[str] = None) -> Dic
             if already_gone:
                 return {"output": f"Tmux session {session_id} on {host_label} is gone (task already exited).", "exit_code": 0, "session_id": session_id, "host": host_label}
             return {"error": f"capture-pane failed on {host_label}: {stderr_text or f'exit {rc}'}", "exit_code": 1}
-        # Dedupe download-progress noise. A 100-shard HF download produces
+        # Dedupe download-progress noise. A 100-vault HF download produces
         # tens of thousands of `model-NN-of-MM.safetensors: 91%|...` lines
         # that all look the same to the agent and drown the actual error.
         # Keep only one sample per (file, decile-percent) bucket.

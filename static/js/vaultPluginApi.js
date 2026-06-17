@@ -1,21 +1,106 @@
 /**
- * Shard-style Plugin API (Phase 4.1 / 4.2)
+ * Vault-style Plugin API (Phase 4.1 / 4.2)
  *
  * - Plugin base class with lifecycle hooks
  * - PluginManager for register / enable / disable / settings persistence
- * - App API object mimicking Shard's `app` namespace
- * - Core plugins that wrap existing Shard panel features
+ * - App API object mimicking Vault's `app` namespace
+ * - Core plugins that wrap existing Vault panel features
  */
+
+/* ── Component / Events Base Classes ─────────────────────── */
+
+export class Events {
+  constructor() {
+    this._handlers = new Map();
+  }
+
+  on(name, callback) {
+    if (!this._handlers.has(name)) this._handlers.set(name, []);
+    this._handlers.get(name).push(callback);
+    return { fn: callback, name };
+  }
+
+  off(name, callback) {
+    const list = this._handlers.get(name);
+    if (!list) return;
+    const idx = list.indexOf(callback);
+    if (idx >= 0) list.splice(idx, 1);
+  }
+
+  offref(ref) {
+    this.off(ref.name, ref.fn);
+  }
+
+  trigger(name, ...args) {
+    const list = this._handlers.get(name);
+    if (!list) return;
+    list.forEach(fn => {
+      try { fn(...args); } catch (e) { console.error(`[Events] handler error for ${name}:`, e); }
+    });
+  }
+}
+
+export class Component extends Events {
+  constructor() {
+    super();
+    this._children = [];
+    this._loaded = false;
+  }
+
+  addChild(child) {
+    this._children.push(child);
+    if (this._loaded && child.onload) {
+      try { child.onload(); } catch (e) { console.error('[Component] child onload error:', e); }
+    }
+    return child;
+  }
+
+  removeChild(child) {
+    const idx = this._children.indexOf(child);
+    if (idx >= 0) {
+      this._children.splice(idx, 1);
+      if (child.onunload) {
+        try { child.onunload(); } catch (e) { console.error('[Component] child onunload error:', e); }
+      }
+    }
+  }
+
+  onload() {
+    this._loaded = true;
+    this._children.forEach(c => {
+      if (c.onload) {
+        try { c.onload(); } catch (e) { console.error('[Component] child onload error:', e); }
+      }
+    });
+  }
+
+  onunload() {
+    this._loaded = false;
+    [...this._children].forEach(c => {
+      if (c.onunload) {
+        try { c.onunload(); } catch (e) { console.error('[Component] child onunload error:', e); }
+      }
+    });
+    this._children = [];
+  }
+
+  register(callback) {
+    this._eventRefs = this._eventRefs || [];
+    this._eventRefs.push(callback);
+  }
+}
 
 /* ── Plugin Base Class ────────────────────────────────────── */
 
-export class Plugin {
+export class Plugin extends Component {
   constructor(app, manifest) {
+    super();
     this.app = app;
     this.manifest = manifest;
     this._eventRefs = [];
     this._domListeners = [];
     this._intervals = [];
+    this._failureCount = 0;
   }
 
   /** Override: runs when plugin is enabled */
@@ -50,37 +135,47 @@ export class Plugin {
   }
 
   addRibbonIcon(iconSvg, title, callback) {
-    // Register in global ribbon registry so user can toggle visibility
+    // Guard: wrap callback so a bad plugin doesn't crash the ribbon
+    const safeCb = (...args) => {
+      try { callback(...args); } catch (e) {
+        console.error(`[Plugin] Ribbon icon error in ${this.manifest.id}:`, e);
+        this._failureCount++;
+      }
+    };
     const ribbonId = `plugin-${this.manifest.id}-${Date.now()}`;
     if (typeof _registerRibbonItem === 'function') {
-      _registerRibbonItem(ribbonId, title, iconSvg, callback, this.manifest.id);
+      _registerRibbonItem(ribbonId, title, iconSvg, safeCb, this.manifest.id);
     }
-    // Trigger re-render so the new item appears
-    const ribbon = document.getElementById('shard-ribbon-bar');
+    const ribbon = document.getElementById('vault-ribbon-bar');
     if (ribbon && typeof _renderRibbon === 'function') {
       _renderRibbon();
     }
-    // Return a stub element reference
     return { id: ribbonId };
   }
 
   addCommand(id, name, callback, hotkey) {
-    // Commands are registered globally; we store them on the app for the palette
     if (!this.app._commands) this.app._commands = [];
+    // Guard: wrap callback so a bad command doesn't crash the palette
+    const safeCb = (...args) => {
+      try { callback(...args); } catch (e) {
+        console.error(`[Plugin] Command error in ${this.manifest.id}:`, e);
+        this._failureCount++;
+      }
+    };
     this.app._commands.push({
       pluginId: this.manifest.id,
       id: `${this.manifest.id}:${id}`,
       name,
-      callback,
+      callback: safeCb,
       hotkey,
     });
   }
 
   addStatusBarItem() {
-    const bar = document.getElementById('shard-status-bar');
+    const bar = document.getElementById('vault-status-bar');
     if (!bar) return null;
     const el = document.createElement('span');
-    el.className = 'shard-status-bar-item';
+    el.className = 'vault-status-bar-item';
     bar.appendChild(el);
     return el;
   }
@@ -166,7 +261,18 @@ export class PluginManager {
       return false;
     }
     const instance = new entry.PluginClass(this.app, entry.manifest);
-    await instance.onload();
+
+    // Guard: wrap onload so failures don't crash the app
+    try {
+      await instance.onload();
+    } catch (err) {
+      console.error(`[PluginManager] onload error for ${id}:`, err);
+      instance._failureCount = (instance._failureCount || 0) + 1;
+      // Still register the instance so it can be disabled cleanly
+      this._instances.set(id, instance);
+      throw err;
+    }
+
     this._instances.set(id, instance);
     return true;
   }
@@ -174,7 +280,11 @@ export class PluginManager {
   async disable(id) {
     const instance = this._instances.get(id);
     if (!instance) return;
-    await instance.onunload();
+    try {
+      await instance.onunload();
+    } catch (err) {
+      console.error(`[PluginManager] onunload error for ${id}:`, err);
+    }
     this._instances.delete(id);
   }
 
@@ -245,7 +355,7 @@ export const CORE_PLUGINS = [
 function _makeSidebarPlugin(tabId) {
   return class extends Plugin {
     async onload() {
-      // Right sidebar rendering is still handled by shardPanel.js;
+      // Right sidebar rendering is still handled by vaultPanel.js;
       // the plugin's existence simply means the tab is shown.
       this._active = true;
     }
@@ -267,7 +377,7 @@ export class CanvasPlugin extends Plugin {
 
 export class CommandPalettePlugin extends Plugin {
   async onload() {
-    // Command palette — core feature already in shardPanel.js
+    // Command palette — core feature already in vaultPanel.js
   }
 }
 
@@ -285,7 +395,7 @@ export class NoteComposerPlugin extends Plugin {
 
 export class QuickSwitcherPlugin extends Plugin {
   async onload() {
-    // Quick file switcher — core feature already in shardPanel.js
+    // Quick file switcher — core feature already in vaultPanel.js
   }
 }
 
@@ -297,20 +407,20 @@ export class UniqueNoteCreatorPlugin extends Plugin {
 
 export class BookmarksPlugin extends Plugin {
   async onload() {
-    // Bookmarks are rendered by _renderBookmarksPane in shardPanel.js
+    // Bookmarks are rendered by _renderBookmarksPane in vaultPanel.js
     // Nothing extra needed here yet.
   }
 }
 
 export class TagsPlugin extends Plugin {
   async onload() {
-    // Tags rendered by _renderTagsPane / _renderNoteTagsPane in shardPanel.js
+    // Tags rendered by _renderTagsPane / _renderNoteTagsPane in vaultPanel.js
   }
 }
 
 export class SearchPlugin extends Plugin {
   async onload() {
-    // Search rendered by _renderSearchPane in shardPanel.js
+    // Search rendered by _renderSearchPane in vaultPanel.js
   }
 }
 
@@ -332,7 +442,7 @@ export class TemplatesPlugin extends Plugin {
 
 export class PagePreviewPlugin extends Plugin {
   async onload() {
-    // Page preview logic is already in shardPanel.js wikilink hover
+    // Page preview logic is already in vaultPanel.js wikilink hover
   }
 }
 
@@ -342,7 +452,7 @@ export class WordCountPlugin extends Plugin {
       const note = this.app.workspace.getActiveFile();
       const text = note ? (note.content || '') : '';
       const count = text.split(/\s+/).filter(Boolean).length;
-      const wcEl = document.getElementById('shard-word-count');
+      const wcEl = document.getElementById('vault-word-count');
       if (wcEl) wcEl.textContent = `${count} words`;
     };
 

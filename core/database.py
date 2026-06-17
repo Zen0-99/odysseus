@@ -1712,9 +1712,9 @@ class Integration(TimestampMixin, Base):
     enabled = Column(Boolean, default=True)
 
 
-class Shard(TimestampMixin, Base):
-    """A note from a connected Shard vault."""
-    __tablename__ = "shard"
+class VaultNote(TimestampMixin, Base):
+    """A note from a connected Vault vault."""
+    __tablename__ = "vault_note"
 
     id               = Column(String, primary_key=True, index=True)
     owner            = Column(String, nullable=True, index=True)
@@ -1735,18 +1735,18 @@ class Shard(TimestampMixin, Base):
     sync_status      = Column(String, nullable=True, default="synced")
 
     __table_args__ = (
-        Index('ix_shard_owner', 'owner'),
-        Index('ix_shard_vault', 'vault_path'),
-        Index('ix_shard_search', 'title', 'plaintext'),
+        Index('ix_vault_note_owner', 'owner'),
+        Index('ix_vault_note_vault', 'vault_path'),
+        Index('ix_vault_note_search', 'title', 'plaintext'),
     )
 
 
 
 
 
-class ShardVault(TimestampMixin, Base):
-    """A connected Shard vault with read/write settings."""
-    __tablename__ = "shard_vaults"
+class Vault(TimestampMixin, Base):
+    """A connected Vault vault with read/write settings."""
+    __tablename__ = "vaults"
 
     id            = Column(String, primary_key=True, index=True)
     owner         = Column(String, nullable=True, index=True)
@@ -1759,14 +1759,14 @@ class ShardVault(TimestampMixin, Base):
     note_count    = Column(Integer, default=0)
 
     __table_args__ = (
-        Index('ix_shard_vaults_owner', 'owner'),
-        Index('ix_shard_vaults_path', 'path'),
+        Index('ix_vaults_owner', 'owner'),
+        Index('ix_vaults_path', 'path'),
     )
 
 
-class ShardPermission(TimestampMixin, Base):
+class VaultPermission(TimestampMixin, Base):
     """Per-path permission override within a vault."""
-    __tablename__ = "shard_permissions"
+    __tablename__ = "vault_permissions"
 
     id           = Column(String, primary_key=True, index=True)
     vault_id     = Column(String, nullable=False, index=True)
@@ -1778,8 +1778,8 @@ class ShardPermission(TimestampMixin, Base):
     description  = Column(String, nullable=True)
 
     __table_args__ = (
-        Index('ix_shard_perm_vault', 'vault_id'),
-        Index('ix_shard_perm_owner', 'owner'),
+        Index('ix_vault_perm_vault', 'vault_id'),
+        Index('ix_vault_perm_owner', 'owner'),
     )
 
 

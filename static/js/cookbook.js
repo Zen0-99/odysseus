@@ -2468,7 +2468,7 @@ export async function open(opts) {
   _renderRunningTab();
   // Self-heal: revive any download tasks whose tmux session is still alive
   // but were persisted as done/error (covers the "restarted server while a
-  // big multi-shard download was in flight" case — the task survived in
+  // big multi-vault download was in flight" case — the task survived in
   // tmux, the cookbook just lost track of it).
   try { _selfHealStaleTasks({ oneShot: true }); } catch {}
   if (_content) {

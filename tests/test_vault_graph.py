@@ -1,4 +1,4 @@
-"""Tests for Shard graph and timeline pre-computation."""
+"""Tests for Vault graph and timeline pre-computation."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.database import engine, Base, SessionLocal, Shard
-from src.shard_graph import build_graph, build_timeline, _derive_group
+from core.database import engine, Base, SessionLocal, VaultNote
+from src.vault_graph import build_graph, build_timeline, _derive_group
 
 
 @pytest.fixture(autouse=True)
@@ -20,19 +20,19 @@ def _db():
     Base.metadata.create_all(engine)
     db = SessionLocal()
     # Seed notes
-    db.add(Shard(
+    db.add(VaultNote(
         id="u:v:a.md", owner="u", vault_path="v", rel_path="a.md",
         folder="", title="Alpha", content="x",
         tags='["tag1"]', outbound_links='["b.md"]',
         backlinks='[]', sync_status="synced"
     ))
-    db.add(Shard(
+    db.add(VaultNote(
         id="u:v:b.md", owner="u", vault_path="v", rel_path="b.md",
         folder="projects", title="Beta", content="y",
         tags='["tag2"]', outbound_links='["c.md"]',
         backlinks='["a.md"]', sync_status="synced"
     ))
-    db.add(Shard(
+    db.add(VaultNote(
         id="u:v:c.md", owner="u", vault_path="v", rel_path="c.md",
         folder="projects", title="Gamma", content="z",
         tags='["tag2"]', outbound_links='[]',

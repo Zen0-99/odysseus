@@ -386,12 +386,12 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None, targe
     native_quant = _native_quant(model)
     preq = is_prequantized(model)
 
-    # GGUF models can't be sharded across GPUs — use single GPU VRAM
+    # GGUF models can't be vaulted across GPUs — use single GPU VRAM
     is_gguf = bool(model.get("gguf_sources"))
     quant_upper = (native_quant or "").upper()
     is_gguf_quant = any(quant_upper.startswith(p) for p in ("Q2", "Q3", "Q4", "Q5", "Q6", "Q8", "IQ", "F16", "F32"))
-    # Single-GPU VRAM only applies to GGUF/dense builds (llama.cpp can't shard
-    # across GPUs). Prequantized formats (AWQ/GPTQ/FP8) are served sharded by
+    # Single-GPU VRAM only applies to GGUF/dense builds (llama.cpp can't vault
+    # across GPUs). Prequantized formats (AWQ/GPTQ/FP8) are served vaulted by
     # vLLM across all GPUs, so they get the FULL multi-GPU VRAM — even when the
     # model also lists a GGUF alternate download (gguf_sources).
     if (is_gguf or is_gguf_quant) and not preq:

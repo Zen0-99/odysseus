@@ -757,9 +757,9 @@ logger.info("Webhook & API token routes initialized")
 from routes.note_routes import setup_note_routes
 app.include_router(setup_note_routes(task_scheduler))
 
-# Shard vault integration
-from routes.shard_routes import setup_shard_routes
-app.include_router(setup_shard_routes())
+# Vault integration
+from routes.note_vault_routes import setup_note_vault_routes
+app.include_router(setup_note_vault_routes())
 
 # Email
 from routes.email_routes import setup_email_routes
@@ -1061,20 +1061,20 @@ async def _startup_event():
     # scheduled built-ins can fire once before being converted to event tasks.
     await _ensure_default_tasks()
 
-    # Restart Shard watchers for all active vaults
-    async def _restart_shard_watchers():
+    # Restart Vault watchers for all active vaults
+    async def _restart_vault_watchers():
         try:
-            from core.database import SessionLocal, ShardVault
-            from src.shard_watcher import get_watcher
+            from core.database import SessionLocal, Vault
+            from src.vault_watcher import get_watcher
             db = SessionLocal()
             try:
-                active = db.query(ShardVault).filter_by(is_active=True).all()
+                active = db.query(Vault).filter_by(is_active=True).all()
                 watcher = get_watcher()
                 for v in active:
                     try:
                         ok, msg = watcher.connect(v.owner, v.path)
                         if ok:
-                            logger.info(f"[startup] Restarted Shard watcher for {v.owner}: {v.name}")
+                            logger.info(f"[startup] Restarted Vault watcher for {v.owner}: {v.name}")
                         else:
                             logger.warning(f"[startup] Failed to restart watcher for {v.owner}: {v.name}: {msg}")
                     except Exception as e:
@@ -1082,8 +1082,8 @@ async def _startup_event():
             finally:
                 db.close()
         except Exception as e:
-            logger.debug(f"[startup] Shard watcher restart skipped: {e}")
-    await _restart_shard_watchers()
+            logger.debug(f"[startup] Vault watcher restart skipped: {e}")
+    await _restart_vault_watchers()
 
     # Disk-backed skills are not covered by the DB legacy-owner sweep. Repair
     # ownerless or deleted/test-owner SKILL.md files so strict owner filtering

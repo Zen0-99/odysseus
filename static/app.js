@@ -25,7 +25,7 @@ import galleryModule from './js/gallery.js';
 import tasksModule from './js/tasks.js';
 import calendarModule from './js/calendar.js';
 import notesModule from './js/notes.js';
-import shardPanel from './js/shardPanel.js';
+import vaultPanel from './js/vaultPanel.js';
 import adminModule from './js/admin.js';
 import settingsModule from './js/settings.js';
 // Eagerly bind unified minimize/restore behavior across all tool modals.
@@ -918,12 +918,12 @@ function initializeEventListeners() {
     });
   }
 
-  // Shard tool button
-  const toolShardBtn = el('tool-shard-btn');
-  if (toolShardBtn) {
-    toolShardBtn.addEventListener('click', () => {
-      if (shardPanel && shardPanel.togglePanel) {
-        shardPanel.togglePanel();
+  // Vault tool button
+  const toolVaultBtn = el('tool-vault-btn');
+  if (toolVaultBtn) {
+    toolVaultBtn.addEventListener('click', () => {
+      if (vaultPanel && vaultPanel.togglePanel) {
+        vaultPanel.togglePanel();
       }
     });
   }
@@ -1056,7 +1056,7 @@ function initializeEventListeners() {
     '/memory':   () => document.getElementById('tool-memory-btn')?.click(),
     '/gallery':  () => document.getElementById('tool-gallery-btn')?.click(),
     '/tasks':    () => document.getElementById('tool-tasks-btn')?.click(),
-    '/shard':    () => document.getElementById('tool-shard-btn')?.click(),
+    '/vault':    () => document.getElementById('tool-vault-btn')?.click(),
     '/library':  () => sessionModule && sessionModule.openLibrary && sessionModule.openLibrary(),
   };
   const _opener = _routeOpen[urlPath];
@@ -3426,7 +3426,7 @@ function startOdysseusApp() {
     'rail-archive':   'tool-library-btn',
     'rail-gallery':   'tool-gallery-btn',
     'rail-tasks':     'tool-tasks-btn',
-    'rail-shard':     'tool-shard-btn',
+    'rail-vault':     'tool-vault-btn',
     'rail-calendar':  'tool-calendar-btn',
     'rail-notes':     'tool-notes-btn',
     'rail-memory':    'tool-memory-btn',

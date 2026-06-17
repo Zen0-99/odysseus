@@ -1,5 +1,5 @@
 /**
- * Shard-flavored markdown extensions:
+ * Vault-flavored markdown extensions:
  * - [[WikiLinks]] → clickable note links
  * - ![[Embeds]] → inline rendered content
  * - > [!INFO] Callouts → styled blocks
@@ -19,12 +19,12 @@ const CALLOUT_TYPES = {
 };
 
 /**
- * Convert Shard-flavored markdown to HTML.
+ * Convert Vault-flavored markdown to HTML.
  * @param {string} rawContent - Raw note markdown
  * @param {Map<string,object>} noteCache - Map of note title → note object for resolving links
  * @param {Set<string>} embedChain - Track embed chain to prevent circular embeds
  */
-export function shardMdToHtml(rawContent, noteCache = new Map(), embedChain = new Set()) {
+export function vaultMdToHtml(rawContent, noteCache = new Map(), embedChain = new Set()) {
   let s = rawContent ?? '';
 
   // 1. Strip frontmatter
@@ -36,18 +36,18 @@ export function shardMdToHtml(rawContent, noteCache = new Map(), embedChain = ne
     const t = title.trim();
     const placeholder = `___EMBED_${embedBlocks.length}___`;
     if (embedChain.has(t)) {
-      embedBlocks.push(`<div class="shard-embed-error">Circular embed: ${escapeHtml(t)}</div>`);
+      embedBlocks.push(`<div class="vault-embed-error">Circular embed: ${escapeHtml(t)}</div>`);
       return placeholder;
     }
     const target = noteCache.get(t);
     if (!target) {
-      embedBlocks.push(`<div class="shard-embed-error">Embed not found: ${escapeHtml(t)}</div>`);
+      embedBlocks.push(`<div class="vault-embed-error">Embed not found: ${escapeHtml(t)}</div>`);
       return placeholder;
     }
     const nextChain = new Set(embedChain);
     nextChain.add(t);
-    const inner = shardMdToHtml(target.content || '', noteCache, nextChain);
-    embedBlocks.push(`<div class="shard-embed" data-embed-title="${escapeHtml(t)}">${inner}</div>`);
+    const inner = vaultMdToHtml(target.content || '', noteCache, nextChain);
+    embedBlocks.push(`<div class="vault-embed" data-embed-title="${escapeHtml(t)}">${inner}</div>`);
     return placeholder;
   });
 
@@ -64,7 +64,7 @@ export function shardMdToHtml(rawContent, noteCache = new Map(), embedChain = ne
     const cfg = CALLOUT_TYPES[type.toLowerCase()] || CALLOUT_TYPES.note;
     const cleanBody = body.replace(/^>\s?/gm, '').trim();
     const placeholder = `___CALLOUT_${calloutBlocks.length}___`;
-    // We can't run shardMdToHtml recursively on callout body because it would
+    // We can't run vaultMdToHtml recursively on callout body because it would
     // re-process wikilinks that are already processed. Instead, run mdToHtml on
     // the clean body, but we need to do this after the main mdToHtml pass.
     calloutBlocks.push({ cfg, title: title.trim(), body: cleanBody });
@@ -82,9 +82,9 @@ export function shardMdToHtml(rawContent, noteCache = new Map(), embedChain = ne
     const c = calloutBlocks[+i];
     if (!c) return '';
     const bodyHtml = mdToHtml(c.body);
-    return `<div class="shard-callout ${c.cfg.class}">
-      <div class="shard-callout-title"><span class="shard-callout-icon">${c.cfg.icon}</span> ${escapeHtml(c.title)}</div>
-      <div class="shard-callout-body">${bodyHtml}</div>
+    return `<div class="vault-callout ${c.cfg.class}">
+      <div class="vault-callout-title"><span class="vault-callout-icon">${c.cfg.icon}</span> ${escapeHtml(c.title)}</div>
+      <div class="vault-callout-body">${bodyHtml}</div>
     </div>`;
   });
 

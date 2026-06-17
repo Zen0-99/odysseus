@@ -1,4 +1,4 @@
-"""Shard vault file watcher — read-only sync into Shard rows."""
+"""Vault file watcher — read-only sync into Vault rows."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
-from src.shard_fs import invalidate_cache
+from src.vault_fs import invalidate_cache
 
 logger = logging.getLogger(__name__)
 
@@ -61,8 +61,8 @@ def _extract_links(body: str, vault_root: Path, note_rel_path: str) -> List[str]
     # [[WikiLink]] or [[WikiLink|alias]]
     for m in _WIKI_LINK_RE.finditer(body):
         target = m.group(1).strip()
-        # Shard: [[Note]] resolves to Note.md in same folder or vault root
-        target_path = _resolve_shard_link(target, note_dir, vault_root)
+        # Vault: [[Note]] resolves to Note.md in same folder or vault root
+        target_path = _resolve_vault_link(target, note_dir, vault_root)
         if target_path:
             targets.add(target_path)
 
@@ -79,9 +79,9 @@ def _extract_links(body: str, vault_root: Path, note_rel_path: str) -> List[str]
     return sorted(targets)
 
 
-def _resolve_shard_link(target: str, note_dir: Path, vault_root: Path) -> Optional[str]:
+def _resolve_vault_link(target: str, note_dir: Path, vault_root: Path) -> Optional[str]:
     """Resolve [[Target]] to a relative path inside the vault."""
-    # Shard: [[Folder/Note]] is a subfolder reference
+    # Vault: [[Folder/Note]] is a subfolder reference
     target_path = Path(target.replace("\\", "/"))
     if target_path.suffix != ".md":
         target_path = target_path.with_suffix(".md")
@@ -159,7 +159,7 @@ def _debounced_invalidate(vault_path: str) -> None:
 
 # Watcher -----------------------------------------------------------------------
 
-class ShardVaultWatcher:
+class VaultWatcher:
     """Per-vault file watcher. Manages one Observer keyed by (owner, vault_path)."""
 
     def __init__(self) -> None:
@@ -181,7 +181,7 @@ class ShardVaultWatcher:
             obs = _VaultObserver(owner, str(vault))
             obs.start()
             self._watchers[key] = obs
-            logger.info(f"Shard watcher started for {owner} at {vault}")
+            logger.info(f"Vault watcher started for {owner} at {vault}")
             return True, "Connected"
         except Exception as e:
             logger.exception(f"Failed to start watcher for {owner} at {vault}")
@@ -193,13 +193,13 @@ class ShardVaultWatcher:
         obs = self._watchers.pop(key, None)
         if obs:
             obs.stop()
-            logger.info(f"Shard watcher stopped for {owner} at {vault_path}")
+            logger.info(f"Vault watcher stopped for {owner} at {vault_path}")
 
     def disconnect_all(self) -> None:
         """Stop all watchers (called on app shutdown)."""
         for key, obs in list(self._watchers.items()):
             obs.stop()
-            logger.info(f"Shard watcher stopped for {key}")
+            logger.info(f"Vault watcher stopped for {key}")
         self._watchers.clear()
 
     def is_connected(self, owner: str, vault_path: str) -> bool:
@@ -226,16 +226,16 @@ class _VaultObserver:
         except ImportError:
             logger.warning("watchdog not installed; falling back to one-time scan")
             import threading
-            threading.Thread(target=self._initial_scan, daemon=True, name=f"shard-scan-{self.owner}").start()
+            threading.Thread(target=self._initial_scan, daemon=True, name=f"vault-scan-{self.owner}").start()
             return
 
-        self._handler = _ShardEventHandler(self.owner, self.vault_path)
+        self._handler = _VaultEventHandler(self.owner, self.vault_path)
         self._observer = Observer()
         self._observer.schedule(self._handler, str(self.vault_path), recursive=True)
         self._observer.start()
         # Initial scan runs in background so connect() returns instantly
         import threading
-        threading.Thread(target=self._initial_scan, daemon=True, name=f"shard-scan-{self.owner}").start()
+        threading.Thread(target=self._initial_scan, daemon=True, name=f"vault-scan-{self.owner}").start()
 
     def stop(self) -> None:
         if self._observer:
@@ -253,7 +253,7 @@ class _VaultObserver:
                 logger.exception(f"Failed to sync {md_file}")
 
 
-class _ShardEventHandler:
+class _VaultEventHandler:
     """watchdog event handler for markdown file changes."""
 
     def __init__(self, owner: str, vault_path: Path) -> None:
@@ -298,7 +298,7 @@ def _sync_file(owner: str, vault_root: Path, file_path: Path) -> None:
         logger.warning(f"File outside vault: {file_path}")
         return
 
-    # Skip hidden / dot-folders (Shard .shard/, .trash/)
+    # Skip hidden / dot-folders (Vault .vault/, .trash/)
     parts = Path(rel_path).parts
     if any(p.startswith(".") for p in parts):
         return
@@ -314,10 +314,12 @@ def _sync_file(owner: str, vault_root: Path, file_path: Path) -> None:
     links = _extract_links(body, vault_root, rel_path)
     title = _extract_title(frontmatter_raw, file_path)
     folder = str(Path(rel_path).parent) if Path(rel_path).parent != Path(".") else ""
-    mtime = datetime.fromtimestamp(file_path.stat().st_mtime)
+    stat = file_path.stat()
+    mtime = datetime.fromtimestamp(stat.st_mtime)
+    birth_time = datetime.fromtimestamp(getattr(stat, 'st_birthtime', None) or getattr(stat, 'st_ctime', stat.st_mtime))
 
     _upsert_note(owner, str(vault_root), rel_path, folder, title, body,
-                 frontmatter_raw, tags, links, mtime)
+                 frontmatter_raw, tags, links, mtime, birth_time)
 
 
 def _extract_title(frontmatter_raw: str, file_path: Path) -> str:
@@ -330,15 +332,15 @@ def _extract_title(frontmatter_raw: str, file_path: Path) -> str:
 
 def _upsert_note(owner: str, vault_path: str, rel_path: str, folder: str,
                  title: str, body: str, frontmatter: str, tags: List[str],
-                 links: List[str], mtime: datetime) -> None:
-    """Upsert an Shard row and recompute backlinks."""
-    from core.database import SessionLocal, Shard
+                 links: List[str], mtime: datetime, birth_time: datetime = None) -> None:
+    """Upsert a Vault row and recompute backlinks."""
+    from core.database import SessionLocal, Vault
     import uuid
 
     db = SessionLocal()
     try:
         note_id = f"{owner}:{vault_path}:{rel_path}"
-        existing = db.query(Shard).filter_by(
+        existing = db.query(Vault).filter_by(
             owner=owner, vault_path=vault_path, rel_path=rel_path
         ).first()
 
@@ -351,8 +353,9 @@ def _upsert_note(owner: str, vault_path: str, rel_path: str, folder: str,
             existing.folder = folder
             existing.last_modified_src = mtime
             existing.sync_status = "synced"
+            # Do NOT overwrite created_at on updates — preserve first-seen birth time
         else:
-            db.add(Shard(
+            db.add(Vault(
                 id=note_id,
                 owner=owner,
                 vault_path=vault_path,
@@ -364,6 +367,7 @@ def _upsert_note(owner: str, vault_path: str, rel_path: str, folder: str,
                 tags=json.dumps(tags),
                 outbound_links=json.dumps(links),
                 backlinks="[]",
+                created_at=birth_time or mtime,
                 last_modified_src=mtime,
                 sync_status="synced",
             ))
@@ -375,7 +379,7 @@ def _upsert_note(owner: str, vault_path: str, rel_path: str, folder: str,
 
 def _mark_deleted(owner: str, vault_root: Path, file_path: Path) -> None:
     """Mark a note as deleted (file removed from vault)."""
-    from core.database import SessionLocal, Shard
+    from core.database import SessionLocal, Vault
     try:
         rel_path = str(file_path.relative_to(vault_root)).replace("\\", "/")
     except ValueError:
@@ -383,7 +387,7 @@ def _mark_deleted(owner: str, vault_root: Path, file_path: Path) -> None:
 
     db = SessionLocal()
     try:
-        note = db.query(Shard).filter_by(
+        note = db.query(Vault).filter_by(
             owner=owner, vault_path=str(vault_root), rel_path=rel_path
         ).first()
         if note:
@@ -396,10 +400,10 @@ def _mark_deleted(owner: str, vault_root: Path, file_path: Path) -> None:
 
 def _mark_disconnected(owner: str, vault_path: str) -> None:
     """Set sync_status to disconnected for all notes in this vault."""
-    from core.database import SessionLocal, Shard
+    from core.database import SessionLocal, Vault
     db = SessionLocal()
     try:
-        db.query(Shard).filter_by(
+        db.query(Vault).filter_by(
             owner=owner, vault_path=vault_path
         ).update({"sync_status": "disconnected"}, synchronize_session=False)
         db.commit()
@@ -412,7 +416,7 @@ def _recompute_backlinks(db, owner: str, vault_path: str) -> None:
     from sqlalchemy import text
     notes = db.execute(
         text("""
-        SELECT id, rel_path, outbound_links FROM shard
+        SELECT id, rel_path, outbound_links FROM vault
         WHERE owner = :owner AND vault_path = :vault_path
           AND sync_status NOT IN ('deleted', 'disconnected')
         """),
@@ -434,7 +438,7 @@ def _recompute_backlinks(db, owner: str, vault_path: str) -> None:
     for note_id, rel_path, _ in notes:
         bl = json.dumps(backlink_map.get(rel_path, []))
         db.execute(
-            text("UPDATE shard SET backlinks = :bl WHERE id = :id"),
+            text("UPDATE vault SET backlinks = :bl WHERE id = :id"),
             {"bl": bl, "id": note_id}
         )
     db.commit()
@@ -442,11 +446,11 @@ def _recompute_backlinks(db, owner: str, vault_path: str) -> None:
 
 # Singleton ----------------------------------------------------------------------
 
-_vault_watcher: Optional[ShardVaultWatcher] = None
+_vault_watcher: Optional[VaultWatcher] = None
 
 
-def get_watcher() -> ShardVaultWatcher:
+def get_watcher() -> VaultWatcher:
     global _vault_watcher
     if _vault_watcher is None:
-        _vault_watcher = ShardVaultWatcher()
+        _vault_watcher = VaultWatcher()
     return _vault_watcher
