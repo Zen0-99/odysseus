@@ -102,3 +102,8 @@ compound.config.json
 *.error.log
 _scratch/
 /odysseus/
+
+# Dev scratchpad and local tools
+.github/urls.md
+cl4r1t4s/
+cleanup.bat
