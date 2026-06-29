@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from sqlalchemy import event, create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, Index, func, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.types import TypeDecorator
 from sqlalchemy.ext.declarative import declarative_base, declared_attr
 from sqlalchemy.orm import relationship, sessionmaker, backref
@@ -1783,6 +1784,26 @@ class VaultPermission(TimestampMixin, Base):
     )
 
 
+class VaultInlineDatabase(TimestampMixin, Base):
+    """Schema and view state for a markdown table promoted to a database."""
+    __tablename__ = "vault_inline_databases"
+
+    id          = Column(String, primary_key=True, index=True)
+    owner       = Column(String, nullable=True, index=True)
+    vault_id    = Column(String, nullable=False, index=True)
+    note_path   = Column(String, nullable=False)
+    marker      = Column(String, nullable=False, unique=True)
+    columns     = Column(JSON, nullable=True, default=list)
+    views       = Column(JSON, nullable=True, default=dict)
+    filters     = Column(JSON, nullable=True, default=list)
+    sort        = Column(JSON, nullable=True, default=list)
+
+    __table_args__ = (
+        Index('ix_vault_inline_db_owner', 'owner'),
+        Index('ix_vault_inline_db_vault', 'vault_id'),
+        Index('ix_vault_inline_db_note', 'note_path'),
+    )
+
 
 
 
@@ -1859,13 +1880,27 @@ def _migrate_seed_email_account():
 # Any future migrations or schema changes that temporarily violate foreign-key
 # constraints will fail. To perform such operations, foreign_keys must be
 # temporarily disabled around the migration workflow.
+_db_initialized = False
+
 def init_db():
     """
     Initialize the database by creating all tables.
     Should be called when starting the application.
     """
+    global _db_initialized
+    if _db_initialized:
+        return
+    _db_initialized = True
     _migrate_model_endpoints()
-    Base.metadata.create_all(bind=engine)
+    try:
+        Base.metadata.create_all(bind=engine)
+    except OperationalError as exc:
+        # On SQLite, pre-existing indexes can cause "already exists" even with
+        # checkfirst=True. Ignore these harmless errors so setup is idempotent.
+        if "already exists" in str(exc.orig or exc).lower():
+            pass
+        else:
+            raise
     _migrate_add_hidden_models_column()
     _migrate_add_cached_models_column()
     _migrate_add_pinned_models_column()

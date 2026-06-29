@@ -141,19 +141,19 @@ def test_recompute_backlinks():
         # Insert two notes manually
         db.add(VaultNote(
             id="u:v:A.md", owner="u", vault_path="v", rel_path="A.md",
-            title="A", content="x", outbound_links='["B.md"]',
-            backlinks="[]", sync_status="synced"
+            title="A", content="x", outbound_links=["B.md"],
+            backlinks=[], sync_status="synced"
         ))
         db.add(VaultNote(
             id="u:v:B.md", owner="u", vault_path="v", rel_path="B.md",
-            title="B", content="y", outbound_links='[]',
-            backlinks="[]", sync_status="synced"
+            title="B", content="y", outbound_links=[],
+            backlinks=[], sync_status="synced"
         ))
         db.commit()
         _recompute_backlinks(db, "u", "v")
 
         b = db.query(VaultNote).filter_by(rel_path="B.md").first()
-        assert json.loads(b.backlinks) == ["A.md"]
+        assert b.backlinks == ["A.md"]
     finally:
         db.close()
 

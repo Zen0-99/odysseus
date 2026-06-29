@@ -131,7 +131,8 @@
   transition: background 0.1s;
   gap: 12px;
 }
-.vault-context-menu-item:hover { background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 15%, transparent); }
+.vault-context-menu-item:hover,
+.vault-context-menu-item.selected { background: color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 15%, transparent); }
 .vault-context-menu-item.disabled {
   opacity: 0.4;
   cursor: default;
@@ -158,6 +159,10 @@
   min-width: 160px;
   padding: 4px 0;
   font-size: 12px;
+}
+/* Slash command menu reuses .vault-context-menu / .vault-context-menu-item classes */
+.vault-context-menu[data-slash-menu] {
+  outline: none;
 }
 /* Icon-only right tabs always */
 .vault-right-tab { min-height: 32px; }
@@ -363,6 +368,24 @@
 .vault-tab-close:hover {
   opacity: 1;
   background: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.vault-dirty-dot {
+  color: var(--accent, var(--red, #4a9eff));
+  font-size: 0.75em;
+  margin-left: 3px;
+  line-height: 1;
+}
+.vault-note-dirty::after {
+  content: '●';
+  color: var(--accent, var(--red, #4a9eff));
+  font-size: 0.55em;
+  margin-left: 6px;
+  vertical-align: middle;
+  line-height: 1;
+}
+.vault-tree-row.vault-note-dirty::after {
+  margin-left: auto;
+  padding-right: 4px;
 }
 .vault-tab-new {
   background: transparent;
@@ -1317,17 +1340,21 @@
 }
 /* Add Vault Overlay */
 .vault-add-vault-overlay {
-  position: absolute;
+  position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.4);
+  background: rgba(0,0,0,0.5);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 50;
-  backdrop-filter: blur(2px);
+  z-index: 300;
+  backdrop-filter: blur(4px);
 }
 .vault-add-vault-overlay.hidden {
   display: none;
+}
+#styled-prompt-overlay,
+#styled-confirm-overlay {
+  z-index: 310 !important;
 }
 .vault-add-vault-card {
   background: var(--bg-raised, var(--bg));
@@ -1366,6 +1393,41 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+/* Disabled browse button in browsers — browsers cannot reveal absolute paths */
+.vault-vault-path-row button.vault-browse-disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  filter: grayscale(0.6);
+  position: relative;
+}
+
+/* Custom tooltip for disabled browse button */
+.vault-vault-path-row button.vault-browse-disabled::after {
+  content: attr(title);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-raised, #1e1e2e);
+  color: var(--fg, #cdd6f4);
+  border: 1px solid var(--border, #313244);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: normal;
+  max-width: 220px;
+  text-align: center;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 320;
+}
+.vault-vault-path-row button.vault-browse-disabled:hover::after {
+  opacity: 1;
 }
 
 /* Fullscreen snap state */
@@ -1710,6 +1772,15 @@
   text-decoration: underline;
   text-decoration-style: solid;
   cursor: pointer;
+}
+
+/* Source mode: frontmatter block is plain text, visually separated from content */
+.vault-source-view .vault-frontmatter-line {
+  color: color-mix(in srgb, var(--fg) 65%, transparent);
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 0.92em;
+  border-left: 2px solid color-mix(in srgb, var(--accent, var(--red, #4a9eff)) 40%, transparent);
+  padding-left: 8px;
 }
 
 /* Rich markdown formatting in source / live preview */
@@ -3089,4 +3160,105 @@ body.electron #vault-modal.vault-fullscreen .vault-modal-content {
   background: var(--red);
   border: none;
   cursor: pointer;
+}
+
+/* Inline database tables */
+.vault-inline-database {
+  position: relative;
+  margin: 12px 0;
+  border: 1px solid var(--border, #3e4451);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--panel, var(--bg));
+}
+.vault-inline-database:hover .vault-inline-db-toolbar,
+.vault-inline-db-toolbar:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+}
+.vault-inline-db-toolbar {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+  z-index: 2;
+  background: var(--panel, var(--bg));
+  border-radius: 4px;
+  padding: 2px;
+  border: 1px solid var(--border, #3e4451);
+}
+.vault-inline-db-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--text, #abb2bf);
+  cursor: pointer;
+  border-radius: 4px;
+}
+.vault-inline-db-btn:hover {
+  background: var(--accent-bg, rgba(74, 158, 255, 0.15));
+  color: var(--accent, #4a9eff);
+}
+.vault-inline-db-btn.danger:hover {
+  color: var(--red, #ff6b6b);
+  background: rgba(255, 107, 107, 0.15);
+}
+.vault-inline-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.vault-inline-table thead tr {
+  background: var(--panel-alt, rgba(255, 255, 255, 0.03));
+}
+.vault-inline-table th,
+.vault-inline-table td {
+  border: 1px solid var(--border, #3e4451);
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+  color: var(--text, #abb2bf);
+}
+.vault-inline-table th {
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+}
+.vault-inline-table th:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+.vault-inline-table td {
+  cursor: text;
+  min-width: 80px;
+}
+.vault-inline-table td:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+.vault-inline-db-cell-input {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text, #abb2bf);
+  font: inherit;
+  outline: none;
+  padding: 0;
+  margin: 0;
+}
+.vault-inline-table a.wikilink {
+  color: var(--accent, #4a9eff);
+  text-decoration: none;
+}
+.vault-inline-table a.wikilink:hover {
+  text-decoration: underline;
+}
+.vault-inline-db-placeholder {
+  min-height: 40px;
 }

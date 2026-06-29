@@ -87,9 +87,18 @@ function _toGraphData(data, settings, activeNoteId) {
       const deg = degrees.get(n.id) || 0;
       const scale = _degreeScale(deg);
       const gc = _resolveGroupColor(n, settings.groups);
+      let nodeColor;
+      if (n.id === activeNoteId) {
+        nodeColor = settings.accentColor || '#00aaff';
+      } else if (gc) {
+        nodeColor = gc;
+      } else {
+        nodeColor = n.color?.background || settings.nodeColor || '#5c6370';
+      }
       return {
         id: n.id, name: n.label || n.id, val: baseVal * scale,
-        color: n.id === activeNoteId ? (settings.accentColor || '#00aaff') : (gc || n.color?.background || settings.nodeColor || '#5c6370'),
+        degree: deg,
+        color: nodeColor,
         created: n.created,
       };
     }),
@@ -163,6 +172,10 @@ class GraphEngine {
     this._targetScale = 0.5;
     this._targetX = 0;
     this._targetY = 0;
+    this._resizeObserver = null;
+    this._pendingResize = null; // timeout handle for resize throttling
+    this._lastResizeW = 0;
+    this._lastResizeH = 0;
     this._dirty = true;       // request a redraw
     this._physicsActive = true;
 
@@ -190,7 +203,6 @@ class GraphEngine {
     this._initWorker();
     this._initInteractions();
     this._startRenderLoop();
-    this._perfLogLast = 0;
   }
 
   _startRenderLoop() {
@@ -204,13 +216,6 @@ class GraphEngine {
         this._drawArrows();
         this._updateLabels();
         this._dirty = false;
-      }
-      // Infrequent performance log
-      const now = Date.now();
-      if (now - this._perfLogLast > 30000) {
-        this._perfLogLast = now;
-        const vis = this.nodes.filter(n => n._visible !== false).length;
-        console.log('[pixi-graph] perf', this.nodes.length, 'nodes,', this.links.length, 'links,', vis, 'visible');
       }
     });
   }
@@ -254,7 +259,8 @@ class GraphEngine {
 
     const bg = _colorToHex(this.settings.bg || '#282c34');
     this.app = new PIXI.Application({
-      resizeTo: this.container,
+      // resizeTo is handled manually below so we can keep the graph world fixed
+      // while the vault window changes size around it.
       backgroundColor: parseInt(bg.slice(1), 16),
       antialias: true,
       resolution: Math.min(window.devicePixelRatio, 2),
@@ -270,6 +276,21 @@ class GraphEngine {
     this.viewport.scale.set(0.5);
     this.app.stage.addChild(this.viewport);
     this._initPanZoom();
+
+    // Resize the canvas to the container when the container changes. We do not
+    // move or rescale the graph world; the window just reveals more/less of it.
+    // Throttle to once every 200ms so dragging the window edge doesn't stutter.
+    this._resizeCanvas();
+    if (typeof ResizeObserver !== 'undefined') {
+      this._resizeObserver = new ResizeObserver(() => {
+        if (this._pendingResize) return;
+        this._pendingResize = setTimeout(() => {
+          this._pendingResize = null;
+          this._resizeCanvas();
+        }, 200);
+      });
+      this._resizeObserver.observe(this.container);
+    }
 
     // Link graphics (single draw call)
     this.linkGraphics = new PIXI.Graphics();
@@ -290,6 +311,29 @@ class GraphEngine {
     this._buildLabels();
     this._drawLinks();
     this._drawNodes();
+  }
+
+  _resizeCanvas() {
+    const t0 = performance.now();
+    if (!this.app || this.destroyed || !this.container) return;
+    const w = this.container.clientWidth;
+    const h = this.container.clientHeight;
+    if (w <= 0 || h <= 0) return;
+    if (w === this._lastResizeW && h === this._lastResizeH) return;
+    this._lastResizeW = w;
+    this._lastResizeH = h;
+    this.app.renderer.resize(w, h);
+    this.app.view.style.width = w + 'px';
+    this.app.view.style.height = h + 'px';
+    // Render immediately so the canvas never shows a blank frame between resize and the next ticker,
+    // but only if the graphics objects have already been created (not during _initPixi setup).
+    if (this.nodeGraphics && this.linkGraphics) {
+      this._drawNodes();
+      this._drawLinks();
+      this.app.renderer.render(this.app.stage);
+    } else {
+      this._dirty = true;
+    }
   }
 
   _buildLabels() {
@@ -483,7 +527,7 @@ class GraphEngine {
     };
     this.worker.postMessage({
       type: 'init',
-      nodes: this.nodes.map(n => ({ id: n.id, val: n.val, x: n.x != null ? n.x : undefined, y: n.y != null ? n.y : undefined })),
+      nodes: this.nodes.map(n => ({ id: n.id, val: n.val, degree: n.degree || 0, x: n.x != null ? n.x : undefined, y: n.y != null ? n.y : undefined })),
       links: this.links,
       settings: this.settings,
     });
@@ -642,7 +686,7 @@ class GraphEngine {
     this._drawLinks();
     this.worker?.postMessage({
       type: 'init',
-      nodes: this.nodes.map(n => ({ id: n.id, val: n.val, x: this.posMap.get(n.id)?.x || 0, y: this.posMap.get(n.id)?.y || 0 })),
+      nodes: this.nodes.map(n => ({ id: n.id, val: n.val, degree: n.degree || 0, x: this.posMap.get(n.id)?.x || 0, y: this.posMap.get(n.id)?.y || 0 })),
       links: this.links,
       settings: this.settings,
     });
@@ -656,7 +700,7 @@ class GraphEngine {
     this._drawLinks();
     this.worker?.postMessage({
       type: 'init',
-      nodes: this.nodes.map(n => ({ id: n.id, val: n.val, x: this.posMap.get(n.id)?.x || 0, y: this.posMap.get(n.id)?.y || 0 })),
+      nodes: this.nodes.map(n => ({ id: n.id, val: n.val, degree: n.degree || 0, x: this.posMap.get(n.id)?.x || 0, y: this.posMap.get(n.id)?.y || 0 })),
       links: this.links,
       settings: this.settings,
     });
@@ -688,7 +732,7 @@ class GraphEngine {
     }
     this.worker?.postMessage({
       type: 'init',
-      nodes: this.nodes.map(n => ({ id: n.id, val: n.val, x: this.posMap.get(n.id)?.x || 0, y: this.posMap.get(n.id)?.y || 0 })),
+      nodes: this.nodes.map(n => ({ id: n.id, val: n.val, degree: n.degree || 0, x: this.posMap.get(n.id)?.x || 0, y: this.posMap.get(n.id)?.y || 0 })),
       links: this.links,
       settings: this.settings,
     });
@@ -777,6 +821,10 @@ class GraphEngine {
 
   destroy() {
     this.destroyed = true;
+    if (this._pendingResize) clearTimeout(this._pendingResize);
+    this._pendingResize = null;
+    this._resizeObserver?.disconnect();
+    this._resizeObserver = null;
     this.worker?.postMessage({ type: 'stop' });
     this.worker?.terminate();
     this.app?.destroy(true, { children: true, texture: true, baseTexture: true });

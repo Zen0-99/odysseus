@@ -23,6 +23,7 @@ let _localSettings = null;
 let _localActiveNoteId = null;
 let _localAllNodes = [];
 let _localAllEdges = [];
+let _vaultId = null;
 
 // Position cache: preserved across graph closes so reopening is instant.
 let _cachedPositions = new Map();
@@ -33,16 +34,17 @@ const DEFAULT_SETTINGS = {
   showOrphans: true,
   searchQuery: '',
   arrows: false,
-  nodeSize: 3.0,
-  linkThickness: 1.0,
-  centreForce: 0.3,
-  repelForce: 8,        // UI 0-20, internal mapped to -(val*500)
-  linkForce: 0.04,     // UI 0-1, direct d3 strength
-  linkDistance: 120,
+  nodeSize: 2.8,
+  linkThickness: 5.0,
+  centreForce: 0.5,
+  repelForce: 15,       // UI 0-20, internal mapped to -(val*500)
+  linkForce: 0.90,     // UI 0-1, direct d3 strength
+  linkDistance: 300,
   curvedLines: false,
   curveAngle: 0.7,
   dynamicLinkDistance: true,
   groups: [],
+  hubGravityMode: false,
 };
 
 const DEFAULT_LOCAL_SETTINGS = {
@@ -51,12 +53,13 @@ const DEFAULT_LOCAL_SETTINGS = {
   outgoingLinks: true,
   neighborLinks: false,
   arrows: false,
-  nodeSize: 3.0,
-  linkThickness: 1.0,
-  centreForce: 0.3,
-  repelForce: 8,
-  linkForce: 0.04,
-  linkDistance: 120,
+  nodeSize: 2.8,
+  linkThickness: 5.0,
+  centreForce: 0.5,
+  repelForce: 15,
+  linkForce: 0.90,
+  linkDistance: 300,
+  hubGravityMode: false,
 };
 
 function _loadSettings() {
@@ -72,6 +75,8 @@ function _loadSettings() {
       if (typeof saved.linkForce === 'number' && saved.linkForce > 1) {
         saved.linkForce = Math.min(1, Math.max(0, saved.linkForce));
       }
+      // Migrate: ensure new booleans exist
+      if (typeof saved.hubGravityMode !== 'boolean') saved.hubGravityMode = false;
       return { ...DEFAULT_SETTINGS, ...saved };
     }
   } catch {}
@@ -145,6 +150,7 @@ function _dataHash(nodes, edges) {
 export async function renderVaultGraph(container, vaultId) {
   if (!container) return;
   _container = container;
+  _vaultId = vaultId || null;
   _graphSettings = _loadSettings();
 
   // If we already have a live graph instance, just make sure its canvas is
@@ -171,6 +177,10 @@ export async function renderVaultGraph(container, vaultId) {
       return;
     }
     const data = await r.json();
+    console.log('[vaultGraph] graph loaded', {
+      nodes: data.nodes?.length,
+      edges: data.edges?.length,
+    });
 
     const prevHash = _dataHash(_allNodes, _allEdges);
     _allNodes = data.nodes || [];
@@ -229,6 +239,9 @@ function _draw() {
 // re-apply the current group colours and visibility filter.
 function _redraw() {
   if (!_mainGraphInstance) return;
+  // Sync latest settings into the engine before re-coloring the data.
+  // The engine stores its own settings copy, so it won't see _graphSettings changes otherwise.
+  _mainGraphInstance.updateSettings(_graphSettings);
   const { nodes: safeNodes, edges: safeEdges } = _sanitizeGraphData(_allNodes, _allEdges);
   _mainGraphInstance.updateData({ nodes: safeNodes, edges: safeEdges });
   _applyGroups();
@@ -546,9 +559,13 @@ function _buildSettingsPanel() {
         <div class="vault-graph-section-title"><span class="vault-graph-section-chevron expanded">></span>Forces</div>
         <div class="vault-graph-section-content">
           <div class="vault-graph-row">
+            <span class="vault-graph-row-label">Hub gravity mode</span>
+            <label class="admin-switch"><input type="checkbox" id="sg-hub-gravity" ${s.hubGravityMode ? 'checked' : ''}><span class="admin-slider"></span></label>
+          </div>
+          <div class="vault-graph-row">
             <span class="vault-graph-row-label">Centre force</span>
             <div class="vault-graph-slider-wrap">
-              <input type="range" id="sg-force-centre" min="0" max="1" step="0.05" value="${s.centreForce}">
+              <input type="range" id="sg-force-centre" min="0.5" max="10" step="0.1" value="${s.centreForce}" title="${s.centreForce}">
             </div>
           </div>
           <div class="vault-graph-row">
@@ -696,6 +713,7 @@ function _buildSettingsPanel() {
   }
   function _hideSliderTooltip() { tooltip.classList.remove('visible'); }
   panel.querySelectorAll('input[type="range"]:not(.vault-graph-anim-scrubber)').forEach(input => {
+    input.addEventListener('mouseenter', (e) => _showSliderTooltip(e.target, e.target.value));
     input.addEventListener('input', (e) => _showSliderTooltip(e.target, e.target.value));
     input.addEventListener('change', _hideSliderTooltip);
     input.addEventListener('mouseleave', _hideSliderTooltip);
@@ -862,6 +880,7 @@ function _buildSettingsPanel() {
     _applyFilter();
   });
 
+
   panel.querySelector('#sg-display-arrows').addEventListener('change', (e) => {
     _graphSettings.arrows = e.target.checked;
     _saveSettings();
@@ -883,10 +902,11 @@ function _buildSettingsPanel() {
   });
 
   const forceUpdate = () => _mainGraphInstance?.updateSettings({
-    centreForce: _graphSettings.centreForce,
+    centreForce: Math.max(0.5, _graphSettings.centreForce || 0.5),
     repelForce: _graphSettings.repelForce,
     linkForce: _graphSettings.linkForce,
     linkDistance: _graphSettings.linkDistance,
+    hubGravityMode: _graphSettings.hubGravityMode,
   });
 
   panel.querySelector('#sg-display-curved').addEventListener('change', (e) => {
@@ -896,7 +916,7 @@ function _buildSettingsPanel() {
   });
 
   panel.querySelector('#sg-force-centre').addEventListener('input', (e) => {
-    _graphSettings.centreForce = parseFloat(e.target.value);
+    _graphSettings.centreForce = Math.max(0.5, parseFloat(e.target.value) || 0.5);
     _saveSettings();
   });
   panel.querySelector('#sg-force-repel').addEventListener('input', (e) => {
@@ -916,6 +936,12 @@ function _buildSettingsPanel() {
   panel.querySelector('#sg-force-repel').addEventListener('change', forceUpdate);
   panel.querySelector('#sg-force-link').addEventListener('change', forceUpdate);
   panel.querySelector('#sg-force-distance').addEventListener('change', forceUpdate);
+
+  panel.querySelector('#sg-hub-gravity').addEventListener('change', (e) => {
+    _graphSettings.hubGravityMode = e.target.checked;
+    _saveSettings();
+    _mainGraphInstance?.updateSettings(_graphSettings);
+  });
 
   // ── In-panel Animation controls ──
   _wireAnimationControls(panel, _mainGraphInstance);
@@ -1168,9 +1194,13 @@ function _buildLocalSettingsPanel() {
         <div class="vault-graph-section-title"><span class="vault-graph-section-chevron expanded">></span>Forces</div>
         <div class="vault-graph-section-content">
           <div class="vault-graph-row">
+            <span class="vault-graph-row-label">Hub gravity mode</span>
+            <label class="admin-switch"><input type="checkbox" id="sg-local-hub-gravity" ${s.hubGravityMode ? 'checked' : ''}><span class="admin-slider"></span></label>
+          </div>
+          <div class="vault-graph-row">
             <span class="vault-graph-row-label">Centre force</span>
             <div class="vault-graph-slider-wrap">
-              <input type="range" id="sg-local-centre" min="0" max="1" step="0.05" value="${s.centreForce}">
+              <input type="range" id="sg-local-centre" min="0.5" max="10" step="0.1" value="${s.centreForce}" title="${s.centreForce}">
             </div>
           </div>
           <div class="vault-graph-row">
@@ -1298,6 +1328,7 @@ function _buildLocalSettingsPanel() {
   }
   function _hideSliderTooltip() { tooltip.classList.remove('visible'); }
   panel.querySelectorAll('input[type="range"]:not(.vault-graph-anim-scrubber)').forEach(input => {
+    input.addEventListener('mouseenter', (e) => _showSliderTooltip(e.target, e.target.value));
     input.addEventListener('input', (e) => _showSliderTooltip(e.target, e.target.value));
     input.addEventListener('change', _hideSliderTooltip);
     input.addEventListener('mouseleave', _hideSliderTooltip);
@@ -1346,13 +1377,14 @@ function _buildLocalSettingsPanel() {
   });
 
   const forceUpdate = () => _localGraphInstance?.updateSettings({
-    centreForce: _localSettings.centreForce,
+    centreForce: Math.max(0.5, _localSettings.centreForce || 0.5),
     repelForce: _localSettings.repelForce,
     linkForce: _localSettings.linkForce,
     linkDistance: _localSettings.linkDistance,
+    hubGravityMode: _localSettings.hubGravityMode,
   });
   panel.querySelector('#sg-local-centre').addEventListener('input', (e) => {
-    _localSettings.centreForce = parseFloat(e.target.value);
+    _localSettings.centreForce = Math.max(0.5, parseFloat(e.target.value) || 0.5);
     _saveLocalSettings();
   });
   panel.querySelector('#sg-local-repel').addEventListener('input', (e) => {
@@ -1373,6 +1405,13 @@ function _buildLocalSettingsPanel() {
   panel.querySelector('#sg-local-link').addEventListener('change', forceUpdate);
   panel.querySelector('#sg-local-distance').addEventListener('change', forceUpdate);
 
+  panel.querySelector('#sg-local-hub-gravity').addEventListener('change', (e) => {
+    _localSettings.hubGravityMode = e.target.checked;
+    _saveLocalSettings();
+    _localGraphInstance?.updateSettings(_localSettings);
+  });
+
   // ── In-panel Animation controls ──
   _wireAnimationControls(panel, _localGraphInstance);
 }
+

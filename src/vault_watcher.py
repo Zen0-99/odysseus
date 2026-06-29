@@ -11,6 +11,12 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
 from src.vault_fs import invalidate_cache
+from src.vault_graph_cache import invalidate_graph_cache
+
+try:
+    from watchdog.events import FileSystemEventHandler
+except ImportError:  # pragma: no cover
+    FileSystemEventHandler = object
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +156,7 @@ def _debounced_invalidate(vault_path: str) -> None:
     def _do():
         _debounce_timers.pop(key, None)
         invalidate_cache(vault_path)
+        invalidate_graph_cache(vault_path)
 
     import threading
     t = threading.Timer(_DEBOUNCE_SECONDS, _do)
@@ -253,7 +260,7 @@ class _VaultObserver:
                 logger.exception(f"Failed to sync {md_file}")
 
 
-class _VaultEventHandler:
+class _VaultEventHandler(FileSystemEventHandler):
     """watchdog event handler for markdown file changes."""
 
     def __init__(self, owner: str, vault_path: Path) -> None:
@@ -333,14 +340,14 @@ def _extract_title(frontmatter_raw: str, file_path: Path) -> str:
 def _upsert_note(owner: str, vault_path: str, rel_path: str, folder: str,
                  title: str, body: str, frontmatter: str, tags: List[str],
                  links: List[str], mtime: datetime, birth_time: datetime = None) -> None:
-    """Upsert a Vault row and recompute backlinks."""
-    from core.database import SessionLocal, Vault
+    """Upsert a VaultNote row and recompute backlinks."""
+    from core.database import SessionLocal, VaultNote
     import uuid
 
     db = SessionLocal()
     try:
         note_id = f"{owner}:{vault_path}:{rel_path}"
-        existing = db.query(Vault).filter_by(
+        existing = db.query(VaultNote).filter_by(
             owner=owner, vault_path=vault_path, rel_path=rel_path
         ).first()
 
@@ -348,14 +355,14 @@ def _upsert_note(owner: str, vault_path: str, rel_path: str, folder: str,
             existing.title = title
             existing.content = body
             existing.frontmatter = frontmatter
-            existing.tags = json.dumps(tags)
-            existing.outbound_links = json.dumps(links)
+            existing.tags = tags
+            existing.outbound_links = links
             existing.folder = folder
             existing.last_modified_src = mtime
             existing.sync_status = "synced"
             # Do NOT overwrite created_at on updates — preserve first-seen birth time
         else:
-            db.add(Vault(
+            db.add(VaultNote(
                 id=note_id,
                 owner=owner,
                 vault_path=vault_path,
@@ -364,9 +371,9 @@ def _upsert_note(owner: str, vault_path: str, rel_path: str, folder: str,
                 title=title,
                 content=body,
                 frontmatter=frontmatter,
-                tags=json.dumps(tags),
-                outbound_links=json.dumps(links),
-                backlinks="[]",
+                tags=tags,
+                outbound_links=links,
+                backlinks=[],
                 created_at=birth_time or mtime,
                 last_modified_src=mtime,
                 sync_status="synced",
@@ -379,7 +386,7 @@ def _upsert_note(owner: str, vault_path: str, rel_path: str, folder: str,
 
 def _mark_deleted(owner: str, vault_root: Path, file_path: Path) -> None:
     """Mark a note as deleted (file removed from vault)."""
-    from core.database import SessionLocal, Vault
+    from core.database import SessionLocal, VaultNote
     try:
         rel_path = str(file_path.relative_to(vault_root)).replace("\\", "/")
     except ValueError:
@@ -387,7 +394,7 @@ def _mark_deleted(owner: str, vault_root: Path, file_path: Path) -> None:
 
     db = SessionLocal()
     try:
-        note = db.query(Vault).filter_by(
+        note = db.query(VaultNote).filter_by(
             owner=owner, vault_path=str(vault_root), rel_path=rel_path
         ).first()
         if note:
@@ -400,10 +407,10 @@ def _mark_deleted(owner: str, vault_root: Path, file_path: Path) -> None:
 
 def _mark_disconnected(owner: str, vault_path: str) -> None:
     """Set sync_status to disconnected for all notes in this vault."""
-    from core.database import SessionLocal, Vault
+    from core.database import SessionLocal, VaultNote
     db = SessionLocal()
     try:
-        db.query(Vault).filter_by(
+        db.query(VaultNote).filter_by(
             owner=owner, vault_path=vault_path
         ).update({"sync_status": "disconnected"}, synchronize_session=False)
         db.commit()
@@ -416,7 +423,7 @@ def _recompute_backlinks(db, owner: str, vault_path: str) -> None:
     from sqlalchemy import text
     notes = db.execute(
         text("""
-        SELECT id, rel_path, outbound_links FROM vault
+        SELECT id, rel_path, outbound_links FROM vault_note
         WHERE owner = :owner AND vault_path = :vault_path
           AND sync_status NOT IN ('deleted', 'disconnected')
         """),
@@ -427,8 +434,8 @@ def _recompute_backlinks(db, owner: str, vault_path: str) -> None:
     backlink_map: Dict[str, List[str]] = {}
     for note_id, rel_path, outbound_raw in notes:
         try:
-            targets = json.loads(outbound_raw or "[]")
-        except json.JSONDecodeError:
+            targets = outbound_raw if isinstance(outbound_raw, list) else json.loads(outbound_raw or "[]")
+        except (json.JSONDecodeError, TypeError):
             targets = []
         for target in targets:
             backlink_map.setdefault(target, []).append(rel_path)
@@ -438,7 +445,7 @@ def _recompute_backlinks(db, owner: str, vault_path: str) -> None:
     for note_id, rel_path, _ in notes:
         bl = json.dumps(backlink_map.get(rel_path, []))
         db.execute(
-            text("UPDATE vault SET backlinks = :bl WHERE id = :id"),
+            text("UPDATE vault_note SET backlinks = :bl WHERE id = :id"),
             {"bl": bl, "id": note_id}
         )
     db.commit()

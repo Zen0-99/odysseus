@@ -171,3 +171,25 @@ def test_edit_readonly_rejected(client):
         assert "read-only" in r2.json()["detail"].lower()
 
         client.post("/api/vault/disconnect")
+
+
+def test_strategy_override_is_atomic_and_creates_backup():
+    """The override save strategy must write to a temp file, backup the
+    original, and atomically rename so the original is never partial."""
+    from types import SimpleNamespace
+    from routes.note_vault_routes import _strategy_override
+
+    with tempfile.TemporaryDirectory() as td:
+        vault = Path(td)
+        original = vault / "note.md"
+        original.write_text("original content", encoding="utf-8")
+        note = SimpleNamespace(vault_path=str(vault), rel_path="note.md")
+
+        result = _strategy_override(note, "updated content")
+
+        assert original.read_text(encoding="utf-8") == "updated content"
+        assert result["action"] == "override"
+        backup_dir = vault / ".odysseus" / "backups"
+        backups = sorted(backup_dir.glob("note-*.md"))
+        assert len(backups) == 1
+        assert backups[0].read_text(encoding="utf-8") == "original content"

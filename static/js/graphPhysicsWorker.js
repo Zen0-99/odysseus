@@ -35,20 +35,14 @@ function _initSimulation(nodes, links, settings, opts = {}) {
   _links = links.map(l => ({ ...l }));
   _settings = settings;
 
-  // Mirror the original force-graph config exactly (forceGraphRenderer._configureForces)
-  const { repel, centreStr, linkDist, linkStr } = _deriveForces(settings);
-
   _simulation = d3.forceSimulation(_nodes)
-    .force('charge', d3.forceManyBody().strength(repel))
-    .force('x', d3.forceX(0).strength(centreStr))
-    .force('y', d3.forceY(0).strength(centreStr))
-    .force('link', d3.forceLink(_links).id(d => d.id).distance(d => d.distance || linkDist).strength(linkStr))
+    .force('link', d3.forceLink(_links).id(d => d.id))
     .alphaDecay(0.08)
     .velocityDecay(0.4)
     .alpha(startAlpha)
     .stop(); // Don't auto-tick — we drive it manually
 
-  _applyRadialForce(settings);
+  _configureForces(settings);
 
   // Warm-up: skip entirely when cached positions exist (instant reopen),
   // otherwise use a shorter default (20 ticks) to reduce build time.
@@ -65,13 +59,8 @@ function _setData(nodes, links, settings) {
   _settings = settings || _settings;
   _nodes = nodes.map(n => ({ ...n, x: n.x != null ? n.x : undefined, y: n.y != null ? n.y : undefined, vx: 0, vy: 0 }));
   _links = links.map(l => ({ ...l }));
-  const { repel, centreStr, linkDist, linkStr } = _deriveForces(_settings);
   _simulation.nodes(_nodes);
-  _simulation.force('charge', d3.forceManyBody().strength(repel));
-  _simulation.force('x', d3.forceX(0).strength(centreStr));
-  _simulation.force('y', d3.forceY(0).strength(centreStr));
-  _simulation.force('link', d3.forceLink(_links).id(d => d.id).distance(d => d.distance || linkDist).strength(linkStr));
-  _applyRadialForce(_settings);
+  _configureForces(_settings);
   _simulation.alpha(Math.max(_simulation.alpha(), 0.15));
   if (!_tickInterval) _startPosting();
 }
@@ -95,13 +84,142 @@ function _applyRadialForce(settings) {
   }
 }
 
-// UI repel 0-20 maps to internal -(val*500); centreForce/linkForce are direct d3 strengths.
-function _deriveForces(settings) {
+function _configureForces(settings) {
+  if (!_simulation) return;
+  settings = settings || _settings;
+
+  // Link force is always present; update its distance/strength in place.
+  const linkDist = settings.linkDistance || 120;
+  const linkStr = settings.linkForce;
+  const linkForce = _simulation.force('link');
+  if (linkForce) linkForce.distance(d => d.distance || linkDist).strength(linkStr);
+
+  // Centre force has a hard floor so the graph never loses its global anchor.
+  const centreStr = Math.max(0.5, settings.centreForce || 0.5);
+
+  if (settings && settings.hubGravityMode) {
+    // Hub gravity: centre slider = hub attraction, repel slider = hub repulsion.
+    // A tiny global centre force keeps the whole graph from drifting to infinity.
+    _simulation.force('charge', null);
+    _simulation.force('x', d3.forceX(0).strength(0.02));
+    _simulation.force('y', d3.forceY(0).strength(0.02));
+    _simulation.force('hubGravity', _hubGravityForce(centreStr).links(_links));
+    _simulation.force('hubRepel', _hubRepelForce(settings.repelForce));
+  } else {
+    // Standard mode: global centre + global many-body repulsion.
+    const repel = settings.repelForce >= 0 ? -(settings.repelForce * 500) : settings.repelForce;
+    _simulation.force('charge', d3.forceManyBody().strength(repel));
+    _simulation.force('x', d3.forceX(0).strength(centreStr));
+    _simulation.force('y', d3.forceY(0).strength(centreStr));
+    _simulation.force('hubGravity', null);
+    _simulation.force('hubRepel', null);
+  }
+
+  _applyRadialForce(settings);
+}
+
+// Custom force: each connected node (hub) attracts its linked neighbors and,
+// for orphans, the nearest hub. The centre-force slider controls the strength.
+function _hubGravityForce(strength) {
+  let nodes = [];
+  let nodeById = new Map();
+  let adj = new Map();
+
+  const force = {
+    initialize: function(n) {
+      nodes = n;
+      nodeById = new Map(nodes.map(n => [n.id, n]));
+    },
+    links: function(l) {
+      adj = new Map();
+      for (const link of l) {
+        const aId = typeof link.source === 'object' ? link.source?.id : link.source;
+        const bId = typeof link.target === 'object' ? link.target?.id : link.target;
+        if (!aId || !bId) continue;
+        if (!adj.has(aId)) adj.set(aId, []);
+        if (!adj.has(bId)) adj.set(bId, []);
+        adj.get(aId).push(bId);
+        adj.get(bId).push(aId);
+      }
+      return force;
+    },
+    call: function(alpha) {
+      const hubs = nodes.filter(n => (n.degree || 0) > 0);
+      if (hubs.length === 0) return;
+      const scale = (strength * 80 * alpha) / Math.max(1, hubs.length);
+
+      for (const node of nodes) {
+        const neighbors = adj.get(node.id) || [];
+        let targetHub = null;
+
+        if (neighbors.length > 0) {
+          // Pull toward the highest-degree neighbor that outranks this node
+          let bestDeg = node.degree || 0;
+          for (const nbId of neighbors) {
+            const nb = nodeById.get(nbId);
+            if (nb && (nb.degree || 0) > bestDeg) {
+              bestDeg = nb.degree || 0;
+              targetHub = nb;
+            }
+          }
+        }
+
+        // Orphans fall toward the nearest hub
+        if (!targetHub && (node.degree || 0) === 0) {
+          let minDist = Infinity;
+          for (const hub of hubs) {
+            const dx = hub.x - node.x;
+            const dy = hub.y - node.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < minDist) {
+              minDist = dist;
+              targetHub = hub;
+            }
+          }
+        }
+
+        if (targetHub && targetHub !== node) {
+          const dx = targetHub.x - node.x;
+          const dy = targetHub.y - node.y;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          const mass = Math.max(1, targetHub.degree || 1);
+          const f = (scale * mass) / dist; // linear falloff keeps distant nodes influenced
+          node.vx += (dx / dist) * f;
+          node.vy += (dy / dist) * f;
+        }
+      }
+    }
+  };
+  return force;
+}
+
+// Custom force: hub nodes repel each other. The repel-force slider controls strength.
+function _hubRepelForce(strength) {
+  let nodes = [];
+
   return {
-    repel: settings.repelForce >= 0 ? -(settings.repelForce * 500) : settings.repelForce,
-    centreStr: settings.centreForce,
-    linkDist: settings.linkDistance || 120,
-    linkStr: settings.linkForce,
+    initialize: function(n) { nodes = n; },
+    call: function(alpha) {
+      const hubs = nodes.filter(n => (n.degree || 0) > 0);
+      const scale = strength * 400 * alpha;
+
+      for (let i = 0; i < hubs.length; i++) {
+        for (let j = i + 1; j < hubs.length; j++) {
+          const a = hubs[i], b = hubs[j];
+          const dx = a.x - b.x;
+          const dy = a.y - b.y;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          const mass = Math.max(1, (a.degree || 1) * (b.degree || 1));
+          const f = (scale * mass) / (dist * dist);
+          const fx = (dx / dist) * f;
+          const fy = (dy / dist) * f;
+          a.vx += fx;
+          a.vy += fy;
+          b.vx -= fx;
+          b.vy -= fy;
+        }
+      }
+    }
   };
 }
 
@@ -130,15 +248,8 @@ function _startPosting() {
 
 function _updateSettings(settings) {
   if (!_simulation) return;
-  _settings = settings;
-  const { repel, centreStr, linkDist, linkStr } = _deriveForces(settings);
-  _simulation.force('charge', d3.forceManyBody().strength(repel));
-  _simulation.force('x', d3.forceX(0).strength(centreStr));
-  _simulation.force('y', d3.forceY(0).strength(centreStr));
-  // Mutate the existing link force in place rather than replacing it
-  const linkForce = _simulation.force('link');
-  if (linkForce) linkForce.distance(d => d.distance || linkDist).strength(linkStr);
-  _applyRadialForce(settings);
+  _settings = { ..._settings, ...settings };
+  _configureForces(_settings);
   _simulation.alpha(0.3);
 }
 

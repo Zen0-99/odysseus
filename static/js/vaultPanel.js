@@ -5,6 +5,20 @@
 import { makeWindowDraggable } from './windowDrag.js';
 import { makeWindowResizable } from './windowResize.js';
 import { vaultMdToHtml, buildNoteCache } from './vaultMarkdown.js';
+import {
+  parseInlineDatabases,
+  renderDatabaseTable,
+  fetchInlineDatabases,
+  editInlineDatabaseCell,
+  addInlineDatabaseColumn,
+  removeInlineDatabaseColumn,
+  addInlineDatabaseRow,
+  removeInlineDatabaseRow,
+  updateInlineDatabaseSchema,
+  deleteInlineDatabase,
+  promoteInlineDatabase,
+} from './vaultInlineDatabase.js';
+import { createVaultSlashMenu } from './vaultSlashMenu.js';
 import { styledConfirm, styledPrompt, showToast, showError } from './ui.js';
 import { IS_MAC } from './platform.js';
 import {
@@ -52,6 +66,9 @@ let _recentDragNoteId = null; // suppress click after drag-and-drop
 let _recentDragTimer = null;
 let _isDraggingTree = false; // guard _renderFolderTree during drag
 let _propsCollapsed = false; // global collapse state for properties section
+let _dirtyNoteIds = new Set(); // notes with unsaved changes
+let _saveTimers = new Map(); // noteId -> setTimeout handle
+let _saveFailures = new Set(); // noteIds that failed the last save attempt
 
 function _showLoading(text = 'Loading vault...') {
   const overlay = document.getElementById('vault-loading-overlay');
@@ -85,10 +102,41 @@ function _stopFilePolling() {
 }
 
 export async function openPanel() {
-  console.log('[vault] openPanel called');
   const modal = document.getElementById('vault-modal');
   if (!modal) return;
   if (_open) { _bringToFront(); return; }
+
+  // Load vaults first so we can decide whether to show the vault panel
+  // or the standalone "add vault" dialog.
+  const hasVaults = _vaults && _vaults.length > 0;
+  if (!hasVaults) {
+    let hasCache = false;
+    try {
+      const cached = localStorage.getItem('vault-vaults');
+      if (cached) {
+        const { ts } = JSON.parse(cached);
+        if (Date.now() - ts < 10 * 60 * 1000) hasCache = true;
+      }
+    } catch {}
+    if (!hasCache) _showLoading('Loading vaults...');
+    try {
+      await _loadVaults();
+    } finally {
+      _hideLoading();
+    }
+  } else {
+    _loadVaults().catch(() => {});
+  }
+
+  // No vaults at all — show the standalone add-vault dialog and skip the
+  // vault modal entirely so the user never sees an empty vault screen.
+  if (!_vaults || !_vaults.length) {
+    document.getElementById('tool-vault-btn')?.classList.add('active');
+    _showAddVaultForm();
+    return;
+  }
+
+  // Vaults exist — open the full vault modal normally.
   _open = true;
 
   // Restore saved position / fullscreen state BEFORE showing modal so it
@@ -115,37 +163,12 @@ export async function openPanel() {
   _bringToFront();
   _wireDrag();
   _startFilePolling();
-  // Only show loading on first open or if no vaults cached
-  const hasVaults = _vaults && _vaults.length > 0;
-  if (!hasVaults) {
-    // Skip loading overlay if we have a recent cache — the vault list will
-    // restore instantly and the fetch can run silently in background.
-    let hasCache = false;
-    try {
-      const cached = localStorage.getItem('vault-vaults');
-      if (cached) {
-        const { ts } = JSON.parse(cached);
-        if (Date.now() - ts < 10 * 60 * 1000) hasCache = true;
-      }
-    } catch {}
-    if (!hasCache) _showLoading('Loading vaults...');
-    try {
-      await _loadVaults();
-    } finally {
-      _hideLoading();
-    }
-  } else {
-    // Still refresh vaults in background but don't block UI
-    _loadVaults().catch(() => {});
-  }
-
   document.getElementById('tool-vault-btn')?.classList.add('active');
   document.addEventListener('keydown', _vaultKeyHandler);
 }
 
 export function closePanel() {
   const modal = document.getElementById('vault-modal');
-  console.log('[vault] closePanel called; _open=', _open, 'modal=', !!modal);
   if (!modal || !_open) return;
   // Don't close if quick switcher or command palette is open — close those first
   if (_quickSwitcherEl) { _hideQuickSwitcher(); return; }
@@ -161,7 +184,6 @@ export function closePanel() {
 }
 
 export function togglePanel() {
-  console.log('[vault] togglePanel; _open=', _open);
   if (_open) closePanel(); else openPanel();
 }
 
@@ -406,75 +428,6 @@ function _wireDrag() {
     });
   }
 
-  // Vault management
-  document.getElementById('vault-save-vault-btn')?.addEventListener('click', _saveNewVault);
-  document.getElementById('vault-cancel-vault-btn')?.addEventListener('click', _hideAddVaultForm);
-
-  // Browse button — prefer Electron IPC directory picker, then file input, then FS Access API
-  const browseBtn = document.getElementById('vault-browse-vault-btn');
-  const fileInput = document.getElementById('vault-vault-file-input');
-  if (browseBtn && fileInput) {
-    browseBtn.addEventListener('click', async () => {
-      // Electron: use IPC to get real folder path from main process
-      if (window.electronAPI?.selectDirectory) {
-        try {
-          const result = await window.electronAPI.selectDirectory();
-          if (result && !result.canceled && result.filePaths?.length) {
-            const pathInput = document.getElementById('vault-new-vault-path');
-            if (pathInput) pathInput.value = result.filePaths[0];
-          }
-        } catch (err) {
-          console.warn('[vault] electron directory picker failed:', err);
-        }
-        return;
-      }
-      // Browser fallback 1: File System Access API (virtual handle, no full path)
-      if (window.showDirectoryPicker) {
-        try {
-          const handle = await window.showDirectoryPicker();
-          const pathInput = document.getElementById('vault-new-vault-path');
-          const hint = document.getElementById('vault-browse-hint');
-          if (pathInput) {
-            // FS Access API hides real paths for security — user must type the full path
-            pathInput.placeholder = 'e.g. C:\\Users\\You\\Obsidian Vault';
-            pathInput.focus();
-          }
-          if (hint) {
-            hint.textContent = 'Selected: ' + handle.name + ' — please type the full absolute path above (browsers cannot reveal real paths).';
-            hint.style.display = 'block';
-          }
-        } catch (err) {
-          if (err.name !== 'AbortError') console.warn('[vault] directory picker failed:', err);
-        }
-        return;
-      }
-      // Browser fallback 2: legacy file input (webkitdirectory)
-      fileInput.click();
-    });
-    fileInput.addEventListener('change', (e) => {
-      const files = e.target.files;
-      if (!files || !files.length) return;
-      const pathInput = document.getElementById('vault-new-vault-path');
-      const relPath = files[0].webkitRelativePath || '';
-      const folderName = relPath.split('/')[0] || '';
-      const filePath = files[0].path || '';
-      let displayPath = '';
-      if (filePath && relPath) {
-        const relParts = relPath.split('/');
-        const sep = filePath.includes('\\') ? '\\' : '/';
-        const pathParts = filePath.split(sep);
-        const rootParts = pathParts.slice(0, pathParts.length - relParts.length);
-        displayPath = rootParts.join(sep);
-      } else if (filePath) {
-        displayPath = filePath;
-      } else {
-        displayPath = folderName;
-      }
-      if (pathInput && displayPath) pathInput.value = displayPath;
-      e.target.value = '';
-    });
-  }
-
   _wireVaultDropdown();
 
   // Permissions button
@@ -499,6 +452,82 @@ function _wireDrag() {
 
   // View mode buttons are wired per-note in _selectNote
 }
+
+// Wire Add Vault form listeners at module level — the form is a standalone
+// overlay that must work even when the vault modal itself is never opened.
+(function _wireAddVaultForm() {
+  document.getElementById('vault-save-vault-btn')?.addEventListener('click', _saveNewVault);
+  document.getElementById('vault-cancel-vault-btn')?.addEventListener('click', _hideAddVaultForm);
+
+  const browseBtn = document.getElementById('vault-browse-vault-btn');
+  const fileInput = document.getElementById('vault-vault-file-input');
+  const isElectron = !!(window.electron || window.electronAPI);
+
+  if (browseBtn && !isElectron) {
+    // Browsers cannot reveal absolute folder paths for security.
+    browseBtn.disabled = true;
+    browseBtn.title = 'Folder picker is only available in the desktop app. Please type the full path manually.';
+    browseBtn.classList.add('vault-browse-disabled');
+  }
+
+  if (browseBtn && fileInput) {
+    browseBtn.addEventListener('click', async () => {
+      // Electron: use IPC to get real folder path from main process
+      if (window.electronAPI?.selectDirectory) {
+        try {
+          const result = await window.electronAPI.selectDirectory();
+          if (result && !result.canceled && result.filePaths?.length) {
+            const pathInput = document.getElementById('vault-new-vault-path');
+            const nameInput = document.getElementById('vault-new-vault-name');
+            if (pathInput) pathInput.value = result.filePaths[0];
+            if (nameInput && !nameInput.value.trim()) {
+              const folderName = result.filePaths[0].replace(/\\/g, '/').split('/').filter(Boolean).pop() || '';
+              if (folderName) nameInput.value = folderName;
+            }
+          }
+        } catch (err) {
+          console.warn('[vault] electron directory picker failed:', err);
+        }
+        return;
+      }
+      // Browser fallback — should not fire because the button is disabled,
+      // but kept here in case the button is enabled programmatically.
+      fileInput.click();
+    });
+    fileInput.addEventListener('change', (e) => {
+      const files = e.target.files;
+      if (!files || !files.length) {
+        return;
+      }
+      const pathInput = document.getElementById('vault-new-vault-path');
+      const nameInput = document.getElementById('vault-new-vault-name');
+      const relPath = files[0].webkitRelativePath || '';
+      const folderName = relPath.split('/')[0] || '';
+      const filePath = files[0].path || '';
+      let displayPath = '';
+      if (filePath && relPath) {
+        // Electron exposes the real file path
+        const relParts = relPath.split('/');
+        const sep = filePath.includes('\\') ? '\\' : '/';
+        const pathParts = filePath.split(sep);
+        const rootParts = pathParts.slice(0, pathParts.length - relParts.length);
+        displayPath = rootParts.join(sep);
+      } else if (filePath) {
+        displayPath = filePath;
+      } else {
+        // Standard browser: cannot reveal absolute path for security.
+        // Show the folder name so the user knows what was selected.
+        displayPath = folderName;
+      }
+      if (pathInput && displayPath) pathInput.value = displayPath;
+      // Auto-fill vault name from folder name if name field is empty
+      if (nameInput && !nameInput.value.trim() && folderName) {
+        nameInput.value = folderName;
+      }
+      e.target.value = '';
+    });
+  }
+})();
 
 // ── Vault Management ───────────────────────────────────────
 
@@ -667,7 +696,12 @@ async function _selectVault(vaultId) {
     return;
   }
 
+  // Restore vault UI if it was hidden during the "no vaults" empty state
+  const leftPane = document.querySelector('.vault-left-pane');
+  const ribbon = document.getElementById('vault-ribbon-bar');
   if (mainPanel) mainPanel.classList.remove('hidden');
+  if (leftPane) leftPane.classList.remove('hidden');
+  if (ribbon) ribbon.classList.remove('hidden');
   if (folderTree) folderTree.classList.remove('hidden');
 
   // Update permission toggles
@@ -723,6 +757,13 @@ function _openStartupFile() {
         _navigateToNote(lastNote, false);
       }
     } catch {}
+  }
+
+  // Fallback: if no note was selected, open the first note in the root folder
+  if (!_selectedNoteId && _notes.length > 0) {
+    const rootNotes = _notes.filter(n => !n.folder);
+    const firstNote = rootNotes.length > 0 ? rootNotes[0] : _notes[0];
+    if (firstNote) _navigateToNote(firstNote.id, false);
   }
 }
 
@@ -1112,8 +1153,9 @@ function _renderFolderTreeNode(node, depth = 0) {
     }
     for (const f of files) {
       const iconSvg = _getNoteIconSvg(f.id, 'file', 13);
+      const dirtyCls = _dirtyNoteIds.has(f.id) ? ' vault-note-dirty' : '';
       html += `<li class="vault-tree-sub">
-        <div class="vault-tree-row sub ${f.id === _selectedNoteId ? 'selected' : ''}" data-note-id="${_esc(f.id)}" draggable="true">
+        <div class="vault-tree-row sub ${f.id === _selectedNoteId ? 'selected' : ''}${dirtyCls}" data-note-id="${_esc(f.id)}" draggable="true">
           <span class="vault-tree-arrow leaf"></span>
           <span class="vault-tree-file-icon">${iconSvg}</span>
           <span class="vault-tree-name">${_esc(f.title)}</span>
@@ -1130,8 +1172,6 @@ function _renderFolderTree() {
   const tree = document.getElementById('vault-folder-tree');
   if (!tree) return;
   if (_isDraggingTree) return; // defer until dragend so dragged element survives
-
-  console.log('[vault] _renderFolderTree — _folders:', _folders.length, '_notes:', _notes.length);
 
   // Build tree from folders, then attach notes
   const root = _buildFolderTree(_folders);
@@ -1164,8 +1204,9 @@ function _renderFolderTree() {
   const rootFiles = [...root.files].sort((a, b) => a.title.localeCompare(b.title));
   for (const f of rootFiles) {
     const iconSvg = _getNoteIconSvg(f.id, 'file', 13);
+    const dirtyCls = _dirtyNoteIds.has(f.id) ? ' vault-note-dirty' : '';
     html += `<li class="vault-tree-root">
-      <div class="vault-tree-row root ${f.id === _selectedNoteId ? 'selected' : ''}" data-note-id="${_esc(f.id)}" draggable="true">
+      <div class="vault-tree-row root ${f.id === _selectedNoteId ? 'selected' : ''}${dirtyCls}" data-note-id="${_esc(f.id)}" draggable="true">
         <span class="vault-tree-arrow leaf"></span>
         <span class="vault-tree-file-icon">${iconSvg}</span>
         <span class="vault-tree-name">${_esc(f.title)}</span>
@@ -1461,6 +1502,12 @@ function _hideAddVaultForm() {
   document.getElementById('vault-add-vault-form')?.classList.add('hidden');
   const status = document.getElementById('vault-add-vault-status');
   if (status) status.textContent = '';
+  // If the user cancelled and there are still no vaults, clean up the vault
+  // button active state and close the panel (no-op if modal never opened).
+  if (!_vaults || !_vaults.length) {
+    document.getElementById('tool-vault-btn')?.classList.remove('active');
+    closePanel();
+  }
 }
 
 async function _saveNewVault() {
@@ -1484,9 +1531,12 @@ async function _saveNewVault() {
     if (r.ok) {
       if (nameInput) nameInput.value = '';
       if (pathInput) pathInput.value = '';
-      _hideAddVaultForm();
       await _loadVaults();
       if (data.vault_id) await _selectVault(data.vault_id);
+      _hideAddVaultForm();
+      // If the vault modal was never opened (user had no vaults initially),
+      // open it now so the vault UI is visible.
+      if (!_open) await openPanel();
     } else {
       if (statusEl) statusEl.textContent = data.detail || 'Connection failed';
     }
@@ -1580,17 +1630,24 @@ function _navigateToNote(noteId, addToHistory = true, openNewTab = false) {
       }
     }
   }
-  _selectedNoteId = noteId;
   _activeTab = 'note';
   if (addToHistory) {
     if (_historyIndex < _historyStack.length - 1) {
       _historyStack = _historyStack.slice(0, _historyIndex + 1);
+    }
+    // Ensure the current note is recorded before navigating to the new one,
+    // otherwise the history only contains the destination and back is disabled.
+    const currentId = _selectedNoteId;
+    if (currentId && _historyStack[_historyIndex] !== currentId) {
+      _historyStack.push(currentId);
+      _historyIndex++;
     }
     if (_historyStack[_historyIndex] !== noteId) {
       _historyStack.push(noteId);
       _historyIndex++;
     }
   }
+  _selectedNoteId = noteId;
   _renderNoteTabs();
   _renderBreadcrumb(note || null);
   _updateNavButtons();
@@ -1724,14 +1781,6 @@ function _closeCurrentTab() {
   _historyIndex = -1;
   document.getElementById('vault-preview').innerHTML = '';
   document.getElementById('vault-preview').style.display = 'none';
-  const viewModes = document.getElementById('vault-view-modes');
-  if (viewModes) viewModes.style.display = 'none';
-  const noteMenuBtn = document.getElementById('vault-note-menu-btn');
-  if (noteMenuBtn) noteMenuBtn.style.display = 'none';
-  const backBtn = document.getElementById('vault-back-btn');
-  const forwardBtn = document.getElementById('vault-forward-btn');
-  if (backBtn) backBtn.style.display = 'none';
-  if (forwardBtn) forwardBtn.style.display = 'none';
   _updateRightPanelVisibility();
   _renderNoteTabs();
   _renderBreadcrumb(null);
@@ -1774,6 +1823,78 @@ function _updateRightPanelVisibility() {
   }
 }
 
+function _renderInlineDatabases(container, noteId, databases) {
+  if (!container || !databases || !databases.length) return;
+  const placeholders = Array.from(container.querySelectorAll('.vault-inline-db-placeholder'));
+  const dbByMarker = new Map(databases.map((d) => [d.marker, d]));
+  for (const ph of placeholders) {
+    const marker = ph.dataset.marker;
+    const db = dbByMarker.get(marker);
+    if (!db) continue;
+    const refresh = async () => {
+      _noteContentCache.delete(noteId);
+      const cached = _noteContentCache.get(noteId);
+      if (cached) cached._databases = null;
+      await _selectNote(noteId);
+    };
+    const callbacks = {
+      onCellEdit: async (row, col, value) => {
+        if (!db.schema) return;
+        await editInlineDatabaseCell(db.schema.id, row, col, value);
+        await refresh();
+      },
+      onAddColumn: async (name) => {
+        if (!db.schema) return;
+        await addInlineDatabaseColumn(db.schema.id, name);
+        await refresh();
+      },
+      onRemoveColumn: async (colIdx) => {
+        if (!db.schema) return;
+        await removeInlineDatabaseColumn(db.schema.id, colIdx);
+        await refresh();
+      },
+      onAddRow: async () => {
+        if (!db.schema) return;
+        await addInlineDatabaseRow(db.schema.id, []);
+        await refresh();
+      },
+      onRemoveRow: async (rowIdx) => {
+        if (!db.schema) return;
+        await removeInlineDatabaseRow(db.schema.id, rowIdx);
+        await refresh();
+      },
+      onFilter: async (column, value) => {
+        if (!db.schema) return;
+        const filters = [...(db.schema.filters || [])];
+        const existing = filters.findIndex((f) => f.column === column);
+        if (existing >= 0) filters.splice(existing, 1);
+        filters.push({ column, op: 'contains', value });
+        await updateInlineDatabaseSchema(db.schema.id, { filters });
+        db.schema.filters = filters;
+        renderDatabaseTable(ph, db, callbacks);
+      },
+      onSort: async (column, direction) => {
+        if (!db.schema) return;
+        const sort = [...(db.schema.sort || [])];
+        const existing = sort.findIndex((s) => s.column === column);
+        if (existing >= 0) sort.splice(existing, 1);
+        sort.push({ column, direction: direction === 'desc' ? 'desc' : 'asc' });
+        await updateInlineDatabaseSchema(db.schema.id, { sort });
+        db.schema.sort = sort;
+        renderDatabaseTable(ph, db, callbacks);
+      },
+      onDeleteDatabase: async () => {
+        if (!db.schema) return;
+        await deleteInlineDatabase(db.schema.id);
+        await refresh();
+      },
+    };
+    renderDatabaseTable(ph, db, callbacks);
+    _wireWikilinks(ph);
+  }
+}
+
+
 function _renderNoteTabs() {
   const bar = document.getElementById('vault-note-tabs');
   if (!bar) return;
@@ -1795,9 +1916,10 @@ function _renderNoteTabs() {
     const title = _esc(note ? note.title : noteId);
     const active = noteId === _selectedNoteId ? 'active' : '';
     const icon = note ? _getNoteIconSvg(note.id, 'file', 11) : '';
+    const dirty = _dirtyNoteIds.has(noteId) ? ' <span class="vault-dirty-dot">●</span>' : '';
     return `<button class="vault-tab ${active}" data-note-id="${_esc(noteId)}" title="${title}">
       <span style="display:inline-flex;align-items:center;flex-shrink:0;margin-right:4px;">${icon}</span>
-      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;min-width:0;text-align:left;">${title}</span>
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;min-width:0;text-align:left;">${title}${dirty}</span>
       <span class="vault-tab-close" data-note-id="${_esc(noteId)}">&times;</span>
     </button>`;
   }).join('');
@@ -1896,7 +2018,7 @@ function _renderBreadcrumb(note) {
   const el = document.getElementById('vault-breadcrumb');
   if (!el) return;
   if (!note) {
-    el.innerHTML = '';
+    el.innerHTML = '<span style="opacity:0.5;">No file selected</span>';
     return;
   }
   const parts = (note.folder || '').split('/').filter(Boolean);
@@ -1950,8 +2072,20 @@ function _fitBreadcrumb(el) {
 function _updateNavButtons() {
   const back = document.getElementById('vault-back-btn');
   const forward = document.getElementById('vault-forward-btn');
-  if (back) back.disabled = _historyIndex <= 0;
-  if (forward) forward.disabled = _historyIndex >= _historyStack.length - 1;
+  const viewModes = document.getElementById('vault-view-modes');
+  const noteMenuBtn = document.getElementById('vault-note-menu-btn');
+  const hasNote = !!_selectedNoteId;
+
+  if (back) {
+    back.style.display = hasNote ? '' : 'none';
+    back.disabled = _historyIndex <= 0;
+  }
+  if (forward) {
+    forward.style.display = hasNote ? '' : 'none';
+    forward.disabled = _historyIndex >= _historyStack.length - 1;
+  }
+  if (viewModes) viewModes.style.display = hasNote ? '' : 'none';
+  if (noteMenuBtn) noteMenuBtn.style.display = hasNote ? '' : 'none';
 }
 
 // ── Panel system ───────────────────────────────────────────
@@ -3088,6 +3222,8 @@ let _vaultSettings = {
     spellcheck: false,
     indentVisualWidth: 4,
     convertPastedHtml: true,
+    autoSave: 'afterDelay',
+    autoSaveDelay: 1000,
   },
   filesAndLinks: {
     newNoteLocation: 'vault-root',
@@ -3224,6 +3360,7 @@ const VAULT_COMMANDS = [
   {id:'quick-switcher',label:'Open quick switcher',impl:true},
   {id:'cycle-view-mode',label:'Cycle view mode',impl:true},
   {id:'new-note',label:'New note',impl:true},
+  {id:'promote-table-to-database',label:'Promote first table to inline database',impl:true},
   {id:'command-palette',label:'Open command palette',impl:true},
   {id:'toggle-reading',label:'Toggle reading view',impl:true},
   {id:'toggle-live',label:'Toggle live preview',impl:true},
@@ -3696,8 +3833,51 @@ function _moveLine(delta) {
 function _setCursorOffset(container, offset) {
   const sel = window.getSelection();
   const range = document.createRange();
-  range.setStart(container.firstChild || container, 0);
-  range.setEnd(container.firstChild || container, 0);
+  let currentOffset = 0;
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+  let lastNode = null;
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    if (node.nodeType === Node.TEXT_NODE) {
+      const len = node.textContent.length;
+      lastNode = node;
+      if (currentOffset + len >= offset) {
+        range.setStart(node, Math.max(0, offset - currentOffset));
+        range.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(range);
+        return;
+      }
+      currentOffset += len;
+    } else if (node.tagName === 'BR') {
+      if (currentOffset + 1 >= offset) {
+        range.setStartAfter(node);
+        range.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(range);
+        return;
+      }
+      currentOffset += 1;
+    } else if (node.tagName === 'DIV' && node !== container) {
+      // Treat block-level line breaks like <br> for raw offset calculations.
+      if (currentOffset + 1 >= offset) {
+        range.setStartAfter(node);
+        range.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(range);
+        return;
+      }
+      currentOffset += 1;
+    }
+  }
+  if (lastNode) {
+    range.setStart(lastNode, lastNode.textContent.length);
+  } else {
+    const lastChild = container.lastChild;
+    if (lastChild) range.setStartAfter(lastChild);
+    else range.setStart(container, 0);
+  }
+  range.collapse(true);
   sel.removeAllRanges();
   sel.addRange(range);
 }
@@ -3746,6 +3926,24 @@ function _runCommandById(cmdId) {
       return true;
     }
     case 'new-note': _showNewNotePrompt(); return true;
+    case 'promote-table-to-database': {
+      (async () => {
+        if (!_selectedNoteId) { showToast('No note open'); return; }
+        const note = _noteContentCache.get(_selectedNoteId);
+        const content = note ? _getNoteFullRaw(note) : '';
+        const firstTableLine = content.split('\n').findIndex((l) => l.trim().startsWith('|'));
+        if (firstTableLine < 0) { showToast('No markdown table found in this note'); return; }
+        try {
+          await promoteInlineDatabase(_selectedNoteId, firstTableLine);
+          _noteContentCache.delete(_selectedNoteId);
+          await _selectNote(_selectedNoteId);
+          showToast('Table promoted to database');
+        } catch (e) {
+          showError('Failed to promote table', e.message || String(e));
+        }
+      })();
+      return true;
+    }
     case 'command-palette': _showCommandPalette(); return true;
     case 'toggle-reading': {
       _previewMode = 'preview'; _updateModeButtons();
@@ -4364,6 +4562,8 @@ function _openVaultSettings() {
   if (getEl('vault-set-spellcheck')) getEl('vault-set-spellcheck').checked = set.editor.spellcheck;
   if (getEl('vault-set-indent-width')) getEl('vault-set-indent-width').value = set.editor.indentVisualWidth;
   if (getEl('vault-set-convert-html')) getEl('vault-set-convert-html').checked = set.editor.convertPastedHtml;
+  if (getEl('vault-set-auto-save')) getEl('vault-set-auto-save').value = set.editor.autoSave;
+  if (getEl('vault-set-auto-save-delay')) getEl('vault-set-auto-save-delay').value = set.editor.autoSaveDelay;
   if (getEl('vault-set-default-file-open')) getEl('vault-set-default-file-open').value = set.filesAndLinks.defaultFileToOpen;
   const specificFileRow = document.getElementById('vault-specific-file-row');
   const specificFileInput = document.getElementById('vault-set-specific-file');
@@ -4448,6 +4648,10 @@ function _wireVaultSettings() {
         _editModePref = el.value === 'source' ? 'edit' : 'live';
         _sourceModeEnabled = el.value === 'source';
       }
+      if (path === 'editor.autoSave' && el.value !== 'afterDelay') {
+        for (const timer of _saveTimers.values()) clearTimeout(timer);
+        _saveTimers.clear();
+      }
     });
   };
   const bindRange = (id, path, valId) => {
@@ -4477,6 +4681,8 @@ function _wireVaultSettings() {
   bindToggle('vault-set-rtl', 'editor.rtl');
   bindToggle('vault-set-spellcheck', 'editor.spellcheck');
   bindToggle('vault-set-convert-html', 'editor.convertPastedHtml');
+  bindSelect('vault-set-auto-save', 'editor.autoSave');
+  bindRange('vault-set-auto-save-delay', 'editor.autoSaveDelay', null);
   bindToggle('vault-set-detect-ext', 'filesAndLinks.detectAllFileExtensions');
   bindToggle('vault-set-tab-title-bar', 'appearance.showTabTitleBar');
   bindToggle('vault-set-backlinks-bottom', 'appearance.showBacklinksAtBottom');
@@ -5317,16 +5523,19 @@ function _renderNoteList() {
     return;
   }
 
-  list.innerHTML = filtered.map(n => `
+  list.innerHTML = filtered.map(n => {
+    const dirtyCls = _dirtyNoteIds.has(n.id) ? ' vault-note-dirty' : '';
+    return `
     <div class="vault-note-card ${n.id === _selectedNoteId ? 'selected' : ''}" data-id="${n.id}">
-      <div class="vault-note-card-title">${_esc(n.title)}</div>
+      <div class="vault-note-card-title${dirtyCls}">${_esc(n.title)}</div>
       <div class="vault-note-card-preview">${_esc(n.content?.slice(0, 120) || '')}</div>
       <div class="vault-note-card-meta">
         ${(n.tags || []).map(t => `<span class="vault-tag">${_esc(t)}</span>`).join('')}
         <span class="vault-note-date">${n.last_modified_src?.slice(0, 10) || ''}</span>
       </div>
     </div>
-  `).join('');
+  `;
+  }).join('');
 
   list.querySelectorAll('.vault-note-card').forEach(card => {
     card.addEventListener('click', (e) => _navigateToNote(card.dataset.id, true, e.ctrlKey || e.metaKey));
@@ -5382,7 +5591,7 @@ function _stripFrontmatterFromContent(content) {
   return content;
 }
 
-async function _flushSourceEdit(sourceDiv, note) {
+function _flushSourceEdit(sourceDiv, note, markDirty = true) {
   const fullText = sourceDiv.innerText;
   const lines = fullText.split('\n');
   let contentStart = 0;
@@ -5396,7 +5605,26 @@ async function _flushSourceEdit(sourceDiv, note) {
   }
   note.frontmatter = frontmatter;
   note.content = lines.slice(contentStart).join('\n').replace(/^\n+/, '');
-  await _saveNoteContent(note);
+  if (markDirty) _markNoteDirty(note.id);
+}
+
+function _flushActiveEditor(note, markDirty = true) {
+  const preview = document.getElementById('vault-preview');
+  if (!preview) return;
+  const sourceDiv = preview.querySelector('.vault-source-view');
+  if (sourceDiv) {
+    _flushSourceEdit(sourceDiv, note, markDirty);
+    return;
+  }
+  const liveDiv = preview.querySelector('.vault-live-view');
+  if (liveDiv) {
+    const rawLines = [];
+    liveDiv.querySelectorAll('.lp-line').forEach(line => {
+      rawLines.push(line.getAttribute('data-raw') || '');
+    });
+    note.content = rawLines.join('\n');
+    if (markDirty) _markNoteDirty(note.id);
+  }
 }
 
 function _splitMarkdownBlocks(text) {
@@ -5440,10 +5668,93 @@ function _findUniqueUntitled(base, existing, ext = '') {
   return name;
 }
 
-async function _saveNoteContent(note, isRetry = false) {
+function _updateDirtyIndicators() {
+  // Tabs
+  _renderNoteTabs();
+  // Header title
+  const headerTitle = document.querySelector('.vault-preview-header h1');
+  if (headerTitle) {
+    const isDirty = !!(_selectedNoteId && _dirtyNoteIds.has(_selectedNoteId));
+    headerTitle.classList.toggle('vault-note-dirty', isDirty);
+  }
+  // Folder tree rows
+  document.querySelectorAll('.vault-tree-row[data-note-id]').forEach(el => {
+    const isDirty = !!(el.dataset.noteId && _dirtyNoteIds.has(el.dataset.noteId));
+    el.classList.toggle('vault-note-dirty', isDirty);
+  });
+  // Note list cards
+  document.querySelectorAll('.vault-note-card-title').forEach(el => {
+    const card = el.closest('.vault-note-card');
+    const noteId = card?.dataset.id;
+    const isDirty = !!(noteId && _dirtyNoteIds.has(noteId));
+    el.classList.toggle('vault-note-dirty', isDirty);
+  });
+}
+
+function _cancelSaveTimer(noteId) {
+  const timer = _saveTimers.get(noteId);
+  if (timer) {
+    clearTimeout(timer);
+    _saveTimers.delete(noteId);
+  }
+}
+
+function _markNoteDirty(noteId) {
+  if (!noteId) return;
+  const wasDirty = _dirtyNoteIds.has(noteId);
+  _dirtyNoteIds.add(noteId);
+  _saveFailures.delete(noteId);
+  if (!wasDirty) _updateDirtyIndicators();
+  _scheduleSave(noteId);
+}
+
+function _markNoteClean(noteId) {
+  if (!noteId) return;
+  const wasDirty = _dirtyNoteIds.has(noteId);
+  _dirtyNoteIds.delete(noteId);
+  _saveFailures.delete(noteId);
+  _cancelSaveTimer(noteId);
+  if (wasDirty) _updateDirtyIndicators();
+}
+
+function _scheduleSave(noteId) {
+  _cancelSaveTimer(noteId);
+  const mode = _vaultSettings.editor.autoSave;
+  if (mode === 'off' || mode === 'onFocusChange' || mode === 'onWindowChange') return;
+  const delay = Math.max(100, parseInt(_vaultSettings.editor.autoSaveDelay, 10) || 1000);
+  const timer = setTimeout(() => {
+    _saveTimers.delete(noteId);
+    const note = _notes.find(n => n.id === noteId || n.rel_path === noteId);
+    if (!note) return;
+    if (_selectedNoteId === note.id || _selectedNoteId === note.rel_path) {
+      _flushActiveEditor(note, false);
+    }
+    _saveNoteContent(note);
+  }, delay);
+  _saveTimers.set(noteId, timer);
+}
+
+async function _saveAllDirty(force = false) {
+  const promises = [];
+  for (const noteId of _dirtyNoteIds) {
+    if (!force && _saveFailures.has(noteId)) continue;
+    const note = _notes.find(n => n.id === noteId || n.rel_path === noteId);
+    if (!note) continue;
+    if (_selectedNoteId === note.id || _selectedNoteId === note.rel_path) {
+      _flushActiveEditor(note, false);
+    }
+    promises.push(_saveNoteContent(note));
+  }
+  await Promise.all(promises);
+}
+
+async function _saveNoteContent(note) {
+  if (_selectedNoteId === note.id || _selectedNoteId === note.rel_path) {
+    _flushActiveEditor(note, false);
+  }
   const serialized = _serializeFrontmatter(note.frontmatter || {});
   const fullContent = note.content ? serialized + '\n' + note.content : serialized;
-  console.log('[vault save] note.id:', note.id, 'content:', JSON.stringify(note.content), 'fullContent length:', fullContent.length);
+  const wasFailed = _saveFailures.has(note.id);
   try {
     const r = await fetch(`${API_BASE}/api/vault/notes/${encodeURIComponent(note.id)}/edit`, {
       method: 'POST',
@@ -5461,19 +5772,35 @@ async function _saveNoteContent(note, isRetry = false) {
         : '';
       _noteCache.set(note.title, note);
       _noteContentCache.set(note.id, note);
+      _markNoteClean(note.id);
+      return true;
     } else {
       let errText = '';
       try { const d = await r.json(); errText = d.detail || JSON.stringify(d); } catch {}
-      console.error('[vault] save property failed', r.status, errText);
-      if (!isRetry) {
-        setTimeout(() => _saveNoteContent(note, true), 2000);
+      _saveFailures.add(note.id);
+      if (!wasFailed) {
+        setTimeout(() => {
+          if (_dirtyNoteIds.has(note.id) && _saveFailures.has(note.id)) {
+            _saveNoteContent(note);
+          }
+        }, 2000);
+      } else {
+        showToast('Failed to save note. Changes remain unsaved.');
       }
+      return false;
     }
   } catch (e) {
-    console.error('[vault] save property error', e);
-    if (!isRetry) {
-      setTimeout(() => _saveNoteContent(note, true), 2000);
+    _saveFailures.add(note.id);
+    if (!wasFailed) {
+      setTimeout(() => {
+        if (_dirtyNoteIds.has(note.id) && _saveFailures.has(note.id)) {
+          _saveNoteContent(note);
+        }
+      }, 2000);
+    } else {
+      showToast('Failed to save note. Changes remain unsaved.');
     }
+    return false;
   }
 }
 
@@ -5640,12 +5967,32 @@ async function _selectNote(id) {
     // If nothing in cache, must fetch before rendering
     if (!note) {
       const r = await fetch(`${API_BASE}/api/vault/notes/${encodeURIComponent(id)}`);
+      if (_selectedNoteId !== id) {
+        return;
+      }
       if (!r.ok) { preview.style.display = 'none'; return; }
       note = await r.json();
+      if (_selectedNoteId !== id) {
+        return;
+      }
       note.content = _stripFrontmatterFromContent(note.content);
       _noteContentCache.set(id, note);
     }
     if (!note) { preview.style.display = 'none'; return; }
+
+    // Load inline databases for this note in the background so note content
+    // renders immediately even when switching rapidly.
+    let _inlineDbPromise = null;
+    if (!note._databases) {
+      _inlineDbPromise = fetchInlineDatabases(id)
+        .then(dbs => { note._databases = dbs; return dbs; })
+        .catch(e => {
+          console.warn('[vault] failed to load inline databases', e);
+          note._databases = [];
+          return [];
+        });
+    }
+
     // Server returns frontmatter as a raw YAML string; parse it into an object
     if (note && (typeof note.frontmatter === 'string' || note.frontmatter instanceof String)) {
       note.frontmatter = _parseFrontmatter(String(note.frontmatter));
@@ -5658,10 +6005,11 @@ async function _selectNote(id) {
     const isAutoRename = _autoRenameNoteId === note.id;
     const showTitle = _vaultSettings.appearance.showInlineTitle;
     const scTitle = _vaultSettings.editor.spellcheck ? 'true' : 'false';
+    const titleDirty = _dirtyNoteIds.has(note.id) ? ' vault-note-dirty' : '';
     const headerHtml = showTitle
       ? `<div class="vault-preview-header">${isAutoRename
-          ? `<span class="vault-title-edit" contenteditable="plaintext-only" spellcheck="${scTitle}">${_esc(note.title)}</span>`
-          : `<h1>${_esc(note.title)}</h1>`}</div>`
+          ? `<span class="vault-title-edit${titleDirty}" contenteditable="plaintext-only" spellcheck="${scTitle}">${_esc(note.title)}</span>`
+          : `<h1 class="${titleDirty.trim()}">${_esc(note.title)}</h1>`}</div>`
       : '';
     // In source mode, show raw YAML instead of property chips
     const showProps = _previewMode !== 'edit';
@@ -5775,7 +6123,7 @@ async function _selectNote(id) {
         a.addEventListener('click', async (e) => {
           e.preventDefault();
           const targetTitle = a.dataset.note;
-          const target = _notes.find(n => n.title === targetTitle);
+          const target = _notes.find(n => n.title && n.title.toLowerCase() === targetTitle.toLowerCase());
           if (target) {
             _navigateToNote(target.id, true, e.ctrlKey || e.metaKey);
           } else {
@@ -5861,66 +6209,126 @@ async function _selectNote(id) {
       }
     };
 
+    const _processInlineMarkers = (text) => {
+      // Process paired inline markers with a stack so both closed and unclosed
+      // syntax work. Longer markers are matched first. Unclosed markers format
+      // the rest of the line; closed markers only format the enclosed region.
+      const markerTypes = [
+        { marker: '***', css: 'md-bold md-italic', syntax: '***' },
+        { marker: '**', css: 'md-bold', syntax: '**' },
+        { marker: '*', css: 'md-italic', syntax: '*' },
+        { marker: '_', css: 'md-italic', syntax: '_' },
+        { marker: '~~', css: 'md-strike', syntax: '~~' },
+        { marker: '==', css: 'md-highlight', syntax: '==' },
+        { marker: '`', css: 'md-code', syntax: '`' },
+        { marker: '%%', css: 'md-comment', syntax: '%%' },
+      ];
+      const markerPattern = markerTypes.map(m => _escRegExp(m.marker)).join('|');
+      const regex = new RegExp(`(${markerPattern})`, 'g');
+
+      const tokens = [];
+      let lastIndex = 0;
+      let match;
+      while ((match = regex.exec(text)) !== null) {
+        if (match.index > lastIndex) {
+          tokens.push({ type: 'text', text: text.slice(lastIndex, match.index) });
+        }
+        const marker = match[1];
+        const type = markerTypes.find(m => m.marker === marker);
+        tokens.push({ type: 'marker', markerType: type });
+        lastIndex = regex.lastIndex;
+      }
+      if (lastIndex < text.length) {
+        tokens.push({ type: 'text', text: text.slice(lastIndex) });
+      }
+
+      const stack = [];
+      const segments = [];
+      let currentText = '';
+      const flushText = () => {
+        if (currentText) {
+          segments.push({ type: 'text', text: currentText, markers: stack.map(t => t.markerType) });
+          currentText = '';
+        }
+      };
+
+      for (const token of tokens) {
+        if (token.type === 'text') {
+          currentText += token.text;
+        } else {
+          const mt = token.markerType;
+          if (stack.length > 0 && stack[stack.length - 1].markerType === mt) {
+            flushText();
+            segments.push({ type: 'syntax', text: mt.syntax, markers: stack.map(t => t.markerType) });
+            stack.pop();
+          } else {
+            flushText();
+            stack.push(token);
+            segments.push({ type: 'syntax', text: mt.syntax, markers: stack.map(t => t.markerType) });
+          }
+        }
+      }
+      flushText();
+
+      let html = '';
+      let openStack = [];
+      for (const seg of segments) {
+        const target = seg.markers;
+        let commonPrefix = 0;
+        while (commonPrefix < openStack.length && commonPrefix < target.length && openStack[commonPrefix] === target[commonPrefix]) {
+          commonPrefix++;
+        }
+        while (openStack.length > commonPrefix) {
+          html += '</span>';
+          openStack.pop();
+        }
+        for (let i = commonPrefix; i < target.length; i++) {
+          html += `<span class="${target[i].css}">`;
+          openStack.push(target[i]);
+        }
+        if (seg.type === 'syntax') {
+          html += `<span class="md-syntax">${seg.text}</span>`;
+        } else {
+          html += seg.text;
+        }
+      }
+      while (openStack.length) {
+        html += '</span>';
+        openStack.pop();
+      }
+      return html;
+    };
+
     const _renderInline = (text) => {
       let h = text;
       // Escaped chars \char
       h = h.replace(/\\([*_{}[\]()#+-.!|`~^=$])/g, '<span class="md-escaped"><span class="md-syntax">\\</span>$1</span>');
-      // Bold + italic ***text***
-      h = h.replace(/\*\*\*([^*]+)\*\*\*/g, '<span class="md-bold md-italic"><span class="md-syntax">***</span>$1<span class="md-syntax">***</span></span>');
-      // Bold **text**
-      h = h.replace(/\*\*([^*]+)\*\*/g, '<span class="md-bold"><span class="md-syntax">**</span>$1<span class="md-syntax">**</span></span>');
-      // Italic *text* (avoid matching * inside bold HTML tags)
-      h = h.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<span class="md-italic"><span class="md-syntax">*</span>$1<span class="md-syntax">*</span></span>');
-      // Italic _text_
-      h = h.replace(/(?<!_)_([^_]+)_(?!_)/g, '<span class="md-italic"><span class="md-syntax">_</span>$1<span class="md-syntax">_</span></span>');
-      // Strikethrough ~~text~~
-      h = h.replace(/~~([^~]+)~~/g, '<span class="md-strike"><span class="md-syntax">~~</span>$1<span class="md-syntax">~~</span></span>');
-      // Inline code `text`
-      h = h.replace(/`([^`]+)`/g, '<span class="md-code"><span class="md-syntax">`</span>$1<span class="md-syntax">`</span></span>');
-      // Wikilinks [[text]]
+      // Inline markers: bold, italic, strike, highlight, code, comment
+      h = _processInlineMarkers(h);
+      // Wikilinks [[text]] (only fully closed links; unclosed [[ is plain text)
       h = h.replace(/\[\[([^\]]+)\]\]/g, (match, content) => {
         const pipeIdx = content.indexOf('|');
         const target = pipeIdx >= 0 ? content.slice(0, pipeIdx).trim() : content.trim();
         const display = pipeIdx >= 0 ? content.slice(pipeIdx + 1).trim() : target;
         return `<span class="md-wikilink"><span class="md-bracket">[[</span><a class="wikilink-source" href="#" data-note="${_esc(target)}">${_esc(display)}</a><span class="md-bracket">]]</span></span>`;
       });
-      // Incomplete wikilinks [[text (still being typed)
-      h = h.replace(/\[\[([^\]]*)$/g, (match, content) => {
-        return `<span class="md-wikilink"><span class="md-bracket">[[</span><span class="wikilink-source">${_esc(content)}</span></span>`;
-      });
-      // Alternative wikilinks [/[/text]/]
+      // Alternative wikilinks [/[/text]/] (only fully closed links)
       h = h.replace(/\[\/\[([^\]]+)\]\/\]/g, (match, content) => {
         const pipeIdx = content.indexOf('|');
         const target = pipeIdx >= 0 ? content.slice(0, pipeIdx).trim() : content.trim();
         const display = pipeIdx >= 0 ? content.slice(pipeIdx + 1).trim() : target;
         return `<span class="md-wikilink"><span class="md-bracket">[/[</span><a class="wikilink-source" href="#" data-note="${_esc(target)}">${_esc(display)}</a><span class="md-bracket">]/]</span></span>`;
       });
-      // Incomplete alt wikilinks [/[/text
-      h = h.replace(/\[\/\[([^\]]*)$/g, (match, content) => {
-        return `<span class="md-wikilink"><span class="md-bracket">[/[</span><span class="wikilink-source">${_esc(content)}</span></span>`;
-      });
-      // Highlight ==text==
-      h = h.replace(/==([^=]+)==/g, '<span class="md-highlight"><span class="md-syntax">==</span>$1<span class="md-syntax">==</span></span>');
       // Images ![alt](url)
       h = h.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<span class="md-image"><span class="md-syntax">!</span><span class="md-syntax">[</span><span class="md-image-alt">$1</span><span class="md-syntax">](</span><span class="md-image-url">$2</span><span class="md-syntax">)</span></span>');
       // Footnotes [^ref]
       h = h.replace(/\[\^([^\]]+)\]/g, '<span class="md-footnote"><span class="md-syntax">[^</span>$1<span class="md-syntax">]</span></span>');
-      // Comments %%text%%
-      h = h.replace(/%%([^%]+)%%/g, '<span class="md-comment"><span class="md-syntax">%%</span>$1<span class="md-syntax">%%</span></span>');
       // Math inline $text$
       h = h.replace(/\$([^$\s][^$]*[^$\s])\$/g, '<span class="md-math"><span class="md-syntax">$</span>$1<span class="md-syntax">$</span></span>');
       // External links [text](url)
       h = h.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<span class="md-link"><span class="md-syntax">[</span><span class="md-link-text">$1</span><span class="md-syntax">](</span><span class="md-link-url">$2</span><span class="md-syntax">)</span></span>');
-      // Unclosed-syntax propagation: if an opener has no closer, it affects the rest of the line
-      // (Obsidian-style behaviour)
-      h = h.replace(/\*\*\*([^*]*)$/g, '<span class="md-bold md-italic"><span class="md-syntax">***</span>$1</span>');
-      h = h.replace(/\*\*([^*]*)$/g, '<span class="md-bold"><span class="md-syntax">**</span>$1</span>');
-      h = h.replace(/(?<!\*)\*([^*]*)$/g, '<span class="md-italic"><span class="md-syntax">*</span>$1</span>');
-      h = h.replace(/(?<!_)_([^_]*)$/g, '<span class="md-italic"><span class="md-syntax">_</span>$1</span>');
-      h = h.replace(/`([^`]*)$/g, '<span class="md-code"><span class="md-syntax">`</span>$1</span>');
-      h = h.replace(/~~([^~]*)$/g, '<span class="md-strike"><span class="md-syntax">~~</span>$1</span>');
-      h = h.replace(/==([^=]*)$/g, '<span class="md-highlight"><span class="md-syntax">==</span>$1</span>');
-      // Live preview Enter inserts \n; normalize to <br> so the break survives innerHTML
+      // Both closed and unclosed inline markers are handled by _processInlineMarkers.
+      // Live preview Enter inserts \n; normalize to <br> so the break survives innerHTML.
       h = h.replace(/\n/g, '<br>');
       return h;
     };
@@ -5981,10 +6389,20 @@ async function _selectNote(id) {
     const _renderSourceView = (raw) => {
       if (!raw) return '<div class="lp-line" data-raw=""><div class="lp-source"><br></div></div>';
       const lines = raw.split('\n');
+      // A leading --- ... --- block is frontmatter, not a horizontal rule; render it plain.
+      let frontmatterEnd = -1;
+      if (lines[0]?.trim() === '---') {
+        frontmatterEnd = lines.findIndex((l, idx) => idx > 0 && l.trim() === '---');
+      }
       let inCodeBlock = false;
       const codeLines = [];
       const out = [];
-      for (const line of lines) {
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (i <= frontmatterEnd) {
+          out.push(`<div class="lp-line vault-frontmatter-line" data-raw="${_esc(line)}"><div class="lp-source">${_esc(line)}</div></div>`);
+          continue;
+        }
         if (/^\s*```/.test(line)) {
           if (inCodeBlock) {
             codeLines.push(_esc(line));
@@ -6007,9 +6425,16 @@ async function _selectNote(id) {
       return out.join('');
     };
 
-    const _renderLiveView = (raw) => {
+    const _renderLiveView = (raw, databases = []) => {
       if (!raw) return '<div class="lp-line lp-empty" data-raw=""><div class="lp-source"><br></div></div>';
       const lines = raw.split('\n');
+      // Build a set of line indices that belong to inline database tables
+      const dbLineSet = new Set();
+      const dbByStart = new Map();
+      for (const db of (databases || [])) {
+        for (let i = db.markerLine; i < db.tableEnd; i++) dbLineSet.add(i);
+        dbByStart.set(db.markerLine, db);
+      }
       let inCodeBlock = false;
       const codeLines = [];
       const out = [];
@@ -6033,7 +6458,17 @@ async function _selectNote(id) {
                /^---+$/.test(t);
       };
 
-      for (const line of lines) {
+      for (let idx = 0; idx < lines.length; idx++) {
+        const line = lines[idx];
+        // Skip lines that belong to an inline database table; emit a placeholder at the marker
+        if (dbLineSet.has(idx)) {
+          flushParagraph();
+          const db = dbByStart.get(idx);
+          if (db) {
+            out.push(`<div class="vault-inline-db-placeholder" data-marker="${_esc(db.marker)}"></div>`);
+          }
+          continue;
+        }
         if (/^\s*```/.test(line)) {
           flushParagraph();
           if (inCodeBlock) {
@@ -6131,7 +6566,24 @@ const _normalizeRange = (range) => {
         bodyEl.innerHTML = `<div class="vault-body-wrap" dir="${dir}"><div class="vault-source-view ${lineNumClass}" contenteditable="true" spellcheck="${sc}">${_renderSourceView(raw)}</div></div>`;
         const sourceDiv = bodyEl.querySelector('.vault-source-view');
         _wireSourceWikilinks(sourceDiv);
+        _attachVaultSlashMenu(sourceDiv);
         sourceDiv.focus();
+        sourceDiv.addEventListener('click', (e) => {
+          if (e.target !== sourceDiv) return;
+          // Clicked in the blank space below the rendered content; move caret to end
+          const lastLine = sourceDiv.querySelector('.lp-line:last-child');
+          if (!lastLine) return;
+          const walker = document.createTreeWalker(lastLine, NodeFilter.SHOW_TEXT);
+          let lastNode = null;
+          while (walker.nextNode()) lastNode = walker.currentNode;
+          if (!lastNode) return;
+          const range = document.createRange();
+          range.setStart(lastNode, lastNode.textContent.length);
+          range.collapse(true);
+          const sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+        });
         sourceDiv.addEventListener('keydown', (e) => {
           if (e.key === 'Enter') {
             e.preventDefault();
@@ -6150,7 +6602,6 @@ const _normalizeRange = (range) => {
               if (activeNode.nodeType === Node.ELEMENT_NODE && activeNode.classList.contains('lp-line')) break;
               activeNode = activeNode.parentNode;
             }
-            console.log('[vault TAB source] activeNode found:', activeNode?.className, 'is lp-line:', activeNode?.classList.contains('lp-line'));
             if (!activeNode || !activeNode.classList.contains('lp-line')) return;
 
             // Determine paragraph boundaries: empty lines or block-level lines separate paragraphs
@@ -6177,8 +6628,6 @@ const _normalizeRange = (range) => {
               paragraphLines.push(next);
               next = next.nextElementSibling;
             }
-            console.log('[vault TAB source] paragraph lines:', paragraphLines.length, paragraphLines.map(l => l.getAttribute('data-raw')));
-
             // Save undo state once before re-rendering
             if (!sourceDiv.__undoStack) sourceDiv.__undoStack = [];
             if (sourceDiv.__undoStack.length === 0 || sourceDiv.__undoStack[sourceDiv.__undoStack.length - 1] !== sourceDiv.innerText) {
@@ -6332,6 +6781,7 @@ const _normalizeRange = (range) => {
         });
         let _sourceRenderTimer = null;
         sourceDiv.addEventListener('input', () => {
+          _markNoteDirty(note.id);
           clearTimeout(_sourceRenderTimer);
           _sourceRenderTimer = setTimeout(() => {
             // Save undo state before re-render
@@ -6391,19 +6841,30 @@ const _normalizeRange = (range) => {
             }
           }, 100);
         });
-        sourceDiv.addEventListener('blur', async () => {
+        sourceDiv.addEventListener('blur', async (e) => {
+          // If focus moved to the slash command menu, don't flush yet; the
+          // command will insert text and then re-focus the editor.
+          if (e.relatedTarget?.closest('[data-slash-menu]')) {
+            return;
+          }
           clearTimeout(_sourceRenderTimer);
-          await _flushSourceEdit(sourceDiv, note);
-          _selectNote(note.id);
-        }, { once: true });
+          _flushSourceEdit(sourceDiv, note);
+          if (_vaultSettings.editor.autoSave === 'onFocusChange') {
+            await _saveAllDirty();
+          }
+          // Don't re-render here; _selectNote on mode switch handles that.
+          // Re-rendering on every blur would steal focus back from external clicks.
+        });
       } else if (_previewMode === 'live') {
         // Live Preview: token-level inline editing — syntax hidden by default,
         // revealed only for the token(s) containing the cursor.
         const content = note.content || '';
         const dir = _vaultSettings.editor.rtl ? 'rtl' : 'ltr';
-        bodyEl.innerHTML = `<div class="vault-body-wrap" dir="${dir}"><div class="vault-live-view">${_renderLiveView(content)}</div></div>`;
+        bodyEl.innerHTML = `<div class="vault-body-wrap" dir="${dir}"><div class="vault-live-view">${_renderLiveView(content, note._databases || [])}</div></div>`;
         const liveDiv = bodyEl.querySelector('.vault-live-view');
         _wireSourceWikilinks(liveDiv);
+        _attachVaultSlashMenu(liveDiv);
+        try { _renderInlineDatabases(liveDiv, note.id, note._databases || []); } catch (e) { console.error('[vault] inline DB render failed', e); }
 
         let activeLine = null;
         let _caretTimer = null;
@@ -6559,17 +7020,16 @@ const _normalizeRange = (range) => {
         liveDiv.addEventListener('click', (e) => {
           // Don't activate line when clicking a link
           if (e.target.closest('a')) return;
-          let line = e.target.closest('.lp-line');
-          if (!line && liveDiv.contains(e.target)) {
-            // Clicked empty space: create an empty line
-            const emptyLine = document.createElement('div');
-            emptyLine.className = 'lp-line lp-empty';
-            emptyLine.setAttribute('data-raw', '');
-            emptyLine.innerHTML = '<div class="lp-source"><br></div>';
-            liveDiv.appendChild(emptyLine);
-            line = emptyLine;
+          const line = e.target.closest('.lp-line');
+          if (!line) {
+            // Clicking in blank space below the content: focus the last line
+            const lastLine = liveDiv.querySelector('.lp-line:last-child');
+            if (lastLine) {
+              const source = lastLine.querySelector('.lp-source');
+              if (source) _activateLine(lastLine);
+            }
+            return;
           }
-          if (!line) return;
           const source = line.querySelector('.lp-source');
           if (!source) return; // code blocks have no source layer
           _activateLine(line, e.clientX, e.clientY);
@@ -6628,6 +7088,8 @@ const _normalizeRange = (range) => {
           range.collapse(true);
           sel.removeAllRanges();
           sel.addRange(range);
+          // Ensure the source stays focused; replacing innerHTML can blur it.
+          source.focus();
         };
         const _debouncedRenderLine = () => {
           clearTimeout(_renderLineTimer);
@@ -6643,27 +7105,38 @@ const _normalizeRange = (range) => {
               if (activeLine.__undoStack.length > 50) activeLine.__undoStack.shift();
               activeLine.__redoStack = [];
             }
-            // Save cursor offset (counts <br> as \n so Enter stays on new line)
-            let offset = 0;
-            const sel = window.getSelection();
-            if (sel.rangeCount) {
-              const range = sel.getRangeAt(0);
-              const norm = _normalizeRange(range);
-              offset = _getRawOffsetUpTo(source, norm.node, norm.offset);
+            activeLine.setAttribute('data-raw', currentRaw);
+            // Don't re-render the line while the slash command menu is open:
+            // re-rendering would replace the text node that stores the slash.
+            const slashMenuOpen = !!document.querySelector('[data-slash-menu]');
+            if (!slashMenuOpen) {
+              // Save cursor offset (counts <br> as \n so Enter stays on new line)
+              let offset = 0;
+              const sel = window.getSelection();
+              if (sel.rangeCount) {
+                const range = sel.getRangeAt(0);
+                const norm = _normalizeRange(range);
+                offset = _getRawOffsetUpTo(source, norm.node, norm.offset);
+              }
+              source.innerHTML = _renderSourceLine(currentRaw);
+              _wireSourceWikilinks(source);
+              _setCursorOffset(source, offset);
+              _trackCaret();
+              _updateWikiSuggest(source);
             }
-            const raw = currentRaw;
-            activeLine.setAttribute('data-raw', raw);
-            source.innerHTML = _renderSourceLine(raw);
-            _wireSourceWikilinks(source);
-            _setCursorOffset(source, offset);
-            _trackCaret();
-            _updateWikiSuggest(source);
+            // Keep the in-memory note content in sync with the DOM so the
+            // auto-save scheduler never writes stale data.
+            const rawLines = [];
+            liveDiv.querySelectorAll('.lp-line').forEach(line => {
+              rawLines.push(line.getAttribute('data-raw') || '');
+            });
+            note.content = rawLines.join('\n');
+            _markNoteDirty(note.id);
           }, 50);
         };
         liveDiv.addEventListener('input', _debouncedRenderLine);
 
-        const finishEdit = async () => {
-          console.log('[vault finishEdit] starting for note:', note.id);
+        const finishEdit = () => {
           _hideWikiSuggest();
           document.removeEventListener('click', _hideSuggestOnClick);
           liveDiv.removeEventListener('keyup', _onCaretChange);
@@ -6677,17 +7150,16 @@ const _normalizeRange = (range) => {
           // Collect raw text from all lines
           const rawLines = [];
           const allLines = liveDiv.querySelectorAll('.lp-line');
-          console.log('[vault finishEdit] found', allLines.length, 'lp-line elements');
           allLines.forEach(line => {
             const raw = line.getAttribute('data-raw') || '';
-            console.log('[vault finishEdit] line data-raw:', JSON.stringify(raw));
             rawLines.push(raw);
           });
           const newContent = rawLines.join('\n');
-          console.log('[vault finishEdit] newContent:', JSON.stringify(newContent));
           note.content = newContent;
-          await _saveNoteContent(note);
-          _selectNote(note.id);
+          _markNoteDirty(note.id);
+          // Do NOT call _selectNote here. If the user has already switched to
+          // another note, re-selecting this note would overwrite the current UI.
+          // The saved content will be rendered the next time this note is selected.
         };
 
         // ── Contenteditable helpers for bracket auto-close & suggestions ──
@@ -6866,7 +7338,7 @@ const _normalizeRange = (range) => {
           const alreadyClosed = textAfterCursor.startsWith(closeBrackets);
 
           // Compute link path based on format
-          const targetNote = _notes.find(n => n.title === title);
+          const targetNote = _notes.find(n => n.title && n.title.toLowerCase() === title.toLowerCase());
           const currentNote = _notes.find(n => n.id === _selectedNoteId);
           const targetFolder = targetNote ? (targetNote.folder || '') : '';
           const currentFolder = currentNote ? (currentNote.folder || '') : '';
@@ -6976,7 +7448,6 @@ const _normalizeRange = (range) => {
             e.preventDefault();
             const indent = _vaultSettings.editor.indentWithTabs ? '\t' : '  ';
             const liveDiv = activeLine.closest('.vault-live-view');
-            console.log('[vault TAB live] activeLine:', activeLine.getAttribute('data-raw'), 'liveDiv found:', !!liveDiv);
 
             const _isBlockOrEmpty = (lineEl) => {
               const raw = lineEl.getAttribute('data-raw') || '';
@@ -7001,7 +7472,6 @@ const _normalizeRange = (range) => {
               paragraphLines.push(next);
               next = next.nextElementSibling;
             }
-            console.log('[vault TAB live] paragraph lines:', paragraphLines.length, paragraphLines.map(l => l.getAttribute('data-raw')));
 
             // Save cursor offset before indent so we can restore it after
             const sel = window.getSelection();
@@ -7230,18 +7700,22 @@ const _normalizeRange = (range) => {
         };
         document.addEventListener('click', _hideSuggestOnClick);
 
-        liveDiv.addEventListener('blur', (e) => {
-          console.log('[vault blur] target:', e.target.className, 'relatedTarget:', e.relatedTarget?.className, 'inside liveDiv:', liveDiv.contains(e.relatedTarget));
+        liveDiv.addEventListener('blur', async (e) => {
           if (e.target.classList.contains('lp-source')) {
+            // If focus is moving into the slash command menu, keep the line
+            // active so the command can replace the slash/query.
+            if (e.relatedTarget?.closest('[data-slash-menu]')) {
+              return;
+            }
             const line = e.target.closest('.lp-line');
             _deactivateLine(line);
             activeLine = null;
             // Save only when focus truly leaves the editor (not switching lines)
             if (!liveDiv.contains(e.relatedTarget)) {
-              console.log('[vault blur] calling finishEdit');
               finishEdit();
-            } else {
-              console.log('[vault blur] focus still inside liveDiv, skipping save');
+              if (_vaultSettings.editor.autoSave === 'onFocusChange') {
+                await _saveAllDirty();
+              }
             }
           }
         }, true);
@@ -7249,15 +7723,11 @@ const _normalizeRange = (range) => {
         // Reading mode: use live preview HTML without editing interactions
         const content = note.content || '';
         const dir = _vaultSettings.editor.rtl ? 'rtl' : 'ltr';
-        bodyEl.innerHTML = `<div class="vault-body-wrap" dir="${dir}"><div class="vault-reading-view">${_renderLiveView(content)}</div></div>`;
+        bodyEl.innerHTML = `<div class="vault-body-wrap" dir="${dir}"><div class="vault-reading-view">${_renderLiveView(content, note._databases || [])}</div></div>`;
         const wrap = bodyEl.querySelector('.vault-reading-view');
         _wireSourceWikilinks(wrap);
         _wireReadingViewFolds(wrap);
-        wrap.addEventListener('dblclick', () => {
-          _previewMode = _editModePref;
-          _updateModeButtons();
-          _selectNote(note.id);
-        });
+        try { _renderInlineDatabases(wrap, note.id, note._databases || []); } catch (e) { console.error('[vault] inline DB render failed', e); }
       }
       // Right-click context menu in the note editor body
       bodyEl.addEventListener('contextmenu', (e) => {
@@ -7266,6 +7736,13 @@ const _normalizeRange = (range) => {
       });
     };
     updateBody();
+    if (_inlineDbPromise) {
+      _inlineDbPromise.then(() => {
+        if (_selectedNoteId !== id) return;
+        if (!bodyEl || !document.contains(bodyEl)) return;
+        updateBody();
+      });
+    }
     let wcEl = document.getElementById('vault-word-count');
     if (!wcEl) { wcEl = document.createElement('div'); wcEl.id = 'vault-word-count'; wcEl.className = 'vault-word-count'; }
     const panelWrap = preview?.parentElement;
@@ -7342,11 +7819,6 @@ const _normalizeRange = (range) => {
       // Close menu on outside click
       document.addEventListener('click', () => menuDropdown.classList.add('hidden'));
     }
-    const noteMenuBtn = document.getElementById('vault-note-menu-btn');
-    if (noteMenuBtn) {
-      noteMenuBtn.style.display = 'flex';
-      noteMenuBtn.onclick = (e) => _showNoteMenu(e, note);
-    }
 
     // Wire all property editors
     _wirePropertyEditors(preview, note);
@@ -7358,11 +7830,14 @@ const _normalizeRange = (range) => {
     // Skip if this note ID was renamed and no longer exists client-side
     const stillExists = _notes.some(n => n.id === id || n.rel_path === id);
     if (!stillExists) return;
+    // Optimistic notes have not been persisted yet; fetching now would 404
+    if (note._optimistic) return;
     fetch(`${API_BASE}/api/vault/notes/${encodeURIComponent(id)}`)
       .then(r => r.ok ? r.json() : null)
       .catch(() => null)
       .then(full => {
         if (!full) return;
+        full.content = _stripFrontmatterFromContent(full.content);
         _noteContentCache.set(id, full);
         if (_selectedNoteId !== full.id && _selectedNoteId !== full.rel_path) return;
         _renderRightSidebar(full);
@@ -7371,6 +7846,9 @@ const _normalizeRange = (range) => {
         const hasActiveLiveEditor = preview.querySelector('.lp-source[contenteditable="true"]');
         const userEditedSinceFetch = note.content !== _originalContent;
         if (!hasActiveLiveEditor && !userEditedSinceFetch && _previewMode !== 'edit' && full.content !== note.content) {
+          if (bodyEl && !document.contains(bodyEl)) {
+            return;
+          }
           note.content = _stripFrontmatterFromContent(full.content);
           note.title = full.title;
           if (typeof full.frontmatter === 'string' || full.frontmatter instanceof String) {
@@ -7397,7 +7875,8 @@ const _normalizeRange = (range) => {
     // Re-apply monospace font to newly created editor/view elements
     _applyMonospaceFont();
   } catch (e) {
-    preview.style.display = 'none';
+    console.error('[vault] _selectNote failed', e);
+    // Don't hide the preview — keep whatever rendered so the error is visible in console.
   }
 }
 
@@ -9402,6 +9881,7 @@ async function _deleteNote(noteId) {
   // Optimistic: remove immediately
   const noteIdx = _notes.indexOf(note);
   _notes.splice(noteIdx, 1);
+  _noteContentCache.delete(noteId);
   const hadTab = _openTabs.includes(noteId);
   _openTabs = _openTabs.filter(id => id !== noteId);
   const prevSelected = _selectedNoteId;
@@ -9447,7 +9927,8 @@ function _copyVaultUrl(noteId) {
   if (navigator.clipboard?.writeText) navigator.clipboard.writeText(url);
 }
 async function _getOrCreateNoteByTitle(title) {
-  let note = _notes.find(n => n.title === title);
+  const titleLower = title.toLowerCase();
+  let note = _notes.find(n => n.title && n.title.toLowerCase() === titleLower);
   if (note) return note;
   const fileName = title.endsWith('.md') ? title : `${title}.md`;
 
@@ -10436,6 +10917,7 @@ function _init() {
 
   // ── Eager cache restore so openPanel() never blocks on "Loading vaults..." ──
   _restoreVaultsAndWarmCache();
+
 }
 
 function _restoreVaultsAndWarmCache() {
@@ -10527,6 +11009,7 @@ let _commandPaletteEl = null;
 let _commandPaletteIndex = 0;
 let _qsEscHandler = null;
 let _cpEscHandler = null;
+let _vaultSlashMenu = null;
 
 function _hideQuickSwitcher() {
   if (_qsEscHandler) { document.removeEventListener('keydown', _qsEscHandler, true); _qsEscHandler = null; }
@@ -10536,6 +11019,11 @@ function _hideQuickSwitcher() {
 function _hideCommandPalette() {
   if (_cpEscHandler) { document.removeEventListener('keydown', _cpEscHandler, true); _cpEscHandler = null; }
   if (_commandPaletteEl) { _commandPaletteEl.remove(); _commandPaletteEl = null; }
+}
+
+function _attachVaultSlashMenu(editor) {
+  if (!_vaultSlashMenu) _vaultSlashMenu = createVaultSlashMenu();
+  _vaultSlashMenu.attach(editor);
 }
 
 function _showQuickSwitcher() {
@@ -10670,6 +11158,12 @@ function _vaultKeyHandler(e) {
   if (!modal || modal.classList.contains('hidden')) return;
   if (e.key === 'Escape' && _commandPaletteEl) return;
   if (e.key === 'Escape' && _quickSwitcherEl) return;
+  // Manual save: force-save all dirty notes regardless of auto-save mode.
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+    e.preventDefault();
+    _saveAllDirty(true);
+    return;
+  }
   const hotkeys = _vaultSettings.hotkeys || {};
   for (const [cmdId, combo] of Object.entries(hotkeys)) {
     if (!combo || !_matchesVaultCombo(e, combo)) continue;
@@ -10802,6 +11296,20 @@ if (document.readyState === 'loading') {
 } else {
   _init();
 }
+
+// Save dirty notes when the window loses focus (VSCode "onWindowChange" mode).
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden' && _vaultSettings?.editor?.autoSave === 'onWindowChange') {
+    _saveAllDirty();
+  }
+});
+
+// Last-resort flush on page unload.
+window.addEventListener('beforeunload', () => {
+  if (_dirtyNoteIds.size) {
+    _saveAllDirty(true);
+  }
+});
 
 const vaultModule = { openPanel, closePanel, togglePanel, isOpen, toggleBookmark: _toggleBookmark };
 export default vaultModule;

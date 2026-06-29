@@ -590,8 +590,8 @@
                 <div class="vault-pane-content" data-vault-content="note">
                   <div class="vault-note-toolbar">
                     <div class="vault-nav-btns">
-                      <button class="vault-nav-btn vault-back-btn" id="vault-back-btn" title="Back">&#8592;</button>
-                      <button class="vault-nav-btn vault-forward-btn" id="vault-forward-btn" title="Forward">&#8594;</button>
+                      <button class="vault-nav-btn vault-back-btn" id="vault-back-btn" title="Back">&lt;</button>
+                      <button class="vault-nav-btn vault-forward-btn" id="vault-forward-btn" title="Forward">&gt;</button>
                     </div>
                     <div class="vault-breadcrumb" id="vault-breadcrumb"></div>
                     <div class="vault-view-modes" id="vault-view-modes">
@@ -770,31 +770,6 @@
           </div>
         </div>
 
-        <!-- Add Vault Overlay -->
-        <div id="vault-add-vault-form" class="vault-add-vault-overlay hidden">
-          <div class="vault-add-vault-card">
-            <h5 style="margin:0 0 12px;font-size:14px;">Add New Vault</h5>
-            <div style="margin-bottom:10px;">
-              <label class="settings-label" style="font-size:11px;">Vault Name</label>
-              <input type="text" id="vault-new-vault-name" placeholder="My Vault" autocomplete="off" style="width:100%;margin-top:3px;font-size:12px;" />
-            </div>
-            <div style="margin-bottom:10px;">
-              <label class="settings-label" style="font-size:11px;">Vault Path</label>
-              <div class="vault-vault-path-row">
-                <input type="text" id="vault-new-vault-path" placeholder="C:\Users\You\Documents\The Vault" autocomplete="off" style="flex:1;font-size:12px;" />
-                <button type="button" class="admin-btn-add" id="vault-browse-vault-btn">Browse</button>
-                <input type="file" id="vault-vault-file-input" webkitdirectory directory multiple style="display:none;" />
-              </div>
-            </div>
-            <div style="display:flex;gap:8px;align-items:center;">
-              <button class="admin-btn-add" id="vault-save-vault-btn" style="padding:4px 12px;font-size:12px;">Add</button>
-              <button class="admin-btn-delete" id="vault-cancel-vault-btn" style="padding:4px 12px;font-size:12px;">Cancel</button>
-              <span id="vault-add-vault-status" style="font-size:11px;opacity:0.7;"></span>
-            </div>
-            <div class="vault-settings-resize-handle" id="vault-settings-resize-handle"></div>
-          </div>
-        </div>
-
         <!-- Vault Settings Dialog (in-panel) -->
         <div id="vault-settings-dialog" class="vault-settings-dialog hidden">
           <div class="vault-settings-dialog-card">
@@ -834,6 +809,20 @@
                         <span class="vault-settings-desc">The default view that a new Markdown tab gets opened in.</span>
                       </div>
                       <select id="vault-set-default-view" class="vault-settings-select"><option value="reading">Reading view</option><option value="live">Live preview</option><option value="source">Source mode</option></select>
+                    </div>
+                    <div class="vault-settings-row">
+                      <div class="vault-settings-info">
+                        <span>Auto save</span>
+                        <span class="vault-settings-desc">When to save notes after you stop editing.</span>
+                      </div>
+                      <select id="vault-set-auto-save" class="vault-settings-select"><option value="off">Off</option><option value="afterDelay">After delay</option><option value="onFocusChange">On focus change</option><option value="onWindowChange">On window change</option></select>
+                    </div>
+                    <div class="vault-settings-row">
+                      <div class="vault-settings-info">
+                        <span>Auto save delay</span>
+                        <span class="vault-settings-desc">Milliseconds to wait after the last edit before saving.</span>
+                      </div>
+                      <input type="number" id="vault-set-auto-save-delay" class="vault-settings-input" min="100" max="30000" step="100" value="1000" style="width:80px;">
                     </div>
                     <div class="vault-settings-row">
                       <div class="vault-settings-info">
@@ -1463,6 +1452,30 @@
     </div>
   </div>
 
+  <!-- Add Vault Overlay (standalone — shown when user has no vaults) -->
+  <div id="vault-add-vault-form" class="vault-add-vault-overlay hidden">
+    <div class="vault-add-vault-card">
+      <h5 style="margin:0 0 12px;font-size:14px;">Add New Vault</h5>
+      <div style="margin-bottom:10px;">
+        <label class="settings-label" style="font-size:11px;">Vault Name</label>
+        <input type="text" id="vault-new-vault-name" placeholder="My Vault" autocomplete="off" style="width:100%;margin-top:3px;font-size:12px;" />
+      </div>
+      <div style="margin-bottom:10px;">
+        <label class="settings-label" style="font-size:11px;">Vault Path</label>
+        <div class="vault-vault-path-row">
+          <input type="text" id="vault-new-vault-path" placeholder="C:\Users\You\Documents\The Vault" autocomplete="off" style="flex:1;font-size:12px;" />
+          <button type="button" class="admin-btn-add" id="vault-browse-vault-btn">Browse</button>
+          <input type="file" id="vault-vault-file-input" webkitdirectory directory multiple style="display:none;" />
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <button class="admin-btn-add" id="vault-save-vault-btn" style="padding:4px 12px;font-size:12px;">Add</button>
+        <button class="admin-btn-delete" id="vault-cancel-vault-btn" style="padding:4px 12px;font-size:12px;">Cancel</button>
+        <span id="vault-add-vault-status" style="font-size:11px;opacity:0.7;"></span>
+      </div>
+    </div>
+  </div>
+
   <!-- Theme Popup (floating panel) -->
   <div id="theme-modal" class="modal hidden">
   <div id="theme-popup" class="modal-content admin-modal-content" role="dialog" aria-label="Theme" style="background:var(--bg)">
@@ -2028,7 +2041,7 @@
     <div class="chat-input-bar">
       <div class="chat-input-top">
         <div id="message-ghost" class="ghost-text-overlay" aria-hidden="true"></div>
-        <textarea id="message" placeholder="Message Odysseus..." required autocomplete="off" aria-label="Message input" rows="1" autofocus></textarea>
+        <textarea id="message" placeholder="Message Odysseus..." required autocomplete="off" aria-label="Message input" rows="1"></textarea>
         <!-- Model picker (inside chatbox, top-right) -->
         <div class="model-picker-wrap" id="model-picker-wrap">
           <button type="button" class="model-picker-btn" id="model-picker-btn" title="Switch model"><span id="model-picker-label">Select model</span> <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 15 12 9 18 15"/></svg></button>
