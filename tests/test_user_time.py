@@ -100,7 +100,7 @@ def test_agent_system_prompt_includes_shared_current_time(monkeypatch):
     monkeypatch.setattr(agent_loop, "_cached_base_prompt", None)
     monkeypatch.setattr(agent_loop, "_cached_base_prompt_key", None)
 
-    messages, _ = agent_loop._build_system_prompt(
+    messages, _, _ = agent_loop._build_system_prompt(
         [{"role": "user", "content": "hi"}],
         model="gpt-oss-120b",
         active_document=None,

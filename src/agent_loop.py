@@ -914,6 +914,9 @@ def _build_system_prompt(
     if mcp_mgr:
         mcp_schemas = mcp_mgr.get_all_openai_schemas(mcp_disabled_map or {})
 
+    # Plugin tool schemas — static per server run (registered at startup)
+    _plugin_schemas = _build_plugin_tool_schemas()
+
     set_active_model(model)
 
     # Current date/time for every agent request. This is user-local when the
@@ -1335,7 +1338,31 @@ def _build_system_prompt(
     if _datetime_message:
         merged.insert(last_user_idx, _datetime_message)
 
-    return merged, mcp_schemas
+    return merged, mcp_schemas, _plugin_schemas
+
+
+def _build_plugin_tool_schemas() -> list:
+    """Build OpenAI-compatible tool schemas for all registered plugin tools."""
+    try:
+        from src.plugin_host import _tools as _plugin_tools_registry
+    except ImportError:
+        return []
+    schemas = []
+    for plugin_name, tools in _plugin_tools_registry.items():
+        for tool_name, info in tools.items():
+            schema = info.get("schema", {})
+            if schema and tool_name:
+                schemas.append({
+                    "type": "function",
+                    "function": {
+                        "name": tool_name,
+                        "description": f"[Plugin: {plugin_name}] {schema.get('description', '')}",
+                        "parameters": {
+                            k: v for k, v in schema.items() if k != "description"
+                        },
+                    },
+                })
+    return schemas
 
 
 _ADMIN_TOOLS = {
@@ -2102,7 +2129,7 @@ async def stream_agent_loop(
         _is_api_model = False
     else:
         _is_api_model = any(h in endpoint_url for h in _API_HOSTS) or _model_supports_tools
-    messages, mcp_schemas = _build_system_prompt(
+    messages, mcp_schemas, plugin_schemas = _build_system_prompt(
         messages, model, active_document, mcp_mgr, disabled_tools,
         needs_admin=_needs_admin, relevant_tools=_relevant_tools,
         mcp_disabled_map=_mcp_disabled_map,
@@ -2306,13 +2333,17 @@ async def stream_agent_loop(
                     s for s in mcp_schemas
                     if s.get("function", {}).get("name") in _relevant_tools
                 ]
-                all_tool_schemas = base_schemas + _mcp_filtered
+                _plugin_filtered = [
+                    s for s in plugin_schemas
+                    if s.get("function", {}).get("name") in _relevant_tools
+                ]
+                all_tool_schemas = base_schemas + _mcp_filtered + _plugin_filtered
             else:
                 base_schemas = FUNCTION_TOOL_SCHEMAS if _needs_admin else [
                     s for s in FUNCTION_TOOL_SCHEMAS
                     if s.get("function", {}).get("name") not in _ADMIN_SCHEMA_NAMES
                 ]
-                all_tool_schemas = base_schemas + mcp_schemas
+                all_tool_schemas = base_schemas + mcp_schemas + plugin_schemas
             if disabled_tools:
                 all_tool_schemas = [
                     t for t in all_tool_schemas
@@ -2324,6 +2355,8 @@ async def stream_agent_loop(
             _last_content = _last_user.lower()
             _wants_mcp = any(kw in _last_content for kw in _MCP_KEYWORDS)
             all_tool_schemas = mcp_schemas if (_wants_mcp and mcp_schemas) else []
+            if plugin_schemas:
+                all_tool_schemas = all_tool_schemas + plugin_schemas
         agent_stream_timeout = int(get_setting("agent_stream_timeout_seconds", 300) or 300)
 
         _tool_names_sent = [t.get("function", {}).get("name") for t in (all_tool_schemas or []) if t.get("function")]

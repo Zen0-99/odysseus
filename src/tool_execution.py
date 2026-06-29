@@ -396,6 +396,96 @@ def _build_mcp_args(tool: str, content: str) -> Dict:
     return parser(content) if parser else {}
 
 
+# ── Plugin tool dispatch ──
+
+_PLUGIN_TOOL_MAP: Dict[str, Dict[str, Any]] = {}
+
+
+def _refresh_plugin_tool_map() -> None:
+    """Rebuild the plugin tool map from the plugin host registry."""
+    from src.plugin_host import _tools as _plugin_tools_registry
+    _PLUGIN_TOOL_MAP.clear()
+    for plugin_name, tools in _plugin_tools_registry.items():
+        for tool_name, tool_info in tools.items():
+            _PLUGIN_TOOL_MAP[tool_name] = {
+                "plugin": plugin_name,
+                "schema": tool_info.get("schema", {}),
+                "fn": tool_info["fn"],
+            }
+
+
+async def _call_plugin_tool(tool: str, content: str) -> Dict:
+    """Route a tool call to a plugin-registered tool."""
+    import sys as _sys
+
+    # Refresh the map lazily on first call or when the tool is missing
+    if tool not in _PLUGIN_TOOL_MAP:
+        _refresh_plugin_tool_map()
+
+    entry = _PLUGIN_TOOL_MAP.get(tool)
+    if not entry:
+        return {"error": f"Plugin tool '{tool}' not found", "exit_code": 1}
+
+    fn = entry["fn"]
+    schema = entry.get("schema", {})
+    plugin_name = entry["plugin"]
+
+    # Build the scoped 'odysseus' module for the plugin
+    from src.plugin_runtime import _make_module
+    _fake_module = _make_module(plugin_name)
+    _previous_odysseus = _sys.modules.get("odysseus")
+    _sys.modules["odysseus"] = _fake_module
+
+    try:
+        # Parse arguments from content (JSON or plain text)
+        args = {}
+        if content and content.strip():
+            stripped = content.strip()
+            if stripped.startswith("{"):
+                try:
+                    args = json.loads(stripped)
+                except json.JSONDecodeError:
+                    return {
+                        "error": f"Invalid JSON arguments: {stripped[:200]}",
+                        "exit_code": 1,
+                    }
+            else:
+                # Plain text — try to extract key=value pairs or use as first arg
+                props = schema.get("properties", {})
+                first_arg = next(iter(props), None)
+                if first_arg and len(props) == 1:
+                    args = {first_arg: stripped}
+                else:
+                    return {
+                        "error": (
+                            f"Tool '{tool}' expects JSON arguments with keys: "
+                            f"{', '.join(props.keys())}. Got plain text instead."
+                        ),
+                        "exit_code": 1,
+                    }
+
+        # Filter args to only valid properties from the schema
+        valid_props = set(schema.get("properties", {}).keys())
+        filtered_args = {k: v for k, v in args.items() if k in valid_props}
+
+        import inspect
+        result = await fn(_fake_module, **filtered_args) if inspect.iscoroutinefunction(fn) else fn(_fake_module, **filtered_args)
+
+        # Ensure result is a dict with exit_code
+        if not isinstance(result, dict):
+            result = {"output": str(result), "exit_code": 0}
+        result.setdefault("exit_code", 0)
+        return result
+    except Exception as e:
+        logger.exception("Plugin tool '%s' (%s) failed", tool, plugin_name)
+        return {"error": f"{tool}: {e}", "exit_code": 1}
+    finally:
+        if _previous_odysseus is None:
+            _sys.modules.pop("odysseus", None)
+        else:
+            _sys.modules["odysseus"] = _previous_odysseus
+
+
 async def _call_mcp_tool(
     tool: str,
     content: str,
@@ -888,6 +978,11 @@ async def _execute_tool_block_impl(
         else:
             desc = f"mcp: {tool}"
             result = {"error": "MCP manager not available", "exit_code": 1}
+    elif tool in _PLUGIN_TOOL_MAP:
+        # Plugin-registered tool dispatch
+        first_line = content.split(chr(10))[0][:80]
+        desc = f"{tool}: {first_line}"
+        result = await _call_plugin_tool(tool, content)
     else:
         desc = f"unknown: {tool}"
         result = {"error": f"Unknown tool type: {tool}", "exit_code": 1}

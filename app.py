@@ -1155,6 +1155,14 @@ async def _startup_event():
     try:
         from src.plugin_runtime import startup_all
         startup_all(app)
+        # Refresh the plugin tool dispatch map after all plugins have registered
+        from src.tool_execution import _refresh_plugin_tool_map
+        _refresh_plugin_tool_map()
+        # Index plugin tools for RAG-based discovery
+        from src.tool_index import get_tool_index
+        ti = get_tool_index()
+        if ti:
+            ti.index_plugin_tools()
         logger.info("Plugin startup complete")
     except Exception as e:
         logger.warning("Plugin startup failed (non-critical): %s", e)

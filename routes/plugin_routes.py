@@ -42,4 +42,39 @@ def setup_plugin_routes():
             raise HTTPException(404, "Not found")
         return FileResponse(target)
 
+    # ── Plugin settings (per-plugin key‑value store) ──
+
+    @router.get("/settings/{plugin_name}/{key:path}")
+    async def get_plugin_setting(request: Request, plugin_name: str, key: str):
+        require_admin(request)
+        from src.plugin_runtime import _make_module
+        import sys as _sys
+        try:
+            mod = _make_module(plugin_name)
+            value = mod.get_setting(key)
+            return {"value": value}
+        finally:
+            pass
+
+    @router.put("/settings/{plugin_name}/{key:path}")
+    async def set_plugin_setting(request: Request, plugin_name: str, key: str, body: dict):
+        require_admin(request)
+        value = body.get("value")
+        from src.plugin_runtime import _make_module
+        import sys as _sys
+        try:
+            mod = _make_module(plugin_name)
+            mod.set_setting(key, value)
+            return {"ok": True}
+        finally:
+            pass
+
+    @router.delete("/settings/{plugin_name}/{key:path}")
+    async def delete_plugin_setting(request: Request, plugin_name: str, key: str):
+        require_admin(request)
+        from src.plugin_runtime import _make_module
+        mod = _make_module(plugin_name)
+        mod.set_setting(key, None)
+        return {"ok": True}
+
     return router
