@@ -20,6 +20,10 @@ _statics: dict[str, list[str]] = {}
 _providers: dict[str, Any] = {}
 _settings_sections: dict[str, dict[str, Any]] = {}
 _tools: dict[str, dict[str, Any]] = {}
+# Chat context providers — plugins register callbacks that run before each
+# agent turn to inject dynamic context (e.g. git branch, workspace state).
+# Signature: (session_id: str) -> str | None
+_context_providers: dict[str, list[Callable[[str], str | None]]] = {}
 
 
 class PluginHost:
@@ -84,6 +88,20 @@ class PluginHost:
         }
         logger.info("[%s] Added settings section '%s'", self._name, id)
 
+    def add_chat_context_provider(
+        self, callback: Callable[[str], str | None]
+    ) -> None:
+        """Register a callback that injects dynamic context into agent chats.
+
+        The callback receives a session_id and may return a string to
+        prepend as a user-role context message, or None to skip.
+        Called before every agent turn so the context is always live
+        (e.g. current git branch, workspace path, dirty files).
+        """
+        self._require("tools")
+        _context_providers.setdefault(self._name, []).append(callback)
+        logger.info("[%s] Registered chat context provider", self._name)
+
     def add_tool(self, name: str, schema: dict[str, Any], fn: Callable[..., Any]) -> None:
         """Register an agent tool.
 
@@ -120,6 +138,14 @@ def get_registered_tools(plugin_name: str) -> dict[str, Any]:
     return dict(_tools.get(plugin_name, {}))
 
 
+def get_chat_context_providers() -> list[Callable[[str], str | None]]:
+    """Return all registered chat context provider callbacks."""
+    providers: list[Callable[[str], str | None]] = []
+    for cb_list in _context_providers.values():
+        providers.extend(cb_list)
+    return providers
+
+
 def unregister_all(plugin_name: str) -> None:
     """Remove all registrations for a plugin.  Called on disable/uninstall."""
     for router in _routers.pop(plugin_name, []):
@@ -133,4 +159,5 @@ def unregister_all(plugin_name: str) -> None:
     _providers.pop(plugin_name, None)
     _settings_sections.pop(plugin_name, None)
     _tools.pop(plugin_name, None)
+    _context_providers.pop(plugin_name, None)
     logger.info("[%s] Unregistered all contributions", plugin_name)

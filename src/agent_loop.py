@@ -867,6 +867,7 @@ def _build_system_prompt(
     owner: Optional[str] = None,
     suppress_local_context: bool = False,
     active_email: Optional[Dict[str, str]] = None,
+    session_id: Optional[str] = None,
 ) -> List[Dict]:
     """Build agent system prompt, inject MCP/document context, merge consecutive system msgs."""
     global _cached_base_prompt, _cached_base_prompt_key
@@ -1337,6 +1338,34 @@ def _build_system_prompt(
         last_user_idx += 1
     if _datetime_message:
         merged.insert(last_user_idx, _datetime_message)
+        last_user_idx += 1
+
+    # Plugin chat context — dynamic per-turn context injected by plugins
+    # (e.g. git branch, workspace path). Wrapped in untrusted_context_message
+    # so plugin-provided text can never influence the trusted system role.
+    # Injected AFTER the cached base prompt to avoid cache bleed.
+    _plugin_context_message = None
+    if session_id:
+        try:
+            from src.plugin_host import get_chat_context_providers
+            providers = get_chat_context_providers()
+            parts: list[str] = []
+            for cb in providers:
+                try:
+                    ctx = cb(session_id)
+                    if ctx:
+                        parts.append(ctx)
+                except Exception:
+                    pass  # one provider failing should not break the turn
+            if parts:
+                _plugin_context_message = untrusted_context_message(
+                    "plugin workspace context",
+                    "\n\n".join(parts),
+                )
+        except Exception:
+            pass
+    if _plugin_context_message:
+        merged.insert(last_user_idx, _plugin_context_message)
 
     return merged, mcp_schemas, _plugin_schemas
 
@@ -2137,6 +2166,7 @@ async def stream_agent_loop(
         owner=owner,
         suppress_local_context=guide_only,
         active_email=active_email,
+        session_id=session_id,
     )
     if plan_mode and not guide_only:
         # Steer the model to investigate-then-propose. Hard tool gating handles
