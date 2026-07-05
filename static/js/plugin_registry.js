@@ -115,6 +115,12 @@ window.__odysseusPluginHost = {
     }
   },
 
+  setMode(mode) {
+    if (typeof window.setAppMode === 'function') {
+      window.setAppMode(mode);
+    }
+  },
+
   loadStyle(url, pluginName) {
     const link = document.createElement('link');
     link.rel = 'stylesheet';
