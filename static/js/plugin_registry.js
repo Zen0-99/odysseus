@@ -9,6 +9,8 @@
 
 import { open as openSettingsModal } from './settings.js';
 import { showToast, showError } from './ui.js';
+import workspaceModule from './workspace.js';
+import sessionModule from './sessions.js';
 
 const _pluginNavItems = [];
 const _pluginSidebarItems = [];
@@ -105,6 +107,14 @@ window.__odysseusPluginHost = {
     });
   },
 
+  async navigateToSession(sessionId, workspace) {
+    if (workspace) workspaceModule.setWorkspace(workspace);
+    if (sessionId) {
+      await sessionModule.loadSessions();
+      await sessionModule.selectSession(sessionId);
+    }
+  },
+
   loadStyle(url, pluginName) {
     const link = document.createElement('link');
     link.rel = 'stylesheet';
@@ -190,7 +200,7 @@ async function initPluginRegistry() {
       // Load frontend script if declared
       const fe = p.frontend;
       if (fe) {
-        const src = `/api/plugins/static/${encodeURIComponent(p.name)}/${fe}`;
+        const src = `/api/plugins/static/${encodeURIComponent(p.name)}/${fe}?v=${encodeURIComponent(p.version || '0')}`;
         try {
           await window.__odysseusPluginHost.loadScript(src, p.name);
         } catch (e) {
