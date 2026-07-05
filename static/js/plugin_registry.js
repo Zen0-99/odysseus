@@ -11,6 +11,7 @@ import { open as openSettingsModal } from './settings.js';
 import { showToast, showError } from './ui.js';
 import workspaceModule from './workspace.js';
 import sessionModule from './sessions.js';
+import { makeWindowDraggable } from './windowDrag.js';
 
 const _pluginNavItems = [];
 const _pluginSidebarItems = [];
@@ -119,6 +120,10 @@ window.__odysseusPluginHost = {
     if (typeof window.setAppMode === 'function') {
       window.setAppMode(mode);
     }
+  },
+
+  makeDraggable(modal, options) {
+    makeWindowDraggable(modal, options);
   },
 
   loadStyle(url, pluginName) {
