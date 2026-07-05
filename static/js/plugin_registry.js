@@ -28,7 +28,7 @@ function _esc(s) {
 
 /* ── Plugin modal factory ── */
 function _createPluginModal({
-  id, title, body, icon, width, maxHeight,
+  id, title, body, icon, width, maxHeight, minHeight,
   minimize, draggable, resizable, fullscreen, dock,
   closeOnBackdrop, chipLabel, chipIcon,
   onOpen, onClose, onMinimize, onRestore,
@@ -39,6 +39,7 @@ function _createPluginModal({
   }
   width = width || 'min(720px, 92vw)';
   maxHeight = maxHeight || '80vh';
+  minHeight = minHeight || '';
   minimize = minimize !== false;
   draggable = draggable !== false;
   resizable = resizable !== false;
@@ -50,7 +51,7 @@ function _createPluginModal({
   modal.id = id;
   modal.className = 'modal hidden';
   modal.innerHTML =
-    '<div class="modal-content" role="dialog" aria-label="' + id + '" style="width:' + width + ';max-height:' + maxHeight + ';background:var(--bg);">' +
+    '<div class="modal-content" role="dialog" aria-label="' + id + '" style="width:' + width + ';max-height:' + maxHeight + ';' + (minHeight ? 'min-height:' + minHeight + ';' : '') + 'background:var(--bg);">' +
       '<div class="modal-header">' +
         '<h4 style="margin:0;margin-right:auto">' + (icon || '') + title + '</h4>' +
         (minimize ? '<button class="modal-minimize-btn" data-minimize title="Minimize"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="18" x2="19" y2="18"/></svg></button>' : '') +
@@ -103,11 +104,13 @@ function _createPluginModal({
     }
   }
 
-  var _registered = false;
   var _bodyEl = modal.querySelector('.modal-body');
 
   function _ensureRegistered() {
-    if (_registered) return;
+    // ModalManager.register() is idempotent — safe to call on every open().
+    // The previous _registered guard caused a bug: ModalManager.close()
+    // deletes state, but the guard stayed true, so re-open never re-registered
+    // and subsequent close attempts silently no-oped.
     ModalManager.register(id, {
       label: chipLabel || title,
       icon: chipIcon || icon || '',
@@ -122,7 +125,6 @@ function _createPluginModal({
         if (onClose) onClose();
       },
     });
-    _registered = true;
   }
 
   return {
