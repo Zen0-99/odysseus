@@ -12,17 +12,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel
 
-from core.database import SessionLocal, VaultNote, Vault, VaultPermission, VaultInlineDatabase
+from core.database import SessionLocal, VaultNote, Vault, VaultPermission, VaultInlineDatabase, VaultInlineDatabaseRow
 from core.middleware import require_admin
 from src.auth_helpers import effective_user, get_current_user
 from src.vault_fs import invalidate_cache
 from src.vault_graph import build_graph, build_timeline
 from src.vault_graph_cache import get_cached_graph, save_graph_cache, invalidate_graph_cache
-from src.vault_watcher import get_watcher
+from src.vault_watcher import get_watcher, suppress_api_write
 from src.vault_inline_database import (
+    _MARKER_RE,
     parse_markers,
     promote_table,
     demote_table,
@@ -74,7 +75,14 @@ class RenameRequest(BaseModel):
 
 
 class InlineDbPromoteRequest(BaseModel):
-    table_start_line: int
+    table_start_line: Optional[int] = None
+    marker: Optional[str] = None
+
+
+class InlineDbCreateRequest(BaseModel):
+    note_id: str
+    columns: Optional[List[str]] = None
+    title: Optional[str] = None
 
 
 class InlineDbCellEditRequest(BaseModel):
@@ -86,6 +94,7 @@ class InlineDbCellEditRequest(BaseModel):
 class InlineDbAddColumnRequest(BaseModel):
     name: str
     default_value: str = ""
+    col_type: str = "text"
 
 
 class InlineDbAddRowRequest(BaseModel):
@@ -568,18 +577,27 @@ def setup_note_vault_routes() -> APIRouter:
 
 
     # -----------------------------------------------------------------------
-    # Inline databases
+    # Inline databases — DB is source of truth, note holds marker + snapshot
     # -----------------------------------------------------------------------
 
-    def _inline_db_to_dict(d: VaultInlineDatabase) -> Dict[str, Any]:
+    def _inline_db_to_dict(d: VaultInlineDatabase, rows: List[VaultInlineDatabaseRow] = None) -> Dict[str, Any]:
+        if rows is None:
+            rows = []
+        columns = d.columns or []
+        row_data = []
+        for r in sorted(rows, key=lambda x: x.position):
+            cells = r.cells or {}
+            row_data.append([cells.get(str(i), "") for i in range(len(columns))])
         return {
             "id": d.id,
             "marker": d.marker,
             "note_path": d.note_path,
-            "columns": d.columns or [],
+            "title": d.title or "Database",
+            "columns": columns,
             "views": d.views or {},
             "filters": d.filters or [],
             "sort": d.sort or [],
+            "rows": row_data,
             "created_at": d.created_at.isoformat() if d.created_at else None,
             "updated_at": d.updated_at.isoformat() if d.updated_at else None,
         }
@@ -591,9 +609,110 @@ def setup_note_vault_routes() -> APIRouter:
         if perm == "read":
             raise HTTPException(403, "This note is read-only.")
 
+    def _generate_snapshot(record: VaultInlineDatabase, rows: List[VaultInlineDatabaseRow]) -> str:
+        """Regenerate the markdown table snapshot from DB record + rows."""
+        columns = record.columns or []
+        headers = [c.get("name", "Unnamed") for c in columns]
+        lines = []
+        lines.append(f"<!-- database: {record.marker} -->")
+        lines.append("| " + " | ".join(headers) + " |")
+        lines.append("| " + " | ".join(["---"] * len(headers)) + " |")
+        for r in sorted(rows, key=lambda x: x.position):
+            cells = r.cells or {}
+            values = [cells.get(str(i), "") for i in range(len(headers))]
+            lines.append("| " + " | ".join(values) + " |")
+        return "\n".join(lines)
+
+    def _write_snapshot_to_note(vault_path: str, note_path: str, marker: str, snapshot_md: str) -> None:
+        """Replace the marker+table region in the note with the new snapshot."""
+        content = _read_note_raw(vault_path, note_path)
+        lines = content.split("\n")
+        marker_idx = None
+        for i, line in enumerate(lines):
+            m = _MARKER_RE.match(line)
+            if m and m.group(1) == marker:
+                marker_idx = i
+                break
+        if marker_idx is None:
+            # Marker not in note — append it
+            if content and not content.endswith("\n"):
+                content += "\n"
+            if content and not content.endswith("\n\n"):
+                content += "\n"
+            content += snapshot_md + "\n"
+        else:
+            # Find table end: marker line + header + separator + data rows
+            table_end = marker_idx + 1
+            # Skip header line
+            if table_end < len(lines) and lines[table_end].strip().startswith("|"):
+                table_end += 1
+            # Skip separator line
+            if table_end < len(lines) and lines[table_end].strip().startswith("|") and "---" in lines[table_end]:
+                table_end += 1
+            # Skip data rows
+            while table_end < len(lines) and lines[table_end].strip().startswith("|"):
+                table_end += 1
+            # Replace marker_idx..table_end with snapshot lines
+            snapshot_lines = snapshot_md.split("\n")
+            new_lines = lines[:marker_idx] + snapshot_lines + lines[table_end:]
+            content = "\n".join(new_lines)
+        _write_note_raw(vault_path, note_path, content)
+        invalidate_cache(vault_path)
+
+    def _sync_snapshot(db_session, record: VaultInlineDatabase, vault_path: str) -> None:
+        """Regenerate snapshot from DB rows and write to note file."""
+        rows = db_session.query(VaultInlineDatabaseRow).filter_by(
+            db_id=record.id, owner=record.owner
+        ).all()
+        snapshot = _generate_snapshot(record, rows)
+        _write_snapshot_to_note(vault_path, record.note_path, record.marker, snapshot)
+
+    def _sync_snapshot_sync(db_id: str, owner: str, vault_path: str, note_path: str, marker: str) -> None:
+        """Synchronous snapshot sync for background tasks."""
+        db = SessionLocal()
+        try:
+            record = db.query(VaultInlineDatabase).filter_by(id=db_id, owner=owner).first()
+            if not record:
+                return
+            rows = db.query(VaultInlineDatabaseRow).filter_by(
+                db_id=db_id, owner=owner
+            ).all()
+            snapshot = _generate_snapshot(record, rows)
+            file_path = str(Path(vault_path) / note_path.replace("/", os.sep))
+            suppress_api_write(file_path)
+            _write_snapshot_to_note(vault_path, note_path, marker, snapshot)
+        finally:
+            db.close()
+
+    def _migrate_legacy_db(db_session, record: VaultInlineDatabase, vault_path: str, content: str) -> None:
+        """Import existing markdown-table rows into VaultInlineDatabaseRow table.
+        Only runs if no rows exist yet for this database."""
+        existing = db_session.query(VaultInlineDatabaseRow).filter_by(db_id=record.id).first()
+        if existing:
+            return
+        parsed = parse_markers(content)
+        db_info = next((d for d in parsed if d["marker"] == record.marker), None)
+        if not db_info:
+            return
+        columns = record.columns or []
+        for pos, row_values in enumerate(db_info["rows"]):
+            cells = {}
+            for ci, val in enumerate(row_values):
+                if ci < len(columns):
+                    cells[str(ci)] = val
+            db_session.add(VaultInlineDatabaseRow(
+                id=uuid.uuid4().hex,
+                db_id=record.id,
+                owner=record.owner,
+                position=pos,
+                cells=cells,
+            ))
+        db_session.commit()
+
     @router.get("/notes/{note_id:path}/databases")
     async def vault_list_inline_databases(note_id: str, request: Request):
-        """List all inline databases inside a note."""
+        """List all inline databases inside a note. Migrates legacy markdown-table
+        databases on first read (imports rows into VaultInlineDatabaseRow)."""
         owner = _user(request)
         db = SessionLocal()
         try:
@@ -605,19 +724,90 @@ def setup_note_vault_routes() -> APIRouter:
                 .filter_by(owner=owner, vault_id=vault.id, note_path=note_id)
                 .all()
             }
+
+            # Legacy migration: for any marker in the note that has a DB record
+            # but no rows yet, import the markdown table rows into the rows table.
+            for d in found:
+                rec = records.get(d["marker"])
+                if rec:
+                    _migrate_legacy_db(db, rec, vault_path, content)
+
             result = []
             for d in found:
                 rec = records.get(d["marker"])
-                result.append({
-                    "marker": d["marker"],
-                    "marker_line": d["marker_line"],
-                    "table_start": d["table_start"],
-                    "table_end": d["table_end"],
-                    "headers": d["headers"],
-                    "rows": d["rows"],
-                    "schema": _inline_db_to_dict(rec) if rec else None,
-                })
+                if rec:
+                    rows = db.query(VaultInlineDatabaseRow).filter_by(
+                        db_id=rec.id, owner=owner
+                    ).all()
+                    result.append({
+                        "marker": d["marker"],
+                        "marker_line": d["marker_line"],
+                        "table_start": d["table_start"],
+                        "table_end": d["table_end"],
+                        "headers": d["headers"],
+                        "rows": d["rows"],
+                        "schema": _inline_db_to_dict(rec, rows),
+                    })
+                else:
+                    result.append({
+                        "marker": d["marker"],
+                        "marker_line": d["marker_line"],
+                        "table_start": d["table_start"],
+                        "table_end": d["table_end"],
+                        "headers": d["headers"],
+                        "rows": d["rows"],
+                        "schema": None,
+                    })
             return {"databases": result}
+        finally:
+            db.close()
+
+    @router.post("/databases")
+    async def vault_create_inline_database(req: InlineDbCreateRequest, request: Request, background_tasks: BackgroundTasks):
+        """Eagerly create a new inline database: DB record + first empty row +
+        write marker+snapshot into the note file."""
+        owner = _user(request)
+        db = SessionLocal()
+        try:
+            vault, vault_path = _active_vault_and_path(db, owner)
+            _ensure_inline_db_write(db, owner, vault.id, req.note_id)
+
+            col_names = req.columns or ["Name"]
+            columns = [{"name": n, "type": "text"} for n in col_names]
+            marker = f"db-{uuid.uuid4().hex[:12]}"
+            db_id = uuid.uuid4().hex
+
+            record = VaultInlineDatabase(
+                id=db_id,
+                owner=owner,
+                vault_id=vault.id,
+                note_path=req.note_id,
+                marker=marker,
+                title=req.title or "Database",
+                columns=columns,
+                views={"default": {"type": "table"}},
+                filters=[],
+                sort=[],
+            )
+            db.add(record)
+            db.flush()
+
+            # Create first empty row
+            first_row = VaultInlineDatabaseRow(
+                id=uuid.uuid4().hex,
+                db_id=db_id,
+                owner=owner,
+                position=0,
+                cells={str(i): "" for i in range(len(columns))},
+            )
+            db.add(first_row)
+            db.commit()
+
+            # Write marker + snapshot into note
+            rows = [first_row]
+            background_tasks.add_task(_sync_snapshot_sync, record.id, owner, vault_path, record.note_path, record.marker)
+
+            return {"ok": True, "marker": marker, "schema": _inline_db_to_dict(record, rows)}
         finally:
             db.close()
 
@@ -625,56 +815,103 @@ def setup_note_vault_routes() -> APIRouter:
     async def vault_promote_inline_database(
         note_id: str, req: InlineDbPromoteRequest, request: Request
     ):
-        """Promote a regular markdown table at a given line into a database."""
+        """Promote a regular markdown table into a database (legacy/compat).
+        Imports existing rows into VaultInlineDatabaseRow table."""
         owner = _user(request)
         db = SessionLocal()
         try:
             vault, vault_path = _active_vault_and_path(db, owner)
             _ensure_inline_db_write(db, owner, vault.id, note_id)
             content = _read_note_raw(vault_path, note_id)
-            new_content, marker = promote_table(content, req.table_start_line)
-            _write_note_raw(vault_path, note_id, new_content)
-            invalidate_cache(vault_path)
 
-            # Derive initial schema from the table headers
-            parsed = parse_markers(new_content)
-            db_info = next((d for d in parsed if d["marker"] == marker), None)
-            columns = []
-            if db_info:
+            if req.marker:
+                parsed = parse_markers(content)
+                db_info = next((d for d in parsed if d["marker"] == req.marker), None)
+                if not db_info:
+                    raise HTTPException(400, f"Marker '{req.marker}' not found in note")
+                marker = req.marker
                 columns = [{"name": h, "type": "text"} for h in db_info["headers"]]
-            record = VaultInlineDatabase(
-                id=uuid.uuid4().hex,
-                owner=owner,
-                vault_id=vault.id,
-                note_path=note_id,
-                marker=marker,
-                columns=columns,
-                views={"default": {"type": "table"}},
-                filters=[],
-                sort=[],
-            )
-            db.add(record)
-            db.commit()
-            return {"ok": True, "marker": marker, "schema": _inline_db_to_dict(record)}
+            else:
+                if req.table_start_line is None:
+                    raise HTTPException(400, "Either marker or table_start_line is required")
+                lines = content.split("\n")
+                existing_marker = None
+                for idx in range(req.table_start_line, -1, -1):
+                    if idx >= len(lines):
+                        continue
+                    m = _MARKER_RE.match(lines[idx])
+                    if m:
+                        existing_marker = m.group(1)
+                        break
+
+            if req.marker:
+                pass
+            elif existing_marker:
+                marker = existing_marker
+                parsed = parse_markers(content)
+                db_info = next((d for d in parsed if d["marker"] == marker), None)
+                if not db_info:
+                    raise HTTPException(400, "Existing marker has no valid table")
+                columns = [{"name": h, "type": "text"} for h in db_info["headers"]]
+            else:
+                new_content, marker = promote_table(content, req.table_start_line)
+                _write_note_raw(vault_path, note_id, new_content)
+                invalidate_cache(vault_path)
+                parsed = parse_markers(new_content)
+                db_info = next((d for d in parsed if d["marker"] == marker), None)
+                columns = []
+                if db_info:
+                    columns = [{"name": h, "type": "text"} for h in db_info["headers"]]
+
+            record = db.query(VaultInlineDatabase).filter_by(
+                marker=marker, owner=owner, vault_id=vault.id, note_path=note_id
+            ).first()
+            if not record:
+                record = VaultInlineDatabase(
+                    id=uuid.uuid4().hex,
+                    owner=owner,
+                    vault_id=vault.id,
+                    note_path=note_id,
+                    marker=marker,
+                    columns=columns,
+                    views={"default": {"type": "table"}},
+                    filters=[],
+                    sort=[],
+                )
+                db.add(record)
+                db.commit()
+
+            # Import markdown rows into DB rows table (legacy migration)
+            # Re-read note content to ensure marker is present (line-based promotion may have just written it)
+            fresh_content = _read_note_raw(vault_path, note_id)
+            _migrate_legacy_db(db, record, vault_path, fresh_content)
+
+            rows = db.query(VaultInlineDatabaseRow).filter_by(
+                db_id=record.id, owner=owner
+            ).all()
+            return {"ok": True, "marker": marker, "schema": _inline_db_to_dict(record, rows)}
         finally:
             db.close()
 
     @router.get("/databases/{db_id}")
     async def vault_get_inline_database(db_id: str, request: Request):
-        """Get schema and view state for an inline database."""
+        """Get schema, rows, and view state for an inline database."""
         owner = _user(request)
         db = SessionLocal()
         try:
             record = db.query(VaultInlineDatabase).filter_by(id=db_id, owner=owner).first()
             if not record:
                 raise HTTPException(404, "Database not found")
-            return _inline_db_to_dict(record)
+            rows = db.query(VaultInlineDatabaseRow).filter_by(
+                db_id=db_id, owner=owner
+            ).all()
+            return _inline_db_to_dict(record, rows)
         finally:
             db.close()
 
     @router.patch("/databases/{db_id}")
     async def vault_update_inline_database(
-        db_id: str, req: InlineDbSchemaUpdateRequest, request: Request
+        db_id: str, req: InlineDbSchemaUpdateRequest, request: Request, background_tasks: BackgroundTasks
     ):
         """Update schema, views, filters, or sort for an inline database."""
         owner = _user(request)
@@ -684,6 +921,9 @@ def setup_note_vault_routes() -> APIRouter:
             if not record:
                 raise HTTPException(404, "Database not found")
             vault = db.query(Vault).filter_by(id=record.vault_id, owner=owner).first()
+            vault_path = vault.path if vault else os.environ.get(f"_ODY_VAULT_{owner}")
+            if not vault_path:
+                raise HTTPException(400, "No vault connected")
             _ensure_inline_db_write(db, owner, record.vault_id, record.note_path)
             if req.columns is not None:
                 record.columns = req.columns
@@ -694,13 +934,17 @@ def setup_note_vault_routes() -> APIRouter:
             if req.sort is not None:
                 record.sort = req.sort
             db.commit()
-            return _inline_db_to_dict(record)
+            background_tasks.add_task(_sync_snapshot_sync, record.id, owner, vault_path, record.note_path, record.marker)
+            rows = db.query(VaultInlineDatabaseRow).filter_by(
+                db_id=db_id, owner=owner
+            ).all()
+            return _inline_db_to_dict(record, rows)
         finally:
             db.close()
 
     @router.delete("/databases/{db_id}")
     async def vault_demote_inline_database(db_id: str, request: Request):
-        """Remove a database marker, leaving a plain markdown table."""
+        """Remove a database: delete DB record + rows, remove marker from note."""
         owner = _user(request)
         db = SessionLocal()
         try:
@@ -716,6 +960,8 @@ def setup_note_vault_routes() -> APIRouter:
             new_content = demote_table(content, record.marker)
             _write_note_raw(vault_path, record.note_path, new_content)
             invalidate_cache(vault_path)
+            # Delete rows first, then record
+            db.query(VaultInlineDatabaseRow).filter_by(db_id=db_id).delete()
             db.delete(record)
             db.commit()
             return {"ok": True}
@@ -724,9 +970,9 @@ def setup_note_vault_routes() -> APIRouter:
 
     @router.post("/databases/{db_id}/cell")
     async def vault_edit_inline_database_cell(
-        db_id: str, req: InlineDbCellEditRequest, request: Request
+        db_id: str, req: InlineDbCellEditRequest, request: Request, background_tasks: BackgroundTasks
     ):
-        """Edit a single cell in an inline database table."""
+        """Edit a single cell in an inline database (DB rows as source of truth)."""
         owner = _user(request)
         db = SessionLocal()
         try:
@@ -738,19 +984,26 @@ def setup_note_vault_routes() -> APIRouter:
             if not vault_path:
                 raise HTTPException(400, "No vault connected")
             _ensure_inline_db_write(db, owner, record.vault_id, record.note_path)
-            content = _read_note_raw(vault_path, record.note_path)
-            new_content = edit_cell(content, record.marker, req.row, req.col, req.value)
-            _write_note_raw(vault_path, record.note_path, new_content)
-            invalidate_cache(vault_path)
+            rows = db.query(VaultInlineDatabaseRow).filter_by(
+                db_id=db_id, owner=owner
+            ).order_by(VaultInlineDatabaseRow.position).all()
+            if req.row < 0 or req.row >= len(rows):
+                raise HTTPException(400, f"Row index {req.row} out of range (have {len(rows)} rows)")
+            row = rows[req.row]
+            cells = dict(row.cells or {})
+            cells[str(req.col)] = req.value
+            row.cells = cells
+            db.commit()
+            background_tasks.add_task(_sync_snapshot_sync, record.id, owner, vault_path, record.note_path, record.marker)
             return {"ok": True}
         finally:
             db.close()
 
     @router.post("/databases/{db_id}/column")
     async def vault_add_inline_database_column(
-        db_id: str, req: InlineDbAddColumnRequest, request: Request
+        db_id: str, req: InlineDbAddColumnRequest, request: Request, background_tasks: BackgroundTasks
     ):
-        """Add a column to an inline database table and update schema."""
+        """Add a column to an inline database. Updates schema + all row cells."""
         owner = _user(request)
         db = SessionLocal()
         try:
@@ -762,21 +1015,27 @@ def setup_note_vault_routes() -> APIRouter:
             if not vault_path:
                 raise HTTPException(400, "No vault connected")
             _ensure_inline_db_write(db, owner, record.vault_id, record.note_path)
-            content = _read_note_raw(vault_path, record.note_path)
-            new_content = db_add_column(content, record.marker, req.name, req.default_value)
-            _write_note_raw(vault_path, record.note_path, new_content)
-            invalidate_cache(vault_path)
             columns = list(record.columns or [])
-            columns.append({"name": req.name, "type": "text"})
+            new_col_idx = len(columns)
+            columns.append({"name": req.name, "type": req.col_type})
             record.columns = columns
+            # Add default value to all existing rows
+            rows = db.query(VaultInlineDatabaseRow).filter_by(
+                db_id=db_id, owner=owner
+            ).all()
+            for r in rows:
+                cells = dict(r.cells or {})
+                cells[str(new_col_idx)] = req.default_value
+                r.cells = cells
             db.commit()
-            return {"ok": True, "schema": _inline_db_to_dict(record)}
+            background_tasks.add_task(_sync_snapshot_sync, record.id, owner, vault_path, record.note_path, record.marker)
+            return {"ok": True, "schema": _inline_db_to_dict(record, rows)}
         finally:
             db.close()
 
     @router.delete("/databases/{db_id}/columns/{col_idx}")
-    async def vault_remove_inline_database_column(db_id: str, col_idx: int, request: Request):
-        """Remove a column from an inline database table and update schema."""
+    async def vault_remove_inline_database_column(db_id: str, col_idx: int, request: Request, background_tasks: BackgroundTasks):
+        """Remove a column from an inline database. Updates schema + all row cells."""
         owner = _user(request)
         db = SessionLocal()
         try:
@@ -788,24 +1047,38 @@ def setup_note_vault_routes() -> APIRouter:
             if not vault_path:
                 raise HTTPException(400, "No vault connected")
             _ensure_inline_db_write(db, owner, record.vault_id, record.note_path)
-            content = _read_note_raw(vault_path, record.note_path)
-            new_content = db_remove_column(content, record.marker, col_idx)
-            _write_note_raw(vault_path, record.note_path, new_content)
-            invalidate_cache(vault_path)
             columns = list(record.columns or [])
-            if 0 <= col_idx < len(columns):
-                columns.pop(col_idx)
+            if col_idx < 0 or col_idx >= len(columns):
+                raise HTTPException(400, "Column index out of range")
+            columns.pop(col_idx)
             record.columns = columns
+            # Remap cell keys in all rows: shift keys > col_idx down by 1
+            rows = db.query(VaultInlineDatabaseRow).filter_by(
+                db_id=db_id, owner=owner
+            ).all()
+            for r in rows:
+                cells = dict(r.cells or {})
+                new_cells = {}
+                for k, v in cells.items():
+                    ki = int(k)
+                    if ki == col_idx:
+                        continue
+                    elif ki > col_idx:
+                        new_cells[str(ki - 1)] = v
+                    else:
+                        new_cells[str(ki)] = v
+                r.cells = new_cells
             db.commit()
-            return {"ok": True, "schema": _inline_db_to_dict(record)}
+            background_tasks.add_task(_sync_snapshot_sync, record.id, owner, vault_path, record.note_path, record.marker)
+            return {"ok": True, "schema": _inline_db_to_dict(record, rows)}
         finally:
             db.close()
 
     @router.post("/databases/{db_id}/row")
     async def vault_add_inline_database_row(
-        db_id: str, req: InlineDbAddRowRequest, request: Request
+        db_id: str, req: InlineDbAddRowRequest, request: Request, background_tasks: BackgroundTasks
     ):
-        """Add a row to an inline database table."""
+        """Add a row to an inline database (DB rows as source of truth)."""
         owner = _user(request)
         db = SessionLocal()
         try:
@@ -817,17 +1090,35 @@ def setup_note_vault_routes() -> APIRouter:
             if not vault_path:
                 raise HTTPException(400, "No vault connected")
             _ensure_inline_db_write(db, owner, record.vault_id, record.note_path)
-            content = _read_note_raw(vault_path, record.note_path)
-            new_content = db_add_row(content, record.marker, req.values)
-            _write_note_raw(vault_path, record.note_path, new_content)
-            invalidate_cache(vault_path)
-            return {"ok": True}
+            columns = record.columns or []
+            existing_rows = db.query(VaultInlineDatabaseRow).filter_by(
+                db_id=db_id, owner=owner
+            ).all()
+            new_pos = len(existing_rows)
+            values = req.values or []
+            cells = {}
+            for i in range(len(columns)):
+                cells[str(i)] = values[i] if i < len(values) else ""
+            new_row = VaultInlineDatabaseRow(
+                id=uuid.uuid4().hex,
+                db_id=db_id,
+                owner=owner,
+                position=new_pos,
+                cells=cells,
+            )
+            db.add(new_row)
+            db.commit()
+            background_tasks.add_task(_sync_snapshot_sync, record.id, owner, vault_path, record.note_path, record.marker)
+            all_rows = db.query(VaultInlineDatabaseRow).filter_by(
+                db_id=db_id, owner=owner
+            ).all()
+            return {"ok": True, "schema": _inline_db_to_dict(record, all_rows)}
         finally:
             db.close()
 
     @router.delete("/databases/{db_id}/rows/{row_idx}")
-    async def vault_remove_inline_database_row(db_id: str, row_idx: int, request: Request):
-        """Remove a row from an inline database table."""
+    async def vault_remove_inline_database_row(db_id: str, row_idx: int, request: Request, background_tasks: BackgroundTasks):
+        """Remove a row from an inline database (DB rows as source of truth)."""
         owner = _user(request)
         db = SessionLocal()
         try:
@@ -839,10 +1130,21 @@ def setup_note_vault_routes() -> APIRouter:
             if not vault_path:
                 raise HTTPException(400, "No vault connected")
             _ensure_inline_db_write(db, owner, record.vault_id, record.note_path)
-            content = _read_note_raw(vault_path, record.note_path)
-            new_content = db_remove_row(content, record.marker, row_idx)
-            _write_note_raw(vault_path, record.note_path, new_content)
-            invalidate_cache(vault_path)
+            rows = db.query(VaultInlineDatabaseRow).filter_by(
+                db_id=db_id, owner=owner
+            ).order_by(VaultInlineDatabaseRow.position).all()
+            if row_idx < 0 or row_idx >= len(rows):
+                raise HTTPException(400, "Row index out of range")
+            db.delete(rows[row_idx])
+            db.flush()
+            # Reindex remaining rows
+            remaining = db.query(VaultInlineDatabaseRow).filter_by(
+                db_id=db_id, owner=owner
+            ).order_by(VaultInlineDatabaseRow.position).all()
+            for i, r in enumerate(remaining):
+                r.position = i
+            db.commit()
+            background_tasks.add_task(_sync_snapshot_sync, record.id, owner, vault_path, record.note_path, record.marker)
             return {"ok": True}
         finally:
             db.close()

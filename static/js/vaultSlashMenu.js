@@ -137,7 +137,9 @@ export function createVaultSlashMenu() {
     if (_selectedIndex >= _filtered.length) _selectedIndex = Math.max(0, _filtered.length - 1);
 
     if (_filtered.length === 0) {
-      _menu.innerHTML = '<div class="vault-context-menu-item disabled">No commands found</div>';
+      // Hide menu when no commands match — the user is typing plain text,
+      // not a slash command.
+      _hide();
       return;
     }
 
@@ -157,54 +159,34 @@ export function createVaultSlashMenu() {
   }
 
   function _execute() {
-    console.log('[vault slash] execute', { selectedIndex: _selectedIndex, query: _query, slashRange: !!_slashRange, slashNode: !!_slashNode, slashOffset: _slashOffset, editor: !!_editor });
     const cmd = _filtered[_selectedIndex];
-    if (!cmd) {
-      console.warn('[vault slash] no command at selected index');
-      return _hide();
-    }
-    console.log('[vault slash] command', cmd.id, cmd.text);
+    if (!cmd) return _hide();
 
-    const slashNode = _slashNode;
-    const slashOffset = _slashOffset;
-    if (!slashNode || !slashNode.isConnected) {
-      console.error('[vault slash] slash node is no longer in the document');
-      return _hide();
-    }
-    if (slashNode.nodeType !== Node.TEXT_NODE) {
-      console.error('[vault slash] slash node is not a text node');
-      return _hide();
-    }
-    const nodeText = slashNode.textContent;
-    if (nodeText[slashOffset] !== '/') {
-      console.error('[vault slash] no slash at stored offset', nodeText, slashOffset);
-      return _hide();
-    }
-
+    // Replace the entire slash+query range with the command text.
     const text = typeof cmd.text === 'function' ? cmd.text() : cmd.text;
-
-    // Directly replace the slash character in the text node. This is more
-    // reliable than restoring the saved selection range after focus changes.
     try {
-      const before = nodeText.slice(0, slashOffset);
-      const after = nodeText.slice(slashOffset + 1);
-      slashNode.textContent = before + text + after;
-      console.log('[vault slash] replaced slash', { before, after, text, result: slashNode.textContent });
+      if (_slashRange) {
+        _slashRange.deleteContents();
+        const textNode = document.createTextNode(text);
+        _slashRange.insertNode(textNode);
 
-      // Move cursor to the end of the inserted command text.
-      const sel = window.getSelection();
-      const r = document.createRange();
-      r.setStart(slashNode, slashOffset + text.length);
-      r.collapse(true);
-      sel.removeAllRanges();
-      sel.addRange(r);
+        // Move cursor to the end of the inserted command text.
+        const sel = window.getSelection();
+        const r = document.createRange();
+        r.setStartAfter(textNode);
+        r.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(r);
+      } else {
+        // Fallback if range was lost
+        document.execCommand('insertText', false, text);
+      }
 
       // Notify the editor so the live preview / source mode updates its state.
-      const editable = slashNode.parentElement?.closest('[contenteditable="true"]') || _editor;
+      const editable = _editor;
       if (editable && editable.dispatchEvent) {
         editable.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true }));
       }
-      console.log('[vault slash] inserted command text', cmd.id, text);
     } catch (err) {
       console.error('[vault slash] failed to insert command text', err);
       document.execCommand('insertText', false, text);
@@ -215,7 +197,6 @@ export function createVaultSlashMenu() {
 
   function _handleKey(e) {
     if (!_menu) return;
-    console.log('[vault slash] keydown', e.key, 'menu open');
     if (e.key === 'ArrowDown' || e.key === 'Down') {
       e.preventDefault();
       e.stopPropagation();
@@ -235,7 +216,6 @@ export function createVaultSlashMenu() {
     if (e.key === 'Enter') {
       e.preventDefault();
       e.stopPropagation();
-      console.log('[vault slash] Enter pressed');
       _execute();
       return;
     }
@@ -247,23 +227,19 @@ export function createVaultSlashMenu() {
       return;
     }
     if (e.key === 'Backspace') {
-      e.preventDefault();
-      e.stopPropagation();
+      // Let the browser delete the character normally; _onInput will
+      // extract the updated query and hide the menu when appropriate.
       if (_query.length === 0) {
+        e.preventDefault();
+        e.stopPropagation();
         _hide();
-      } else {
-        _query = _query.slice(0, -1);
-        _selectedIndex = 0;
-        _render();
       }
       return;
     }
     if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
-      e.preventDefault();
-      e.stopPropagation();
-      _query += e.key;
-      _selectedIndex = 0;
-      _render();
+      // Let the character be typed into the editor normally.
+      // _onInput will fire after the character is inserted and update
+      // the query / menu state from the actual DOM text.
       return;
     }
   }
@@ -328,6 +304,16 @@ export function createVaultSlashMenu() {
         const range = sel.getRangeAt(0);
         try { _slashRange.setEnd(range.endContainer, range.endOffset); } catch {}
       }
+      // Extract query from the range text (everything after the leading '/').
+      const rangeText = _slashRange ? _slashRange.toString() : '';
+      if (!rangeText.startsWith('/')) {
+        // The slash was deleted; treat this as plain text.
+        _hide();
+        return;
+      }
+      _query = rangeText.slice(1);
+      _selectedIndex = 0;
+      _render();
       return;
     }
     const sel = window.getSelection();

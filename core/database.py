@@ -1785,14 +1785,19 @@ class VaultPermission(TimestampMixin, Base):
 
 
 class VaultInlineDatabase(TimestampMixin, Base):
-    """Schema and view state for a markdown table promoted to a database."""
+    """Schema and view state for a markdown table promoted to a database.
+
+    Row/cell data lives in VaultInlineDatabaseRow (DB is source of truth).
+    The note file holds a marker + a regenerated read-only snapshot.
+    """
     __tablename__ = "vault_inline_databases"
 
     id          = Column(String, primary_key=True, index=True)
     owner       = Column(String, nullable=True, index=True)
     vault_id    = Column(String, nullable=False, index=True)
     note_path   = Column(String, nullable=False)
-    marker      = Column(String, nullable=False, unique=True)
+    marker      = Column(String, nullable=False)
+    title       = Column(String, nullable=True, default="Database")
     columns     = Column(JSON, nullable=True, default=list)
     views       = Column(JSON, nullable=True, default=dict)
     filters     = Column(JSON, nullable=True, default=list)
@@ -1802,6 +1807,24 @@ class VaultInlineDatabase(TimestampMixin, Base):
         Index('ix_vault_inline_db_owner', 'owner'),
         Index('ix_vault_inline_db_vault', 'vault_id'),
         Index('ix_vault_inline_db_note', 'note_path'),
+        Index('ix_vault_inline_db_marker', 'vault_id', 'note_path', 'marker', unique=True),
+    )
+
+
+class VaultInlineDatabaseRow(TimestampMixin, Base):
+    """A single row in an inline database. Cells stored as {column_id: value}."""
+    __tablename__ = "vault_inline_database_rows"
+
+    id          = Column(String, primary_key=True, index=True)
+    db_id       = Column(String, ForeignKey("vault_inline_databases.id", ondelete="CASCADE"), nullable=False, index=True)
+    owner       = Column(String, nullable=True, index=True)
+    position    = Column(Integer, nullable=False, default=0)
+    cells       = Column(JSON, nullable=True, default=dict)
+
+    __table_args__ = (
+        Index('ix_vault_inline_db_row_db', 'db_id'),
+        Index('ix_vault_inline_db_row_owner', 'owner'),
+        Index('ix_vault_inline_db_row_pos', 'db_id', 'position'),
     )
 
 
@@ -1945,6 +1968,7 @@ def init_db():
     _migrate_encrypt_signatures()
     _migrate_encrypt_endpoint_keys()
     _migrate_backfill_task_folders()
+    _migrate_vault_inline_db_schema()
 
 
 def _migrate_backfill_task_folders():
@@ -2456,6 +2480,51 @@ def archive_session(session_id: str):
             db.commit()
             return True
     return False
+
+
+def _migrate_vault_inline_db_schema():
+    """Migrate vault_inline_databases: drop global unique on marker, add title column,
+    create vault_inline_database_rows table. Idempotent."""
+    try:
+        with engine.connect() as conn:
+            # Add title column if missing
+            cols = [r[1] for r in conn.execute(text("PRAGMA table_info(vault_inline_databases)"))]
+            if "title" not in cols:
+                conn.execute(text("ALTER TABLE vault_inline_databases ADD COLUMN title VARCHAR DEFAULT 'Database'"))
+                conn.commit()
+
+            # Drop the old global unique index on marker if it exists.
+            # SQLite doesn't support DROP INDEX IF EXISTS cleanly in all versions,
+            # so we introspect and drop conditionally.
+            indexes = conn.execute(text("PRAGMA index_list(vault_inline_databases)")).fetchall()
+            for idx_row in indexes:
+                idx_name = idx_row[1]
+                idx_info = conn.execute(text(f"PRAGMA index_info('{idx_name}')")).fetchall()
+                # The old unique index was on just 'marker'
+                if len(idx_info) == 1 and idx_info[0][2] == "marker" and idx_row[2] == 1:
+                    # unique=1 on single marker column → old global unique
+                    conn.execute(text(f"DROP INDEX IF EXISTS {idx_name}"))
+                    conn.commit()
+
+            # Create the new composite unique index (vault_id, note_path, marker)
+            # if it doesn't already exist.
+            indexes = conn.execute(text("PRAGMA index_list(vault_inline_databases)")).fetchall()
+            has_composite = False
+            for idx_row in indexes:
+                idx_name = idx_row[1]
+                idx_info = conn.execute(text(f"PRAGMA index_info('{idx_name}')")).fetchall()
+                col_names = sorted([r[2] for r in idx_info])
+                if col_names == ["marker", "note_path", "vault_id"] and idx_row[2] == 1:
+                    has_composite = True
+            if not has_composite:
+                conn.execute(text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS ix_vault_inline_db_marker "
+                    "ON vault_inline_databases (vault_id, note_path, marker)"
+                ))
+                conn.commit()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"vault inline db schema migration: {e}")
+
 
 # Initialize the database by creating all tables
 

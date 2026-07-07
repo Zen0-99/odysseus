@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
@@ -164,6 +165,30 @@ def _debounced_invalidate(vault_path: str) -> None:
     t.start()
 
 
+# API-write suppression --------------------------------------------------------
+# When our own API writes a file we don't want the watcher to re-sync it.
+_api_written_paths: Dict[str, float] = {}
+_API_WRITE_SUPPRESS_SECONDS = 2.0
+
+
+def suppress_api_write(file_path: str) -> None:
+    """Mark a file path as having been written by the API so the watcher ignores it briefly."""
+    _api_written_paths[file_path] = time.time()
+
+
+def _should_suppress(path: str) -> bool:
+    """Return True if this path was recently written by the API."""
+    now = time.time()
+    written_at = _api_written_paths.get(path)
+    if written_at and (now - written_at) < _API_WRITE_SUPPRESS_SECONDS:
+        return True
+    # Prune old entries lazily
+    stale = [p for p, t in _api_written_paths.items() if (now - t) > _API_WRITE_SUPPRESS_SECONDS]
+    for p in stale:
+        _api_written_paths.pop(p, None)
+    return False
+
+
 # Watcher -----------------------------------------------------------------------
 
 class VaultWatcher:
@@ -271,13 +296,15 @@ class _VaultEventHandler(FileSystemEventHandler):
         logger.debug(f"[watcher] created: {event.src_path} is_dir={event.is_directory}")
         _debounced_invalidate(str(self.vault_path))
         if not event.is_directory and event.src_path.endswith(".md"):
-            _sync_file(self.owner, self.vault_path, Path(event.src_path))
+            if not _should_suppress(event.src_path):
+                _sync_file(self.owner, self.vault_path, Path(event.src_path))
 
     def on_modified(self, event):
         logger.debug(f"[watcher] modified: {event.src_path} is_dir={event.is_directory}")
         _debounced_invalidate(str(self.vault_path))
         if not event.is_directory and event.src_path.endswith(".md"):
-            _sync_file(self.owner, self.vault_path, Path(event.src_path))
+            if not _should_suppress(event.src_path):
+                _sync_file(self.owner, self.vault_path, Path(event.src_path))
 
     def on_deleted(self, event):
         logger.debug(f"[watcher] deleted: {event.src_path} is_dir={event.is_directory}")
@@ -292,7 +319,8 @@ class _VaultEventHandler(FileSystemEventHandler):
             if event.src_path.endswith(".md"):
                 _mark_deleted(self.owner, self.vault_path, Path(event.src_path))
             if event.dest_path.endswith(".md"):
-                _sync_file(self.owner, self.vault_path, Path(event.dest_path))
+                if not _should_suppress(event.dest_path):
+                    _sync_file(self.owner, self.vault_path, Path(event.dest_path))
 
 
 # Sync logic --------------------------------------------------------------------

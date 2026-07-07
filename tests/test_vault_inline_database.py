@@ -220,11 +220,47 @@ def test_promote_inline_database(client):
         note = (vault / "note.md").read_text()
         assert f"<!-- database: {marker} -->" in note
 
-        # Schema should exist in DB
+        # Schema should exist in DB with rows imported from markdown
         r2 = client.get(f"/api/vault/databases/{data['schema']['id']}")
         assert r2.status_code == 200
         schema = r2.json()
         assert schema["columns"] == [{"name": "Name", "type": "text"}, {"name": "Status", "type": "text"}]
+        assert schema["rows"] == [["Alpha", "Draft"]]
+
+
+def test_create_inline_database(client):
+    """Test the new eager creation endpoint (POST /databases)."""
+    with tempfile.TemporaryDirectory() as td:
+        vault = Path(td) / "v"
+        vault.mkdir()
+        (vault / "note.md").write_text("Some content.\n")
+        _connect_vault(client, vault)
+
+        r = client.post("/api/vault/databases", json={
+            "note_id": "note.md",
+            "columns": ["Name", "Status"],
+            "title": "Test DB",
+        })
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert data["ok"] is True
+        marker = data["marker"]
+        assert marker.startswith("db-")
+
+        # Marker + snapshot should be written to the note file
+        note = (vault / "note.md").read_text()
+        assert f"<!-- database: {marker} -->" in note
+        assert "| Name | Status |" in note
+        assert "| --- | --- |" in note
+
+        # Schema should have 2 columns and 1 empty row
+        schema = data["schema"]
+        assert len(schema["columns"]) == 2
+        assert schema["title"] == "Test DB"
+        assert len(schema["rows"]) == 1
+        assert schema["rows"][0] == ["", ""]
+
+        client.post("/api/vault/disconnect")
 
 
 
@@ -345,5 +381,79 @@ def test_demote_inline_database(client):
         # DB record should be gone
         r3 = client.get(f"/api/vault/databases/{db_id}")
         assert r3.status_code == 404
+
+        client.post("/api/vault/disconnect")
+
+
+def test_snapshot_regeneration_after_mutations(client):
+    """Verify that the note file snapshot is regenerated from DB rows after mutations."""
+    with tempfile.TemporaryDirectory() as td:
+        vault = Path(td) / "v"
+        vault.mkdir()
+        (vault / "note.md").write_text("Some content.\n")
+        _connect_vault(client, vault)
+
+        r = client.post("/api/vault/databases", json={
+            "note_id": "note.md",
+            "columns": ["Name"],
+        })
+        assert r.status_code == 200
+        db_id = r.json()["schema"]["id"]
+        marker = r.json()["marker"]
+
+        r2 = client.post(f"/api/vault/databases/{db_id}/row", json={"values": ["Alpha"]})
+        assert r2.status_code == 200
+
+        note = (vault / "note.md").read_text()
+        assert f"<!-- database: {marker} -->" in note
+        assert "| Alpha |" in note
+
+        r3 = client.post(f"/api/vault/databases/{db_id}/cell", json={"row": 1, "col": 0, "value": "Beta"})
+        assert r3.status_code == 200
+
+        note = (vault / "note.md").read_text()
+        assert "| Beta |" in note
+        assert "| Alpha |" not in note
+
+        r4 = client.post(f"/api/vault/databases/{db_id}/column", json={"name": "Status", "default_value": "Draft"})
+        assert r4.status_code == 200
+
+        note = (vault / "note.md").read_text()
+        assert "| Status |" in note
+        assert "| Beta | Draft |" in note
+
+        r5 = client.get(f"/api/vault/databases/{db_id}")
+        assert r5.status_code == 200
+        schema = r5.json()
+        assert len(schema["columns"]) == 2
+        assert schema["rows"] == [["", "Draft"], ["Beta", "Draft"]]
+
+        client.post("/api/vault/disconnect")
+
+
+def test_legacy_migration_on_list(client):
+    """Verify that legacy markdown-table databases get their rows imported on first list."""
+    with tempfile.TemporaryDirectory() as td:
+        vault = Path(td) / "v"
+        vault.mkdir()
+        (vault / "note.md").write_text(
+            "<!-- database: db-legacy1 -->\n| Name |\n| --- |\n| Alpha |\n| Beta |\n"
+        )
+        _connect_vault(client, vault)
+
+        r = client.post("/api/vault/notes/note.md/databases", json={"marker": "db-legacy1"})
+        assert r.status_code == 200
+        db_id = r.json()["schema"]["id"]
+
+        r2 = client.get(f"/api/vault/databases/{db_id}")
+        assert r2.status_code == 200
+        schema = r2.json()
+        assert schema["rows"] == [["Alpha"], ["Beta"]]
+
+        r3 = client.get("/api/vault/notes/note.md/databases")
+        assert r3.status_code == 200
+        dbs = r3.json()["databases"]
+        assert len(dbs) == 1
+        assert dbs[0]["schema"]["rows"] == [["Alpha"], ["Beta"]]
 
         client.post("/api/vault/disconnect")

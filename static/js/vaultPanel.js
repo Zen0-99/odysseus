@@ -8,6 +8,8 @@ import { vaultMdToHtml, buildNoteCache } from './vaultMarkdown.js';
 import {
   parseInlineDatabases,
   renderDatabaseTable,
+  showPropertyVisibilityDialog,
+  showPropertySelectMenu,
   fetchInlineDatabases,
   editInlineDatabaseCell,
   addInlineDatabaseColumn,
@@ -17,6 +19,7 @@ import {
   updateInlineDatabaseSchema,
   deleteInlineDatabase,
   promoteInlineDatabase,
+  promoteInlineDatabaseByMarker,
 } from './vaultInlineDatabase.js';
 import { createVaultSlashMenu } from './vaultSlashMenu.js';
 import { styledConfirm, styledPrompt, showToast, showError } from './ui.js';
@@ -102,6 +105,7 @@ function _stopFilePolling() {
 }
 
 export async function openPanel() {
+  await _loadVaultHtml();
   const modal = document.getElementById('vault-modal');
   if (!modal) return;
   if (_open) { _bringToFront(); return; }
@@ -228,19 +232,23 @@ window.addEventListener('resize', () => {
   });
 });
 
-// Wire close button immediately at module load (module scripts are deferred,
-// so the DOM element already exists). Use capture phase so the handler
-// fires before windowDrag's synthetic-click swallow listener.
-document.getElementById('close-vault-modal')?.addEventListener('click', () => closePanel(), true);
+// Wire close button (deferred to _init since vault.html loads dynamically).
+// Use capture phase so the handler fires before windowDrag's synthetic-click
+// swallow listener.
+function _wireCloseButton() {
+  document.getElementById('close-vault-modal')?.addEventListener('click', () => closePanel(), true);
+}
 
 // Keep _open in sync when the modal is hidden via backdrop click (ui.js
 // adds .hidden directly without calling our closePanel).
-document.getElementById('vault-modal')?.addEventListener('mousedown', (e) => {
-  if (e.target === e.currentTarget && _open) {
-    console.log('[vault] backdrop click detected, syncing _open');
-    closePanel();
-  }
-});
+function _wireBackdropClick() {
+  document.getElementById('vault-modal')?.addEventListener('mousedown', (e) => {
+    if (e.target === e.currentTarget && _open) {
+      console.log('[vault] backdrop click detected, syncing _open');
+      closePanel();
+    }
+  });
+}
 
 export function isOpen() { return _open; }
 
@@ -453,9 +461,10 @@ function _wireDrag() {
   // View mode buttons are wired per-note in _selectNote
 }
 
-// Wire Add Vault form listeners at module level — the form is a standalone
-// overlay that must work even when the vault modal itself is never opened.
-(function _wireAddVaultForm() {
+// Wire Add Vault form listeners — deferred to _init since vault.html loads
+// dynamically. The form is a standalone overlay that must work even when the
+// vault modal itself is never opened.
+function _wireAddVaultForm() {
   document.getElementById('vault-save-vault-btn')?.addEventListener('click', _saveNewVault);
   document.getElementById('vault-cancel-vault-btn')?.addEventListener('click', _hideAddVaultForm);
 
@@ -527,7 +536,7 @@ function _wireDrag() {
       e.target.value = '';
     });
   }
-})();
+}
 
 // ── Vault Management ───────────────────────────────────────
 
@@ -800,6 +809,10 @@ function _openDailyNote() {
 }
 
 async function _createNoteWithContent(noteId, content) {
+  _noteContentCache.delete(noteId);
+  _dirtyNoteIds.delete(noteId);
+  _cancelSaveTimer(noteId);
+  _saveFailures.delete(noteId);
   const folder = noteId.includes('/') ? noteId.slice(0, noteId.lastIndexOf('/')) : '';
   const name = noteId.includes('/') ? noteId.slice(noteId.lastIndexOf('/') + 1) : noteId;
   // Optimistic UI
@@ -1823,72 +1836,242 @@ function _updateRightPanelVisibility() {
   }
 }
 
-function _renderInlineDatabases(container, noteId, databases) {
-  if (!container || !databases || !databases.length) return;
+function _buildDatabaseCallbacks(ph, noteId, db, note) {
+  const refresh = async () => {
+    try {
+      const r = await fetch(`${API_BASE}/api/vault/notes/${encodeURIComponent(noteId)}`);
+      if (r.ok) {
+        const fresh = await r.json();
+        fresh.content = _stripFrontmatterFromContent(fresh.content);
+        if (note) {
+          note.content = fresh.content;
+          note.frontmatter = fresh.frontmatter;
+          note.frontmatter_raw = fresh.frontmatter_raw;
+        }
+        _noteContentCache.set(noteId, fresh);
+      }
+    } catch (e) {
+      console.warn('[vault] refresh fetch failed', e);
+    }
+    // Re-fetch databases BEFORE rendering so schema is not lost.
+    try {
+      const dbs = await fetchInlineDatabases(noteId);
+      if (note) note._databases = dbs;
+      const cached = _noteContentCache.get(noteId);
+      if (cached) cached._databases = dbs;
+    } catch (e) {
+      console.warn('[vault] refresh databases fetch failed', e);
+    }
+  };
+  const _ensureSchema = async () => {
+    if (db.schema) return true;
+    if (!note) {
+      showToast('Note reference lost. Please reopen the note.');
+      return false;
+    }
+    const saved = await _saveNoteContent(note);
+    if (!saved) {
+      showToast('Failed to save note. Try again.');
+      return false;
+    }
+    try {
+      const dbs = await fetchInlineDatabases(noteId);
+      note._databases = dbs;
+      const found = dbs.find((d) => d.marker === db.marker);
+      if (found && found.schema) {
+        db.schema = found.schema;
+      }
+    } catch (e) {
+      console.warn('[vault] fetch databases failed', e);
+    }
+    if (!db.schema && db.marker) {
+      try {
+        const promoted = await promoteInlineDatabaseByMarker(noteId, db.marker);
+        if (promoted && promoted.schema) {
+          db.schema = promoted.schema;
+          note._databases = note._databases || [];
+          const idx = note._databases.findIndex((d) => d.marker === db.marker);
+          if (idx >= 0) note._databases[idx] = promoted;
+          else note._databases.push(promoted);
+        }
+      } catch (e) {
+        console.error('[vault] promotion failed', e);
+        showToast('Failed to create database. Check console.');
+      }
+    }
+    if (!db.schema) {
+      showToast('Database could not be created. Try saving the note first.');
+    }
+    return !!db.schema;
+  };
+  return {
+    onCellEdit: async (row, col, value) => {
+      if (!(await _ensureSchema())) return;
+      // True optimistic: update local state immediately, re-render, then fire-and-forget API call
+      if (db.schema && db.schema.rows && db.schema.rows[row]) {
+        db.schema.rows[row][col] = value;
+        renderDatabaseTable(ph, db, _buildDatabaseCallbacks(ph, noteId, db, note));
+      }
+      editInlineDatabaseCell(db.schema.id, row, col, value)
+        .then(() => refresh())
+        .catch((e) => console.warn('[vault] cell edit failed', e));
+    },
+    onAddColumn: async (name) => {
+      if (!(await _ensureSchema())) return;
+      const result = await addInlineDatabaseColumn(db.schema.id, name);
+      if (result && result.schema) {
+        db.schema = result.schema;
+        renderDatabaseTable(ph, db, _buildDatabaseCallbacks(ph, noteId, db, note));
+      }
+      refresh().catch(() => {});
+    },
+    onRemoveColumn: async (colIdx) => {
+      if (!(await _ensureSchema())) return;
+      const result = await removeInlineDatabaseColumn(db.schema.id, colIdx);
+      if (result && result.schema) {
+        db.schema = result.schema;
+        renderDatabaseTable(ph, db, _buildDatabaseCallbacks(ph, noteId, db, note));
+      }
+      refresh().catch(() => {});
+    },
+    onAddRow: async () => {
+      if (!(await _ensureSchema())) return;
+      const result = await addInlineDatabaseRow(db.schema.id, []);
+      if (result && result.schema) {
+        db.schema = result.schema;
+        renderDatabaseTable(ph, db, _buildDatabaseCallbacks(ph, noteId, db, note));
+      }
+      refresh().catch(() => {});
+    },
+    onRemoveRow: async (rowIdx) => {
+      if (!(await _ensureSchema())) return;
+      await removeInlineDatabaseRow(db.schema.id, rowIdx);
+      // remove_row doesn't return schema; fetch fresh and re-render
+      try {
+        const dbs = await fetchInlineDatabases(noteId);
+        if (note) note._databases = dbs;
+        const cached = _noteContentCache.get(noteId);
+        if (cached) cached._databases = dbs;
+        const found = dbs.find((d) => d.marker === db.marker);
+        if (found && found.schema) {
+          db.schema = found.schema;
+          renderDatabaseTable(ph, db, _buildDatabaseCallbacks(ph, noteId, db, note));
+        }
+      } catch (e) {
+        console.warn('[vault] refresh after remove row failed', e);
+      }
+      refresh().catch(() => {});
+    },
+    onFilter: async (column, value) => {
+      if (!(await _ensureSchema())) return;
+      const filters = [...(db.schema.filters || [])];
+      const existing = filters.findIndex((f) => f.column === column);
+      if (existing >= 0) filters.splice(existing, 1);
+      filters.push({ column, op: 'contains', value });
+      await updateInlineDatabaseSchema(db.schema.id, { filters });
+      db.schema.filters = filters;
+      renderDatabaseTable(ph, db, _buildDatabaseCallbacks(ph, noteId, db, note));
+    },
+    onSort: async (column, direction) => {
+      if (!(await _ensureSchema())) return;
+      const sort = [...(db.schema.sort || [])];
+      const existing = sort.findIndex((s) => s.column === column);
+      if (existing >= 0) sort.splice(existing, 1);
+      sort.push({ column, direction: direction === 'desc' ? 'desc' : 'asc' });
+      await updateInlineDatabaseSchema(db.schema.id, { sort });
+      db.schema.sort = sort;
+      renderDatabaseTable(ph, db, _buildDatabaseCallbacks(ph, noteId, db, note));
+    },
+    onDeleteDatabase: async () => {
+      if (note && note.content) {
+        const lines = note.content.split('\n');
+        const markerIdx = lines.findIndex((l) => l.includes(`<!-- database: ${db.marker} -->`));
+        if (markerIdx !== -1) {
+          let endIdx = markerIdx + 1;
+          while (endIdx < lines.length && lines[endIdx].includes('|')) endIdx++;
+          lines.splice(markerIdx, endIdx - markerIdx);
+          note.content = lines.join('\n');
+          _markNoteDirty(note.id);
+          await _saveNoteContent(note);
+        }
+      }
+      if (db.schema) {
+        try { await deleteInlineDatabase(db.schema.id); } catch (e) { console.warn('[vault] delete schema failed', e); }
+      }
+      await refresh();
+      await _selectNote(noteId);
+    },
+    onShowColumnMenu: (colIdx, columns, anchorEl) => {
+      showPropertyVisibilityDialog(columns, anchorEl, (updated) => {
+        db.schema = db.schema || {};
+        db.schema.columns = updated;
+        renderDatabaseTable(ph, db, _buildDatabaseCallbacks(ph, noteId, db, note));
+        if (db.schema.id) {
+          updateInlineDatabaseSchema(db.schema.id, { columns: updated }).catch((e) => console.warn('[vault] update columns failed', e));
+        }
+      });
+    },
+    onShowFilterMenu: (columns, anchorEl) => {
+      showPropertySelectMenu(columns, anchorEl, async (colName) => {
+        const value = await styledPrompt('Value to contain', { title: 'Filter', placeholder: 'Value' });
+        if (value === null) return;
+        const cbs = _buildDatabaseCallbacks(ph, noteId, db, note);
+        if (cbs.onFilter) cbs.onFilter(colName, value.trim());
+      }, { title: 'Filter by…' });
+    },
+    onColumnResize: (colIdx, width) => {
+      db.schema = db.schema || {};
+      const updated = (db.schema.columns || []).map((c, i) =>
+        i === colIdx ? { ...c, width } : { ...c }
+      );
+      db.schema.columns = updated;
+      if (db.schema.id) {
+        updateInlineDatabaseSchema(db.schema.id, { columns: updated }).catch((e) =>
+          console.warn('[vault] column width update failed', e)
+        );
+      }
+    },
+    onShowSortMenu: (columns, anchorEl) => {
+      showPropertySelectMenu(columns, anchorEl, async (colName) => {
+        const cbs = _buildDatabaseCallbacks(ph, noteId, db, note);
+        if (cbs.onSort) cbs.onSort(colName, 'asc');
+      }, { title: 'Sort by…' });
+    },
+  };
+}
+
+function _renderInlineDatabases(container, noteId, databases, rawContent = '') {
+  if (!container) return;
+  const dbs = databases || [];
   const placeholders = Array.from(container.querySelectorAll('.vault-inline-db-placeholder'));
-  const dbByMarker = new Map(databases.map((d) => [d.marker, d]));
+  const dbByMarker = new Map(dbs.map((d) => [d.marker, d]));
+  // Track which placeholders got a server-rendered database
+  const renderedMarkers = new Set();
+  const _findNote = (id) => _notes.find((n) => n.id === id || n.rel_path === id);
   for (const ph of placeholders) {
     const marker = ph.dataset.marker;
     const db = dbByMarker.get(marker);
     if (!db) continue;
-    const refresh = async () => {
-      _noteContentCache.delete(noteId);
-      const cached = _noteContentCache.get(noteId);
-      if (cached) cached._databases = null;
-      await _selectNote(noteId);
-    };
-    const callbacks = {
-      onCellEdit: async (row, col, value) => {
-        if (!db.schema) return;
-        await editInlineDatabaseCell(db.schema.id, row, col, value);
-        await refresh();
-      },
-      onAddColumn: async (name) => {
-        if (!db.schema) return;
-        await addInlineDatabaseColumn(db.schema.id, name);
-        await refresh();
-      },
-      onRemoveColumn: async (colIdx) => {
-        if (!db.schema) return;
-        await removeInlineDatabaseColumn(db.schema.id, colIdx);
-        await refresh();
-      },
-      onAddRow: async () => {
-        if (!db.schema) return;
-        await addInlineDatabaseRow(db.schema.id, []);
-        await refresh();
-      },
-      onRemoveRow: async (rowIdx) => {
-        if (!db.schema) return;
-        await removeInlineDatabaseRow(db.schema.id, rowIdx);
-        await refresh();
-      },
-      onFilter: async (column, value) => {
-        if (!db.schema) return;
-        const filters = [...(db.schema.filters || [])];
-        const existing = filters.findIndex((f) => f.column === column);
-        if (existing >= 0) filters.splice(existing, 1);
-        filters.push({ column, op: 'contains', value });
-        await updateInlineDatabaseSchema(db.schema.id, { filters });
-        db.schema.filters = filters;
-        renderDatabaseTable(ph, db, callbacks);
-      },
-      onSort: async (column, direction) => {
-        if (!db.schema) return;
-        const sort = [...(db.schema.sort || [])];
-        const existing = sort.findIndex((s) => s.column === column);
-        if (existing >= 0) sort.splice(existing, 1);
-        sort.push({ column, direction: direction === 'desc' ? 'desc' : 'asc' });
-        await updateInlineDatabaseSchema(db.schema.id, { sort });
-        db.schema.sort = sort;
-        renderDatabaseTable(ph, db, callbacks);
-      },
-      onDeleteDatabase: async () => {
-        if (!db.schema) return;
-        await deleteInlineDatabase(db.schema.id);
-        await refresh();
-      },
-    };
+    renderedMarkers.add(marker);
+    const note = _findNote(noteId);
+    const callbacks = _buildDatabaseCallbacks(ph, noteId, db, note);
+    renderDatabaseTable(ph, db, callbacks);
+    _wireWikilinks(ph);
+  }
+  // Fallback: for placeholders without a DB record, render from markdown data
+  // and attach callbacks that will lazily create the DB schema on first mutation.
+  const raw = rawContent || '';
+  if (!raw) return;
+  const freshDbs = parseInlineDatabases(raw);
+  const freshByMarker = new Map(freshDbs.map((d) => [d.marker, d]));
+  for (const ph of placeholders) {
+    const marker = ph.dataset.marker;
+    if (renderedMarkers.has(marker)) continue;
+    const fresh = freshByMarker.get(marker);
+    if (!fresh) continue;
+    const note = _findNote(noteId);
+    const db = { ...fresh, schema: null };
+    const callbacks = _buildDatabaseCallbacks(ph, noteId, db, note);
     renderDatabaseTable(ph, db, callbacks);
     _wireWikilinks(ph);
   }
@@ -5554,6 +5737,18 @@ function _isCorruptCharObject(obj) {
   return keys.every(k => /^\d+$/.test(k));
 }
 
+function _countWordsExcludingDatabases(content) {
+  if (!content) return 0;
+  const dbs = parseInlineDatabases(content);
+  const dbLineSet = new Set();
+  for (const db of dbs) {
+    for (let i = db.markerLine; i < db.tableEnd; i++) dbLineSet.add(i);
+  }
+  const lines = content.split('\n');
+  const filtered = lines.filter((_, idx) => !dbLineSet.has(idx));
+  return filtered.join('\n').split(/\s+/).filter(Boolean).length;
+}
+
 function _serializeFrontmatter(fm) {
   // If frontmatter is a string or String object, it was corrupted; fall back to empty
   if (typeof fm === 'string' || fm instanceof String || _isCorruptCharObject(fm)) {
@@ -5582,9 +5777,11 @@ function _getNoteFullRaw(note) {
 function _stripFrontmatterFromContent(content) {
   if (!content) return content;
   const lines = content.split('\n');
-  if (lines[0]?.trim() === '---') {
-    const endIdx = lines.findIndex((l, idx) => idx > 0 && l.trim() === '---');
-    if (endIdx > 0) {
+  let startIdx = 0;
+  while (startIdx < lines.length && lines[startIdx].trim() === '') startIdx++;
+  if (lines[startIdx]?.trim() === '---') {
+    const endIdx = lines.findIndex((l, idx) => idx > startIdx && l.trim() === '---');
+    if (endIdx > startIdx) {
       return lines.slice(endIdx + 1).join('\n').replace(/^\n+/, '');
     }
   }
@@ -5608,6 +5805,22 @@ function _flushSourceEdit(sourceDiv, note, markDirty = true) {
   if (markDirty) _markNoteDirty(note.id);
 }
 
+const _getRawFromSource = (source) => {
+  let raw = '';
+  const walker = document.createTreeWalker(source, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    if (node.nodeType === Node.TEXT_NODE) {
+      raw += node.textContent;
+    } else if (node.tagName === 'BR') {
+      raw += '\n';
+    } else if (node.tagName === 'DIV' && node !== source) {
+      raw += '\n';
+    }
+  }
+  return raw;
+};
+
 function _flushActiveEditor(note, markDirty = true) {
   const preview = document.getElementById('vault-preview');
   if (!preview) return;
@@ -5619,8 +5832,13 @@ function _flushActiveEditor(note, markDirty = true) {
   const liveDiv = preview.querySelector('.vault-live-view');
   if (liveDiv) {
     const rawLines = [];
-    liveDiv.querySelectorAll('.lp-line').forEach(line => {
-      rawLines.push(line.getAttribute('data-raw') || '');
+    liveDiv.querySelectorAll('.lp-line, .vault-inline-db-placeholder, .vault-inline-database').forEach(el => {
+      if (el.classList.contains('lp-line')) {
+        const sourceEl = el.querySelector('.lp-source');
+        rawLines.push(sourceEl ? _getRawFromSource(sourceEl) : (el.getAttribute('data-raw') || ''));
+      } else {
+        rawLines.push(el.getAttribute('data-raw') || '');
+      }
     });
     note.content = rawLines.join('\n');
     if (markDirty) _markNoteDirty(note.id);
@@ -5947,7 +6165,44 @@ function _buildPropertiesHtml(frontmatter, note) {
   return `<div class="vault-properties-inline ${collapsedClass}" data-properties-container><h4 class="vault-prop-header">Properties<span class="vault-prop-chevron"></span></h4><div class="vault-prop-grid">${rows || ''}</div>${addBtn}</div>`;
 }
 
+function _wireWikilinks(container) {
+  container.querySelectorAll('a.wikilink').forEach(a => {
+    a.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const targetTitle = a.dataset.note;
+      const target = _notes.find(n => n.title === targetTitle);
+      if (target) {
+        _navigateToNote(target.id, true, e.ctrlKey || e.metaKey);
+      } else {
+        const created = await _getOrCreateNoteByTitle(targetTitle);
+        if (created) _navigateToNote(created.id, true, e.ctrlKey || e.metaKey);
+      }
+    });
+  });
+}
+
+function _wireSourceWikilinks(container) {
+  container.querySelectorAll('a.wikilink-source').forEach(a => {
+    a.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const targetTitle = a.dataset.note;
+      const target = _notes.find(n => n.title && n.title.toLowerCase() === targetTitle.toLowerCase());
+      if (target) {
+        _navigateToNote(target.id, true, e.ctrlKey || e.metaKey);
+      } else {
+        const created = await _getOrCreateNoteByTitle(targetTitle);
+        if (created) _navigateToNote(created.id, true, e.ctrlKey || e.metaKey);
+      }
+    });
+  });
+}
+
 async function _selectNote(id) {
+  // Flush any pending edits from the currently selected note before switching
+  if (_selectedNoteId && _selectedNoteId !== id) {
+    const current = _notes.find(n => n.id === _selectedNoteId || n.rel_path === _selectedNoteId);
+    if (current) _flushActiveEditor(current, false);
+  }
   _selectedNoteId = id;
 
   const preview = document.getElementById('vault-preview');
@@ -5985,7 +6240,22 @@ async function _selectNote(id) {
     let _inlineDbPromise = null;
     if (!note._databases) {
       _inlineDbPromise = fetchInlineDatabases(id)
-        .then(dbs => { note._databases = dbs; return dbs; })
+        .then(dbs => {
+          note._databases = dbs;
+          // If still the selected note, re-render inline databases with schema
+          if (_selectedNoteId === id) {
+            const bodyEl = preview.querySelector('.vault-preview-body');
+            if (bodyEl) {
+              const liveDiv = bodyEl.querySelector('.vault-live-view');
+              const wrap = bodyEl.querySelector('.vault-reading-view');
+              const container = liveDiv || wrap;
+              if (container) {
+                _renderInlineDatabases(container, id, dbs, note.content);
+              }
+            }
+          }
+          return dbs;
+        })
         .catch(e => {
           console.warn('[vault] failed to load inline databases', e);
           note._databases = [];
@@ -6100,38 +6370,6 @@ async function _selectNote(id) {
       });
       note.content = texts.join('\n\n');
       await _saveNoteContent(note);
-    };
-
-    const _wireWikilinks = (container) => {
-      container.querySelectorAll('a.wikilink').forEach(a => {
-        a.addEventListener('click', async (e) => {
-          e.preventDefault();
-          const targetTitle = a.dataset.note;
-          const target = _notes.find(n => n.title === targetTitle);
-          if (target) {
-            _navigateToNote(target.id, true, e.ctrlKey || e.metaKey);
-          } else {
-            const created = await _getOrCreateNoteByTitle(targetTitle);
-            if (created) _navigateToNote(created.id, true, e.ctrlKey || e.metaKey);
-          }
-        });
-      });
-    };
-
-    const _wireSourceWikilinks = (container) => {
-      container.querySelectorAll('a.wikilink-source').forEach(a => {
-        a.addEventListener('click', async (e) => {
-          e.preventDefault();
-          const targetTitle = a.dataset.note;
-          const target = _notes.find(n => n.title && n.title.toLowerCase() === targetTitle.toLowerCase());
-          if (target) {
-            _navigateToNote(target.id, true, e.ctrlKey || e.metaKey);
-          } else {
-            const created = await _getOrCreateNoteByTitle(targetTitle);
-            if (created) _navigateToNote(created.id, true, e.ctrlKey || e.metaKey);
-          }
-        });
-      });
     };
 
     const _wireReadingViewFolds = (wrap) => {
@@ -6326,7 +6564,11 @@ async function _selectNote(id) {
       // Math inline $text$
       h = h.replace(/\$([^$\s][^$]*[^$\s])\$/g, '<span class="md-math"><span class="md-syntax">$</span>$1<span class="md-syntax">$</span></span>');
       // External links [text](url)
-      h = h.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<span class="md-link"><span class="md-syntax">[</span><span class="md-link-text">$1</span><span class="md-syntax">](</span><span class="md-link-url">$2</span><span class="md-syntax">)</span></span>');
+      h = h.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, text, url) => {
+        const safeUrl = /^https?:\/\//i.test(url) ? _esc(url) : '#';
+        const target = safeUrl !== '#' ? ' target="_blank" rel="noopener noreferrer"' : '';
+        return `<span class="md-link"><span class="md-syntax">[</span><a class="md-link-text" href="${safeUrl}"${target}><span class="md-link-text-inner">${text}</span></a><span class="md-syntax">](</span><span class="md-link-url">${_esc(url)}</span><span class="md-syntax">)</span></span>`;
+      });
       // Both closed and unclosed inline markers are handled by _processInlineMarkers.
       // Live preview Enter inserts \n; normalize to <br> so the break survives innerHTML.
       h = h.replace(/\n/g, '<br>');
@@ -6427,11 +6669,25 @@ async function _selectNote(id) {
 
     const _renderLiveView = (raw, databases = []) => {
       if (!raw) return '<div class="lp-line lp-empty" data-raw=""><div class="lp-source"><br></div></div>';
-      const lines = raw.split('\n');
-      // Build a set of line indices that belong to inline database tables
+      // Safety net: if frontmatter somehow leaked into the content, strip it
+      // before rendering so --- delimiters never show in the live view.
+      let content = raw;
+      const firstLines = raw.split('\n');
+      let fmStart = 0;
+      while (fmStart < firstLines.length && firstLines[fmStart].trim() === '') fmStart++;
+      if (firstLines[fmStart]?.trim() === '---') {
+        const endIdx = firstLines.findIndex((l, idx) => idx > fmStart && l.trim() === '---');
+        if (endIdx > fmStart) {
+          content = firstLines.slice(endIdx + 1).join('\n').replace(/^\n+/, '');
+        }
+      }
+      const lines = content.split('\n');
+      // Re-parse raw content for fresh line numbers — cached databases may have
+      // stale line indices after edits, causing table syntax to leak through.
+      const freshDbs = parseInlineDatabases(content);
       const dbLineSet = new Set();
       const dbByStart = new Map();
-      for (const db of (databases || [])) {
+      for (const db of freshDbs) {
         for (let i = db.markerLine; i < db.tableEnd; i++) dbLineSet.add(i);
         dbByStart.set(db.markerLine, db);
       }
@@ -6465,7 +6721,8 @@ async function _selectNote(id) {
           flushParagraph();
           const db = dbByStart.get(idx);
           if (db) {
-            out.push(`<div class="vault-inline-db-placeholder" data-marker="${_esc(db.marker)}"></div>`);
+            const rawDbLines = lines.slice(db.markerLine, db.tableEnd).join('\n');
+            out.push(`<div class="vault-inline-db-placeholder" data-marker="${_esc(db.marker)}" data-raw="${_esc(rawDbLines)}"></div>`);
           }
           continue;
         }
@@ -6505,22 +6762,6 @@ async function _selectNote(id) {
       }
       return out.join('');
     };
-
-const _getRawFromSource = (source) => {
-  let raw = '';
-  const walker = document.createTreeWalker(source, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
-  while (walker.nextNode()) {
-    const node = walker.currentNode;
-    if (node.nodeType === Node.TEXT_NODE) {
-      raw += node.textContent;
-    } else if (node.tagName === 'BR') {
-      raw += '\n';
-    } else if (node.tagName === 'DIV' && node !== source) {
-      raw += '\n';
-    }
-  }
-  return raw;
-};
 
 const _getRawOffsetUpTo = (root, endNode, endOffset) => {
   let offset = 0;
@@ -6864,7 +7105,7 @@ const _normalizeRange = (range) => {
         const liveDiv = bodyEl.querySelector('.vault-live-view');
         _wireSourceWikilinks(liveDiv);
         _attachVaultSlashMenu(liveDiv);
-        try { _renderInlineDatabases(liveDiv, note.id, note._databases || []); } catch (e) { console.error('[vault] inline DB render failed', e); }
+        try { _renderInlineDatabases(liveDiv, note.id, note._databases || [], note.content); } catch (e) { console.error('[vault] inline DB render failed', e); }
 
         let activeLine = null;
         let _caretTimer = null;
@@ -7018,8 +7259,13 @@ const _normalizeRange = (range) => {
         };
 
         liveDiv.addEventListener('click', (e) => {
-          // Don't activate line when clicking a link
-          if (e.target.closest('a')) return;
+          // Don't activate line when clicking a wikilink or inside an inline database
+          if (e.target.closest('a.wikilink-source')) return;
+          if (e.target.closest('.vault-inline-database')) return;
+          // External links: in live preview, activate the line for editing
+          // instead of navigating away. In reading view they open normally.
+          const extLink = e.target.closest('a.md-link-text');
+          if (extLink) { e.preventDefault(); }
           const line = e.target.closest('.lp-line');
           if (!line) {
             // Clicking in blank space below the content: focus the last line
@@ -7106,6 +7352,33 @@ const _normalizeRange = (range) => {
               activeLine.__redoStack = [];
             }
             activeLine.setAttribute('data-raw', currentRaw);
+            // Multi-line block inserts (e.g. slash-command database/table) span
+            // multiple lines in a single lp-line. Detect them and do a full
+            // body re-render so _renderLiveView can emit proper placeholders.
+            const isBlockInsert = currentRaw.includes('\n') && (
+              currentRaw.includes('<!-- database:') ||
+              currentRaw.includes('| --- |') ||
+              currentRaw.includes('```') ||
+              currentRaw.includes('> [!')
+            );
+            if (isBlockInsert) {
+              const rawLines = [];
+              liveDiv.querySelectorAll('.lp-line, .vault-inline-db-placeholder, .vault-inline-database').forEach(el => {
+                if (el.classList.contains('lp-line')) {
+                  const sourceEl = el.querySelector('.lp-source');
+                  rawLines.push(sourceEl ? _getRawFromSource(sourceEl) : (el.getAttribute('data-raw') || ''));
+                } else {
+                  rawLines.push(el.getAttribute('data-raw') || '');
+                }
+              });
+              const newContent = rawLines.join('\n');
+              if (newContent !== note.content) {
+                note.content = newContent;
+                _markNoteDirty(note.id);
+              }
+              updateBody();
+              return;
+            }
             // Don't re-render the line while the slash command menu is open:
             // re-rendering would replace the text node that stores the slash.
             const slashMenuOpen = !!document.querySelector('[data-slash-menu]');
@@ -7127,11 +7400,14 @@ const _normalizeRange = (range) => {
             // Keep the in-memory note content in sync with the DOM so the
             // auto-save scheduler never writes stale data.
             const rawLines = [];
-            liveDiv.querySelectorAll('.lp-line').forEach(line => {
-              rawLines.push(line.getAttribute('data-raw') || '');
+            liveDiv.querySelectorAll('.lp-line, .vault-inline-db-placeholder, .vault-inline-database').forEach(el => {
+              rawLines.push(el.getAttribute('data-raw') || '');
             });
-            note.content = rawLines.join('\n');
-            _markNoteDirty(note.id);
+            const newContent = rawLines.join('\n');
+            if (newContent !== note.content) {
+              note.content = newContent;
+              _markNoteDirty(note.id);
+            }
           }, 50);
         };
         liveDiv.addEventListener('input', _debouncedRenderLine);
@@ -7719,6 +7995,13 @@ const _normalizeRange = (range) => {
             }
           }
         }, true);
+        // After a full rebuild (e.g. database delete), restore focus so the
+        // user can keep typing without an extra click.
+        setTimeout(() => {
+          if (document.activeElement && document.activeElement.closest('.vault-live-view')) return;
+          const firstLine = liveDiv.querySelector('.lp-line');
+          if (firstLine) _activateLine(firstLine);
+        }, 0);
       } else {
         // Reading mode: use live preview HTML without editing interactions
         const content = note.content || '';
@@ -7727,7 +8010,7 @@ const _normalizeRange = (range) => {
         const wrap = bodyEl.querySelector('.vault-reading-view');
         _wireSourceWikilinks(wrap);
         _wireReadingViewFolds(wrap);
-        try { _renderInlineDatabases(wrap, note.id, note._databases || []); } catch (e) { console.error('[vault] inline DB render failed', e); }
+        try { _renderInlineDatabases(wrap, note.id, note._databases || [], note.content); } catch (e) { console.error('[vault] inline DB render failed', e); }
       }
       // Right-click context menu in the note editor body
       bodyEl.addEventListener('contextmenu', (e) => {
@@ -7747,7 +8030,7 @@ const _normalizeRange = (range) => {
     if (!wcEl) { wcEl = document.createElement('div'); wcEl.id = 'vault-word-count'; wcEl.className = 'vault-word-count'; }
     const panelWrap = preview?.parentElement;
     if (panelWrap && wcEl.parentElement !== panelWrap) panelWrap.appendChild(wcEl);
-    const wordCount = (note.content || '').split(/\s+/).filter(Boolean).length;
+    const wordCount = _countWordsExcludingDatabases(note.content || '');
     wcEl.textContent = `${wordCount} words`;
     _updateModeButtons();
     const backBtn = document.getElementById('vault-back-btn');
@@ -7867,7 +8150,7 @@ const _normalizeRange = (range) => {
           if (titleEdit && titleEdit.textContent !== note.title) titleEdit.textContent = note.title;
           // Refresh word count
           const wcEl = document.getElementById('vault-word-count');
-          if (wcEl) wcEl.textContent = `${(note.content || '').split(/\s+/).filter(Boolean).length} words`;
+          if (wcEl) wcEl.textContent = `${_countWordsExcludingDatabases(note.content || '')} words`;
         }
       })
       .catch(() => {});
@@ -9882,6 +10165,9 @@ async function _deleteNote(noteId) {
   const noteIdx = _notes.indexOf(note);
   _notes.splice(noteIdx, 1);
   _noteContentCache.delete(noteId);
+  _dirtyNoteIds.delete(noteId);
+  _cancelSaveTimer(noteId);
+  _saveFailures.delete(noteId);
   const hadTab = _openTabs.includes(noteId);
   _openTabs = _openTabs.filter(id => id !== noteId);
   const prevSelected = _selectedNoteId;
@@ -9990,6 +10276,10 @@ async function _refreshFileExplorer() {
 
 async function _createNoteInFolder(folder) {
   const fileName = _findUniqueUntitled('Untitled', _notes, '.md');
+  _noteContentCache.delete(fileName);
+  _dirtyNoteIds.delete(fileName);
+  _cancelSaveTimer(fileName);
+  _saveFailures.delete(fileName);
   const title = fileName.replace(/\.md$/, '');
   const optimisticNote = {
     id: fileName,
@@ -10672,6 +10962,11 @@ function _wirePanelResizers() {
 // ── Init wiring ──────────────────────────────────────────────
 
 function _init() {
+  // Wire deferred DOM listeners that were previously at module level
+  _wireCloseButton();
+  _wireBackdropClick();
+  _wireAddVaultForm();
+
   // Left sidebar tabs - delegated to panel groups
   document.querySelectorAll('.vault-sidebar-tabs').forEach(container => {
     container.addEventListener('click', (e) => {
@@ -11291,10 +11586,29 @@ function _showCommandPalette() {
   document.addEventListener('keydown', _cpEscHandler, true);
 }
 
+let _vaultHtmlLoaded = null;
+
+function _loadVaultHtml() {
+  if (_vaultHtmlLoaded) return _vaultHtmlLoaded;
+  _vaultHtmlLoaded = (async () => {
+    const host = document.getElementById('vault-host');
+    if (!host || host.children.length > 0) return;
+    try {
+      const resp = await fetch('/static/vault.html');
+      if (!resp.ok) { console.error('[vault] Failed to load vault.html:', resp.status); return; }
+      const html = await resp.text();
+      host.innerHTML = html;
+    } catch (err) {
+      console.error('[vault] Failed to load vault.html:', err);
+    }
+  })();
+  return _vaultHtmlLoaded;
+}
+
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', _init);
+  document.addEventListener('DOMContentLoaded', () => _loadVaultHtml().then(_init));
 } else {
-  _init();
+  _loadVaultHtml().then(_init);
 }
 
 // Save dirty notes when the window loses focus (VSCode "onWindowChange" mode).

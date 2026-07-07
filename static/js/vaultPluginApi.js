@@ -451,7 +451,21 @@ export class WordCountPlugin extends Plugin {
     const update = () => {
       const note = this.app.workspace.getActiveFile();
       const text = note ? (note.content || '') : '';
-      const count = text.split(/\s+/).filter(Boolean).length;
+      // Exclude database markdown blocks from word count
+      const lines = text.split('\n');
+      const filtered = [];
+      let inDb = false;
+      for (const line of lines) {
+        if (/^\s*<!--\s+database:/.test(line)) {
+          inDb = true;
+          continue;
+        }
+        if (inDb && !line.includes('|')) {
+          inDb = false;
+        }
+        if (!inDb) filtered.push(line);
+      }
+      const count = filtered.join('\n').split(/\s+/).filter(Boolean).length;
       const wcEl = document.getElementById('vault-word-count');
       if (wcEl) wcEl.textContent = `${count} words`;
     };
