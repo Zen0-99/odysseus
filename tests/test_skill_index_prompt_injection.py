@@ -122,7 +122,7 @@ def test_skill_index_does_not_leak_to_system_role(tmp_path, monkeypatch):
     from src.agent_loop import _build_system_prompt  # noqa: WPS433
 
     messages = [{"role": "user", "content": "please clean up my inbox"}]
-    out, _ = _build_system_prompt(
+    out, _, _ = _build_system_prompt(
         messages=messages, model="test-model",
         active_document=None, mcp_mgr=None, owner=None,
     )
@@ -151,7 +151,7 @@ def test_skill_index_lands_in_untrusted_user_message(tmp_path, monkeypatch):
     from src.agent_loop import _build_system_prompt  # noqa: WPS433
 
     messages = [{"role": "user", "content": "please clean up my inbox"}]
-    out, _ = _build_system_prompt(
+    out, _, _ = _build_system_prompt(
         messages=messages, model="test-model",
         active_document=None, mcp_mgr=None, owner=None,
     )
@@ -185,11 +185,11 @@ def test_skill_index_is_owner_scoped_across_prompt_cache_hits(tmp_path, monkeypa
     from src.agent_loop import _build_system_prompt  # noqa: WPS433
 
     messages = [{"role": "user", "content": "use my workflow"}]
-    alice_out, _ = _build_system_prompt(
+    alice_out, _, _ = _build_system_prompt(
         messages=messages, model="test-model",
         active_document=None, mcp_mgr=None, owner="alice",
     )
-    bob_out, _ = _build_system_prompt(
+    bob_out, _, _ = _build_system_prompt(
         messages=messages, model="test-model",
         active_document=None, mcp_mgr=None, owner="bob",
     )

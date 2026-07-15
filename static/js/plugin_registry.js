@@ -9,6 +9,10 @@
 
 import { open as openSettingsModal } from './settings.js';
 import { showToast, showError } from './ui.js';
+import workspaceModule from './workspace.js';
+import sessionModule from './sessions.js';
+import { makeWindowDraggable } from './windowDrag.js';
+import * as ModalManager from './modalManager.js';
 
 const _pluginNavItems = [];
 const _pluginSidebarItems = [];
@@ -20,6 +24,131 @@ const _slashCommands = new Map();
 
 function _esc(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/* ── Plugin modal factory ── */
+function _createPluginModal({
+  id, title, body, icon, width, maxHeight, minHeight,
+  minimize, draggable, resizable, fullscreen, dock,
+  closeOnBackdrop, chipLabel, chipIcon,
+  onOpen, onClose, onMinimize, onRestore,
+} = {}) {
+  if (!id || !title || !body) {
+    console.warn('[PluginRegistry] createModal requires id, title, and body');
+    return null;
+  }
+  width = width || 'min(720px, 92vw)';
+  maxHeight = maxHeight || '80vh';
+  minHeight = minHeight || '';
+  minimize = minimize !== false;
+  draggable = draggable !== false;
+  resizable = resizable !== false;
+  fullscreen = fullscreen !== false;
+  dock = dock !== false;
+  closeOnBackdrop = closeOnBackdrop !== false;
+
+  var modal = document.createElement('div');
+  modal.id = id;
+  modal.className = 'modal hidden';
+  modal.innerHTML =
+    '<div class="modal-content" role="dialog" aria-label="' + id + '" style="width:' + width + ';max-height:' + maxHeight + ';' + (minHeight ? 'min-height:' + minHeight + ';' : '') + 'background:var(--bg);">' +
+      '<div class="modal-header">' +
+        '<h4 style="margin:0;margin-right:auto">' + (icon || '') + title + '</h4>' +
+        (minimize ? '<button class="modal-minimize-btn" data-minimize title="Minimize"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="18" x2="19" y2="18"/></svg></button>' : '') +
+        '<button class="close-btn" aria-label="Close">✖</button>' +
+      '</div>' +
+      '<div class="modal-body" style="padding:12px 16px;overflow-y:auto;">' + (typeof body === 'function' ? body() : body) + '</div>' +
+    '</div>';
+
+  var content = modal.querySelector('.modal-content');
+  var header = modal.querySelector('.modal-header');
+
+  // Wire drag / resize / fullscreen
+  if (draggable && content && header) {
+    makeWindowDraggable(modal, {
+      content, header,
+      enableFullscreen: fullscreen,
+      enableResize: resizable,
+      enableDock: dock,
+      skipSelector: '.close-btn, .modal-close, .modal-minimize-btn, [data-minimize]',
+      onEnterFullscreen: function() { content.style.maxHeight = 'none'; },
+      onExitFullscreen: function() { content.style.maxHeight = maxHeight; },
+    });
+  }
+
+  // Backdrop click to close
+  if (closeOnBackdrop) {
+    modal.addEventListener('click', function(e) {
+      if (e.target === modal) {
+        ModalManager.close(id);
+      }
+    });
+  }
+
+  // Wire close button
+  var closeBtn = header?.querySelector('.close-btn');
+  if (closeBtn) {
+    closeBtn.addEventListener('click', function() {
+      ModalManager.close(id);
+    });
+  }
+
+  // Wire minimize button
+  if (minimize) {
+    var minBtn = header?.querySelector('.modal-minimize-btn, [data-minimize]');
+    if (minBtn) {
+      minBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        ModalManager.minimize(id);
+      });
+    }
+  }
+
+  var _bodyEl = modal.querySelector('.modal-body');
+
+  function _ensureRegistered() {
+    // ModalManager.register() is idempotent — safe to call on every open().
+    // The previous _registered guard caused a bug: ModalManager.close()
+    // deletes state, but the guard stayed true, so re-open never re-registered
+    // and subsequent close attempts silently no-oped.
+    ModalManager.register(id, {
+      label: chipLabel || title,
+      icon: chipIcon || icon || '',
+      restoreFn: function() {
+        modal.classList.remove('hidden');
+        modal.style.display = '';
+        if (onRestore) onRestore();
+      },
+      closeFn: function() {
+        modal.classList.add('hidden');
+        modal.style.display = 'none';
+        if (onClose) onClose();
+      },
+    });
+  }
+
+  return {
+    element: modal,
+    open: function() {
+      _ensureRegistered();
+      modal.classList.remove('hidden');
+      modal.style.display = 'flex';
+      if (onOpen) onOpen();
+    },
+    close: function() {
+      ModalManager.close(id);
+    },
+    minimize: function() {
+      ModalManager.minimize(id);
+      if (onMinimize) onMinimize();
+    },
+    setBody: function(html) {
+      if (_bodyEl) _bodyEl.innerHTML = html;
+    },
+    isOpen: function() {
+      return !modal.classList.contains('hidden') && modal.style.display !== 'none';
+    },
+  };
 }
 
 /* ── Host API exposed to plugins ── */
@@ -103,6 +232,28 @@ window.__odysseusPluginHost = {
       script.onerror = () => reject(new Error(`Failed to load ${url}`));
       document.head.appendChild(script);
     });
+  },
+
+  async navigateToSession(sessionId, workspace) {
+    if (workspace) workspaceModule.setWorkspace(workspace);
+    if (sessionId) {
+      await sessionModule.loadSessions();
+      await sessionModule.selectSession(sessionId);
+    }
+  },
+
+  setMode(mode) {
+    if (typeof window.setAppMode === 'function') {
+      window.setAppMode(mode);
+    }
+  },
+
+  makeDraggable(modal, options) {
+    makeWindowDraggable(modal, options);
+  },
+
+  createModal(options) {
+    return _createPluginModal(options);
   },
 
   loadStyle(url, pluginName) {
@@ -190,7 +341,7 @@ async function initPluginRegistry() {
       // Load frontend script if declared
       const fe = p.frontend;
       if (fe) {
-        const src = `/api/plugins/static/${encodeURIComponent(p.name)}/${fe}`;
+        const src = `/api/plugins/static/${encodeURIComponent(p.name)}/${fe}?v=${encodeURIComponent(p.version || '0')}`;
         try {
           await window.__odysseusPluginHost.loadScript(src, p.name);
         } catch (e) {

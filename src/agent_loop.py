@@ -867,6 +867,7 @@ def _build_system_prompt(
     owner: Optional[str] = None,
     suppress_local_context: bool = False,
     active_email: Optional[Dict[str, str]] = None,
+    session_id: Optional[str] = None,
 ) -> List[Dict]:
     """Build agent system prompt, inject MCP/document context, merge consecutive system msgs."""
     global _cached_base_prompt, _cached_base_prompt_key
@@ -913,6 +914,9 @@ def _build_system_prompt(
     mcp_schemas = []
     if mcp_mgr:
         mcp_schemas = mcp_mgr.get_all_openai_schemas(mcp_disabled_map or {})
+
+    # Plugin tool schemas — static per server run (registered at startup)
+    _plugin_schemas = _build_plugin_tool_schemas()
 
     set_active_model(model)
 
@@ -1334,8 +1338,60 @@ def _build_system_prompt(
         last_user_idx += 1
     if _datetime_message:
         merged.insert(last_user_idx, _datetime_message)
+        last_user_idx += 1
 
-    return merged, mcp_schemas
+    # Plugin chat context — dynamic per-turn context injected by plugins
+    # (e.g. git branch, workspace path). Wrapped in untrusted_context_message
+    # so plugin-provided text can never influence the trusted system role.
+    # Injected AFTER the cached base prompt to avoid cache bleed.
+    _plugin_context_message = None
+    if session_id:
+        try:
+            from src.plugin_host import get_chat_context_providers
+            providers = get_chat_context_providers()
+            parts: list[str] = []
+            for cb in providers:
+                try:
+                    ctx = cb(session_id)
+                    if ctx:
+                        parts.append(ctx)
+                except Exception:
+                    pass  # one provider failing should not break the turn
+            if parts:
+                _plugin_context_message = untrusted_context_message(
+                    "plugin workspace context",
+                    "\n\n".join(parts),
+                )
+        except Exception:
+            pass
+    if _plugin_context_message:
+        merged.insert(last_user_idx, _plugin_context_message)
+
+    return merged, mcp_schemas, _plugin_schemas
+
+
+def _build_plugin_tool_schemas() -> list:
+    """Build OpenAI-compatible tool schemas for all registered plugin tools."""
+    try:
+        from src.plugin_host import _tools as _plugin_tools_registry
+    except ImportError:
+        return []
+    schemas = []
+    for plugin_name, tools in _plugin_tools_registry.items():
+        for tool_name, info in tools.items():
+            schema = info.get("schema", {})
+            if schema and tool_name:
+                schemas.append({
+                    "type": "function",
+                    "function": {
+                        "name": tool_name,
+                        "description": f"[Plugin: {plugin_name}] {schema.get('description', '')}",
+                        "parameters": {
+                            k: v for k, v in schema.items() if k != "description"
+                        },
+                    },
+                })
+    return schemas
 
 
 _ADMIN_TOOLS = {
@@ -2102,7 +2158,7 @@ async def stream_agent_loop(
         _is_api_model = False
     else:
         _is_api_model = any(h in endpoint_url for h in _API_HOSTS) or _model_supports_tools
-    messages, mcp_schemas = _build_system_prompt(
+    messages, mcp_schemas, plugin_schemas = _build_system_prompt(
         messages, model, active_document, mcp_mgr, disabled_tools,
         needs_admin=_needs_admin, relevant_tools=_relevant_tools,
         mcp_disabled_map=_mcp_disabled_map,
@@ -2110,6 +2166,7 @@ async def stream_agent_loop(
         owner=owner,
         suppress_local_context=guide_only,
         active_email=active_email,
+        session_id=session_id,
     )
     if plan_mode and not guide_only:
         # Steer the model to investigate-then-propose. Hard tool gating handles
@@ -2306,13 +2363,17 @@ async def stream_agent_loop(
                     s for s in mcp_schemas
                     if s.get("function", {}).get("name") in _relevant_tools
                 ]
-                all_tool_schemas = base_schemas + _mcp_filtered
+                _plugin_filtered = [
+                    s for s in plugin_schemas
+                    if s.get("function", {}).get("name") in _relevant_tools
+                ]
+                all_tool_schemas = base_schemas + _mcp_filtered + _plugin_filtered
             else:
                 base_schemas = FUNCTION_TOOL_SCHEMAS if _needs_admin else [
                     s for s in FUNCTION_TOOL_SCHEMAS
                     if s.get("function", {}).get("name") not in _ADMIN_SCHEMA_NAMES
                 ]
-                all_tool_schemas = base_schemas + mcp_schemas
+                all_tool_schemas = base_schemas + mcp_schemas + plugin_schemas
             if disabled_tools:
                 all_tool_schemas = [
                     t for t in all_tool_schemas
@@ -2324,6 +2385,8 @@ async def stream_agent_loop(
             _last_content = _last_user.lower()
             _wants_mcp = any(kw in _last_content for kw in _MCP_KEYWORDS)
             all_tool_schemas = mcp_schemas if (_wants_mcp and mcp_schemas) else []
+            if plugin_schemas:
+                all_tool_schemas = all_tool_schemas + plugin_schemas
         agent_stream_timeout = int(get_setting("agent_stream_timeout_seconds", 300) or 300)
 
         _tool_names_sent = [t.get("function", {}).get("name") for t in (all_tool_schemas or []) if t.get("function")]

@@ -290,6 +290,63 @@ class ToolIndex:
         self._mcp_generation = gen
         logger.info(f"Indexed {len(docs)} MCP tools")
 
+    def index_plugin_tools(self):
+        """Index plugin-registered tool descriptions. Call after plugin startup."""
+        try:
+            from src.plugin_host import _tools as _plugin_tools_registry
+        except ImportError:
+            return
+
+        if not _plugin_tools_registry:
+            return
+
+        # Remove old plugin entries
+        for lane in self._lanes:
+            try:
+                existing = lane.collection.get(where={"tool_type": "plugin"})
+                if existing and existing["ids"]:
+                    lane.collection.delete(ids=existing["ids"])
+            except Exception:
+                pass
+
+        docs = []
+        ids = []
+        metadatas = []
+        for plugin_name, tools in _plugin_tools_registry.items():
+            for tool_name, info in tools.items():
+                schema = info.get("schema", {})
+                desc = schema.get("description", f"Plugin tool from {plugin_name}")
+                # Build a searchable description from the schema
+                props = schema.get("properties", {})
+                prop_desc = ", ".join(
+                    f"{k}: {v.get('description', '')}"
+                    for k, v in props.items()
+                ) if props else ""
+                doc_text = f"Tool: {tool_name}\nPlugin: {plugin_name}\n{desc}\nArgs: {prop_desc}"
+                docs.append(doc_text)
+                ids.append(f"plugin_{tool_name}")
+                metadatas.append({"tool_name": tool_name, "tool_type": "plugin"})
+
+        if not docs:
+            return
+
+        indexed = False
+        for lane in self._lanes:
+            try:
+                lane.collection.upsert(
+                    ids=ids,
+                    documents=docs,
+                    embeddings=lane.encode(docs),
+                    metadatas=metadatas,
+                )
+                indexed = True
+            except Exception as e:
+                logger.warning("Plugin tool indexing failed in %s lane: %s", lane.name, e)
+        if not indexed:
+            logger.warning("Plugin tool indexing failed in all embedding lanes")
+            return
+        logger.info(f"Indexed {len(docs)} plugin tools")
+
     def retrieve(self, query: str, k: int = 8) -> List[str]:
         """Retrieve the top-K most relevant tool names for a query."""
         rows = []
@@ -485,6 +542,21 @@ class ToolIndex:
                    "show memory", "show memories", "show skills", "show notes",
                    "show chats", "show sessions", "show documents"}):
             {"ui_control"},
+        # GitHub / git forge intent — surface plugin tools for repo/issue/PR operations.
+        # Ordered: narrower matches first so specific intents ("my PRs") also include
+        # github_list_repos (the model needs to discover repos before acting on them).
+        frozenset({"github", "git repo", "git repository", "pull request", "pull requests",
+                   "pr", "prs", "open pr", "open prs", "my pr", "my prs", "check pr",
+                   "issue", "issues", "open issue", "open issues", "create issue",
+                   "create pr", "merge request",
+                   "list repos", "my repos", "repositories", "clone repo",
+                   "search code on github", "github search", "rate limit",
+                   "commit", "commits", "commit history", "git log"}):
+            {"github_list_repos", "github_get_repo", "github_list_issues",
+             "github_get_issue", "github_create_issue", "github_list_prs",
+             "github_get_pr", "github_create_pr", "github_get_file",
+             "github_list_commits", "github_search_code", "github_clone_repo",
+             "github_rate_limit"},
         # Document creation intent
         frozenset({"write a", "create a doc", "draft", "compose", "poem", "story",
                    "essay", "outline", "letter"}):

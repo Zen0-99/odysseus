@@ -61,7 +61,7 @@ export function makeWindowDraggable(modal, options = {}) {
   const fsClass = options.fsClass || null;
   const onEnterFullscreen = options.onEnterFullscreen || null;
   const onExitFullscreen = options.onExitFullscreen || null;
-  const enableFullscreen = false;
+  const enableFullscreen = options.enableFullscreen !== false && !!onEnterFullscreen;
   const onDragEnd = options.onDragEnd || null;
   const onDragStart = options.onDragStart || null;
   const skipSelector = options.skipSelector || 'button, input, select';

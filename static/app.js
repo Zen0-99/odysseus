@@ -1662,6 +1662,8 @@ function initializeEventListeners() {
       // Delay tool glow-up for a staggered effect
       setTimeout(() => applyModeToToggles(mode), 500);
     }
+    // Expose for plugin host API (plugins can switch agent/chat mode)
+    window.setAppMode = setMode;
     agentBtn.addEventListener('click', () => {
       // Agent mode turns off research if active
       const resChk = el('research-toggle');

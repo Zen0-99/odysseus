@@ -37,6 +37,7 @@ function _switchTab(tab) {
   document.body.classList.toggle('settings-appearance-open', tab === 'appearance');
   syncAppearanceOpacity(tab === 'appearance');
   if (tab === 'ai') refreshAiModelEndpoints();
+  if (tab === 'plugins') renderPluginToggles();
 }
 
 function initTabs() {
